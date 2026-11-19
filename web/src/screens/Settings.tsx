@@ -84,11 +84,13 @@ function Part({
   return (
     <section class="settings-part" aria-labelledby={`${id}-title`}>
       {/* data-start: on a move between tabs the screen's own focus goes to the first part's heading. */}
-      <h2 id={`${id}-title`} class="part-heading" tabIndex={-1} data-start>
-        {title}
-      </h2>
-      {lead ? <p class="muted">{lead}</p> : null}
-      {children}
+      <div class="part-label">
+        <h2 id={`${id}-title`} class="part-heading" tabIndex={-1} data-start>
+          {title}
+        </h2>
+        {lead ? <p class="muted">{lead}</p> : null}
+      </div>
+      <div class="part-body">{children}</div>
     </section>
   )
 }

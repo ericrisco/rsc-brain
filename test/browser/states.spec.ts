@@ -131,22 +131,28 @@ test.describe('the session', () => {
 })
 
 // canvas-ui CA9: a state never rests on colour alone. A tag that marks one (done, a warning) carries a mark
-// of its shape as well as its word and its colour; screen readers hear the word only.
+// of its shape as well as its word and its colour; screen readers hear the word only. Since the web redesign the
+// mark of «done» is a check drawn with two strokes (not a typed glyph): it is there when it has a size and a
+// stroke.
 test('a state tag shows a mark, a word and a colour', async ({ page, context, baseURL }) => {
   await scenario(context, baseURL as string, 'signed-in')
   for (const [path, selector, mark] of [
     ['/b/growth/wiki', '.tag.warn', '!'],
-    ['/admin/people', '.tag.ok', '✓'],
+    ['/admin/people', '.tag.ok', null],
   ] as const) {
     await page.goto(path)
     const tag = page.locator(selector).first()
     await expect(tag).toBeVisible()
     const seen = await tag.evaluate((el) => ({
       before: getComputedStyle(el, '::before').content,
+      drawn:
+        Number.parseFloat(getComputedStyle(el, '::before').width) > 0 &&
+        Number.parseFloat(getComputedStyle(el, '::before').borderBottomWidth) > 0,
       word: el.textContent?.trim() ?? '',
       ground: getComputedStyle(el).backgroundColor,
     }))
-    expect(seen.before, `${path} ${selector}`).toContain(mark)
+    if (mark) expect(seen.before, `${path} ${selector}`).toContain(mark)
+    else expect(seen.drawn, `${path} ${selector} draws its check`).toBe(true)
     expect(seen.word.length).toBeGreaterThan(1)
     expect(seen.ground).not.toBe('rgba(0, 0, 0, 0)')
   }
