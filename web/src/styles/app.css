@@ -4635,7 +4635,7 @@ input[type="file"]::file-selector-button {
 }
 
 /* ── The graph's communities and its tooltip (v0.5.0) ─────────────────────
-   The panel at the right of the canvas names the communities the picture is coloured by, each with a box that
+   The panel at the right of the canvas names the communities, each with a box that
    shows or hides it; it folds from its head and never reaches the middle of the picture. */
 .graph-communities {
   position: absolute;
@@ -4649,7 +4649,6 @@ input[type="file"]::file-selector-button {
   background: var(--surface);
   border: var(--line) solid var(--border);
   border-radius: var(--radius-card);
-  box-shadow: var(--shadow-float);
   font-size: 13px;
 }
 

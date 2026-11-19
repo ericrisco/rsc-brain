@@ -85,3 +85,54 @@ test.describe('after shots', () => {
       })
     }
 })
+
+// The pictures in the repo's documentation (docs/assets/ui-*.webp): a desktop window at twice its CSS size, in
+// light. Runs only with DOCS_DIR set; each is written as ui-<name>.png, then scaled and turned into WebP by hand.
+const DOCS = process.env.DOCS_DIR ?? ''
+const DOC_ROWS = [
+  { file: 'overview', row: 'overview', size: { width: 1440, height: 900 } },
+  { file: 'journal', row: 'sessions', size: { width: 1440, height: 900 } },
+  { file: 'page', row: 'page', size: { width: 1440, height: 900 } },
+  { file: 'proposals', row: 'proposals', size: { width: 1440, height: 900 } },
+  { file: 'proposal-review', row: 'proposal', size: { width: 1440, height: 995 } },
+  { file: 'wiki-map', row: 'wiki map', size: { width: 1440, height: 900 } },
+  { file: 'health', row: 'health', size: { width: 1440, height: 900 } },
+]
+
+test.describe('docs shots', () => {
+  test.skip(!DOCS, 'only with DOCS_DIR')
+  test.use({ deviceScaleFactor: 2 })
+
+  test('the screens the documentation shows', async ({ page, context, baseURL }) => {
+    test.setTimeout(300_000)
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await useMode(page, 'light')
+    for (const d of DOC_ROWS) {
+      const row = ROWS.find((r) => r.name === d.row)
+      if (!row) throw new Error(`no row ${d.row}`)
+      await page.setViewportSize(d.size)
+      await page.goto(row.path)
+      if (row.seed) await row.seed(s)
+      await expect(row.ready(page)).toBeVisible()
+      await page.waitForLoadState('networkidle')
+      await page.screenshot({ path: join(DOCS, `ui-${d.file}.png`) })
+    }
+  })
+
+  test('the graph the documentation shows', async ({ page, context, baseURL }) => {
+    test.setTimeout(120_000)
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await useMode(page, 'light')
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/b/growth/wiki/graph')
+    await settled(page)
+    await page.mouse.move(0, 0)
+    await page.screenshot({ path: join(DOCS, 'ui-graph.png') })
+    await page.locator('canvas.graph-canvas').focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('link', { name: 'Open page' })).toBeVisible()
+    await page.mouse.move(0, 0)
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+    await page.screenshot({ path: join(DOCS, 'ui-graph-inspector.png') })
+  })
+})
