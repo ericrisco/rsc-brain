@@ -4793,7 +4793,6 @@ input[type="file"]::file-selector-button {
   .settings-tab,
   .settings-parts {
     grid-template-columns: minmax(0, 1fr);
-    max-width: 1152px;
     gap: 0;
   }
 
@@ -4805,8 +4804,7 @@ input[type="file"]::file-selector-button {
     border-top: var(--line) solid var(--rule);
   }
 
-  .settings-tab > .settings-part:first-child,
-  .settings-parts > .settings-part:first-child {
+  .settings-part:first-child {
     padding-top: 0;
     border-top: 0;
   }
@@ -4822,6 +4820,10 @@ input[type="file"]::file-selector-button {
 
   .settings-part > .part-body {
     grid-column: 2;
+    padding: var(--space-5);
+    background: var(--surface);
+    border: var(--line) solid var(--border);
+    border-radius: var(--r-card);
   }
 
   .part-body :is(input[type="text"], input[type="email"], input[type="url"], input[type="number"], select) {
