@@ -178,6 +178,11 @@ body {
   height: 20px;
 }
 
+.rail .brand img {
+  width: 24px;
+  height: 24px;
+}
+
 .rail-tools,
 .rail-foot {
   display: grid;

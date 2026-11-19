@@ -39,6 +39,7 @@ import {
 import { justDeleted, me, online } from '../session.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
+import { Dash } from '../ui/Dash.tsx'
 import { Dialog } from '../ui/Dialog.tsx'
 import { Field } from '../ui/Field.tsx'
 import { writeBlocked } from '../ui/state.ts'
@@ -752,7 +753,7 @@ function TextPart({
             {theirs ? (
               <Conflict>
                 <pre class="command">
-                  <code>{(guide ? theirs.guide : theirs.usageNote) || '—'}</code>
+                  <code>{(guide ? theirs.guide : theirs.usageNote) || <Dash />}</code>
                 </pre>
               </Conflict>
             ) : null}

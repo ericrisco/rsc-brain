@@ -31,6 +31,7 @@ import { justRestored, me, online } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
 import { CopyButton } from '../../ui/CopyButton.tsx'
+import { Dash } from '../../ui/Dash.tsx'
 import { Dialog } from '../../ui/Dialog.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { PasswordField } from '../../ui/PasswordField.tsx'
@@ -530,7 +531,7 @@ export function KeyPart({ keyId }: { keyId: string | null | undefined }) {
     <Part id="installation-key" title={A.keyTitle} lead={A.keyLead}>
       <dl class="facts">
         <dt>{A.keyId}</dt>
-        <dd class="mono">{keyId ?? '—'}</dd>
+        <dd class="mono">{keyId ?? <Dash />}</dd>
       </dl>
       <p class="meta">{A.keyIdHint}</p>
       <Said text={said.said} id="key-said" focus={said.focus} />

@@ -583,9 +583,11 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
     <>
       <WikiHead title={g.title} lead={g.lead} />
       <div class="graph-bar">
-        {viewsToggle}
+        <div class="graph-center in-page">
+          {viewsToggle}
+          {filtersBox}
+        </div>
         {trailNav}
-        {filtersBox}
       </div>
       {focusBar}
       {placeRow}
@@ -618,7 +620,13 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
         {filtersBox}
       </div>
       {vis && model && communities && model.mode !== 'too-big' && model.items.length ? (
-        <CommunitiesPanel communities={communities} nodes={vis.nodes} hidden={hidden} onChange={setHidden} />
+        <CommunitiesPanel
+          communities={communities}
+          nodes={vis.nodes}
+          hidden={hidden}
+          onChange={setHidden}
+          folded={Boolean(selected) || pinned}
+        />
       ) : null}
       {emptyWiki ? null : (
         <button
@@ -868,6 +876,12 @@ function GraphCanvas({
     setActiveState(i)
   }
   const [said, setSaid] = useState('')
+  // The help for the keys and gestures: a button in the tools opens it; it never lies over the drawing unasked.
+  const [keysOpen, setKeysOpen] = useState(false)
+  const anySuperseded = useMemo(
+    () => model.items.some((it) => it.kind === 'page' && it.status === 'superseded'),
+    [model],
+  )
   // The item the tooltip names: under the pointer, or under the keyboard while the canvas has it.
   const [tip, setTip] = useState(-1)
   const tipNow = useRef(-1)
@@ -1660,7 +1674,37 @@ function GraphCanvas({
             >
               <Icon name="zoomOut" />
             </button>
+            <button
+              type="button"
+              class="tool"
+              onClick={() => setKeysOpen((o) => !o)}
+              aria-label={g.keysHelp}
+              title={g.keysHelp}
+              aria-expanded={keysOpen ? 'true' : 'false'}
+              aria-controls="graph-keys"
+            >
+              <Icon name="help" />
+            </button>
+            {anySuperseded ? (
+              <span class="graph-legend">
+                <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+                  <circle cx="7" cy="7" r="5" fill="currentColor" opacity="0.45" />
+                  <path d="M2 12L12 2" stroke="currentColor" stroke-width="1.5" />
+                </svg>
+                {g.legendSuperseded}
+              </span>
+            ) : null}
           </div>
+          <p
+            id="graph-keys"
+            class="graph-keys"
+            hidden={!keysOpen}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setKeysOpen(false)
+            }}
+          >
+            {coarse() ? g.touchHelp : g.canvasHelp}
+          </p>
           {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: "application" makes a screen reader hand the arrow keys to the canvas, which walks the graph with them */}
           <canvas
             ref={canvas}
@@ -1737,7 +1781,7 @@ function GraphCanvas({
           {ready ? null : <CanvasSkeleton wait />}
         </div>
       </div>
-      <p id="graph-help" class="hint">
+      <p id="graph-help" class="sr-only">
         {coarse() ? g.touchHelp : g.canvasHelp}
       </p>
       <p class="sr-only" aria-live="polite">

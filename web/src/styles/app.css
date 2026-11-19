@@ -140,6 +140,15 @@ time {
   object-fit: contain;
 }
 
+/* An installation's own logo sits on a small plate with an edge, so a light one and a dark one both show on
+   the frame, in each mode. */
+.brand img {
+  padding: 2px;
+  background: var(--plate);
+  border: var(--line) solid var(--control-strong);
+  border-radius: var(--radius-chip);
+}
+
 .brand .name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -492,6 +501,14 @@ legend .step {
 
 .state > * {
   max-width: 72ch;
+}
+
+/* A state that is the whole screen sits in the middle of the sheet, like a doorway. */
+.state.whole {
+  max-width: 480px;
+  min-height: min(70vh, 640px);
+  margin: 0 auto;
+  align-content: center;
 }
 
 .state h1,
@@ -1691,6 +1708,44 @@ select:disabled {
   border-bottom-color: var(--text);
 }
 
+/* A phone: the tabs stay on one line and slide sideways; the last one is cut by the edge when more wait. */
+@media (max-width: 767px) {
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--control-strong) transparent;
+  }
+
+  .tabs a {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .tabs .tab-list {
+    flex-wrap: nowrap;
+  }
+
+  .tabs .tab-list li {
+    flex: none;
+  }
+
+  /* More tabs to the right: a mark at the edge, gone once the row is slid to its end. */
+  .tabs[data-more]::after {
+    content: "›";
+    position: sticky;
+    right: 0;
+    flex: none;
+    align-self: center;
+    padding: 0 4px 0 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+  }
+}
+
 .wiki-page {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
@@ -2399,6 +2454,23 @@ form.filter-box > .actions {
     top: 24px;
     grid-column: 2;
     grid-row: 1 / span 2;
+  }
+}
+
+/* Wide: the decision starts level with why it was sent, with no rule over it. */
+@media (min-width: 1280px) {
+  .proposal-body > .why,
+  .proposal-body > .decide {
+    margin-top: 0;
+  }
+
+  .proposal-body > .decide {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .proposal-body {
+    margin-top: 20px;
   }
 }
 
@@ -3333,28 +3405,6 @@ label.op-head:hover {
   }
 }
 
-/* How the keyboard walks the picture: said to screen readers, shown while the keyboard is on it. */
-.graph-screen .graph-section > .hint {
-  position: absolute;
-  left: 50%;
-  bottom: 16px;
-  z-index: 3;
-  width: max-content;
-  max-width: min(72ch, calc(100% - 32px));
-  margin: 0;
-  padding: 8px 12px;
-  transform: translateX(-50%);
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-card);
-  clip-path: inset(50%);
-  pointer-events: none;
-}
-
-.graph-screen .graph-section:has(.graph-canvas:focus-visible) > .hint {
-  clip-path: none;
-}
-
 /* Wide: the inspector is a panel at the right of the picture, over it. */
 @media (min-width: 1100px) {
   .graph-screen .graph-inspector {
@@ -3411,6 +3461,78 @@ label.op-head:hover {
   .graph-screen:has(.graph-inspector[data-open]) .graph-strip .sec-about {
     display: none;
   }
+}
+
+/* The help for the keys and gestures: opened from the tools, over the picture only while it is asked for. */
+.graph-keys {
+  position: absolute;
+  left: 16px;
+  bottom: 64px;
+  z-index: 3;
+  max-width: min(360px, calc(100% - 32px));
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--surface);
+  color: var(--text);
+  border: var(--line) solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-float);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.graph-keys[hidden] {
+  display: none;
+}
+
+/* What the strike through a page means, beside the tools. */
+.graph-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 8px;
+  border-left: var(--line) solid var(--rule);
+  color: var(--muted);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+
+/* The focus ring of the picture is drawn on what can be seen of it: the strip over its top and the open
+   inspector over its right side would otherwise cover two of its four sides. */
+.graph-screen .graph-box:has(.graph-canvas:focus-visible)::after {
+  content: "";
+  position: absolute;
+  top: 49px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  border: var(--focus-w) solid var(--focus);
+  pointer-events: none;
+}
+
+@media (min-width: 1100px) {
+  .graph-screen:has(.graph-inspector[data-open]) .graph-box:has(.graph-canvas:focus-visible)::after {
+    right: clamp(320px, 22vw, 420px);
+  }
+}
+
+/* Graph | List and the filters, the same control in both views: in the list it sits in the page. */
+.graph-center.in-page {
+  margin-inline: auto;
+  position: static;
+  transform: none;
+  width: max-content;
+  max-width: 100%;
+}
+
+/* The list's inspector starts level with the table. */
+:not(.graph-screen) > .graph-layout > .graph-inspector {
+  padding-top: 0;
+}
+
+:not(.graph-screen) > .graph-layout > .graph-inspector .inspector-head {
+  margin-top: 0;
 }
 
 /* ── Activity, Health and Search (PR23) ───────────────────────────────── */
@@ -4861,4 +4983,9 @@ input[type="file"]::file-selector-button {
   .part-body :is(input[type="text"], input[type="email"], input[type="url"], input[type="number"], select) {
     max-width: 520px;
   }
+}
+
+/* An absent datum. */
+.none {
+  color: var(--muted);
 }

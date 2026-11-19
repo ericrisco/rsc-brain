@@ -22,6 +22,7 @@ import { ago } from '../../lib/brains.ts'
 import { type Me, online } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
+import { Dash } from '../../ui/Dash.tsx'
 import { Dialog } from '../../ui/Dialog.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
@@ -174,16 +175,16 @@ function Server({ account }: { account: string }) {
               <Conflict>
                 <ul class="theirs-values">
                   <li>
-                    {A.host}: <strong>{theirs.settings?.host ?? '—'}</strong>
+                    {A.host}: <strong>{theirs.settings?.host ?? <Dash />}</strong>
                   </li>
                   <li>
-                    {A.port}: <strong>{theirs.settings?.port ?? '—'}</strong>
+                    {A.port}: <strong>{theirs.settings?.port ?? <Dash />}</strong>
                   </li>
                   <li>
                     {A.password}: <strong>{secretLabel(theirs.base.hasPassword)}</strong>
                   </li>
                   <li>
-                    {A.fromAddress}: <strong>{theirs.settings?.from.address ?? '—'}</strong>
+                    {A.fromAddress}: <strong>{theirs.settings?.from.address ?? <Dash />}</strong>
                   </li>
                 </ul>
               </Conflict>

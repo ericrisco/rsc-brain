@@ -54,6 +54,34 @@ export function Shell({
   const canvas = isCanvasRoute(path) && query.view !== 'list'
   useFreshBrains()
   useEffect(() => setMenu(false), [path])
+  // On a phone the tabs slide sideways: the current one is brought into view when a row appears, and a tab row
+  // with more to the right says so (data-more) until it is scrolled to its end.
+  useEffect(() => {
+    const mark = (el: HTMLElement) => {
+      if (el.scrollWidth > el.clientWidth + 1 && el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
+        el.setAttribute('data-more', '')
+      else el.removeAttribute('data-more')
+    }
+    const attach = () => {
+      for (const el of document.querySelectorAll<HTMLElement>('nav.tabs:not([data-watched])')) {
+        el.setAttribute('data-watched', '')
+        el.addEventListener('scroll', () => mark(el), { passive: true })
+        const bring = () => {
+          const cur = el.querySelector('[aria-current]')?.getBoundingClientRect()
+          const box = el.getBoundingClientRect()
+          if (cur && cur.right > box.right) el.scrollLeft += cur.right - box.right + 24
+          mark(el)
+        }
+        requestAnimationFrame(() => requestAnimationFrame(bring))
+        mark(el)
+      }
+    }
+    attach()
+    const main = document.getElementById('main')
+    const mo = new MutationObserver(attach)
+    if (main) mo.observe(main, { childList: true, subtree: true })
+    return () => mo.disconnect()
+  }, [path])
   return (
     <div class="frame" data-rail={rail.value} data-mode={canvas ? 'canvas' : undefined}>
       <a class="skip" href="#main">

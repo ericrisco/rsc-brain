@@ -74,17 +74,18 @@ export const PAGE_STYLE = `${FONTS.map(([family, weight, file]) => `@font-face{f
 :root{color-scheme:light;${LIGHT}}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;${DARK}}}
 @media (prefers-contrast:more){:root{color-scheme:light;${CONTRAST}}.card,fieldset,.warn{border-color:var(--border)}}
-*{box-sizing:border-box}input{accent-color:var(--text)}body{margin:0;background:var(--ground);color:var(--text);font:14px/20px "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-wrap:anywhere}
-main{max-width:30rem;margin:8vh auto;padding:0 16px}.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;flex-direction:column;justify-content:center;background:var(--ground);color:var(--text);font:14px/20px "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-wrap:anywhere}
+main{width:100%;max-width:30rem;margin:0 auto;padding:32px 16px}.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px}
 h1{font:600 22px/28px "IBM Plex Sans",system-ui,sans-serif;margin:0 0 8px}p{margin:8px 0}.muted{color:var(--muted);font-size:12px;line-height:16px}
 label{display:block;margin:16px 0 8px;font-weight:500;font-size:14px}input[type=email],input[type=password],input[type=text]{width:100%;height:32px;padding:0 10px;border:1px solid var(--control);border-radius:6px;background:var(--surface);color:inherit;font:inherit}
 fieldset{border:0;border-top:1px solid var(--rule);margin:16px 0;padding:12px 0 0}legend{font-weight:500;font-size:14px;color:var(--text);padding:0 8px 0 0}
-.opt{display:flex;gap:8px;align-items:baseline;margin:6px 0;font-weight:400;font-size:14px}.warn{background:var(--warn-bg);color:var(--warn-ink);border:1px solid transparent;border-left:3px solid currentColor;border-radius:8px;padding:10px 12px;font-size:13px;margin:12px 0}
+.opt{display:flex;gap:8px;align-items:baseline;margin:6px 0;font-weight:400;font-size:14px}.warn{background:var(--warn-bg);color:var(--warn-ink);border:1px solid color-mix(in srgb,var(--warn-ink) 35%,var(--warn-bg));border-radius:8px;padding:10px 12px;font-size:13px;margin:12px 0}
 .domain{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-weight:400}.row{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
+input[type=checkbox],input[type=radio]{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:16px;height:16px;margin:2px 0 0;border:1px solid var(--control);background:var(--surface);color:inherit}input[type=checkbox]{border-radius:4px}input[type=radio]{border-radius:50%}input[type=checkbox]:checked,input[type=radio]:checked{background:var(--text);border-color:var(--text)}input[type=checkbox]:checked::after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid var(--surface);border-width:0 2px 2px 0;transform:rotate(45deg)}input[type=radio]:checked{box-shadow:inset 0 0 0 3px var(--surface)}
 button{min-height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--control);font:inherit;font-weight:500;cursor:pointer;background:var(--surface);color:inherit}
 button.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}button:disabled{opacity:.55;cursor:not-allowed}button:focus-visible,input:focus-visible,a:focus-visible{outline:var(--focus-w,2px) solid var(--focus);outline-offset:2px}
 a{color:inherit;text-underline-offset:3px}strong,b{font-weight:600}.error{color:var(--negative);font-weight:500}.error::before{content:"! ";font-weight:600}.foot{text-align:center;margin-top:16px}
-@media (forced-colors:active){.card,button,input{border-color:CanvasText}}`
+@media (forced-colors:active){.card,button,input{border-color:CanvasText}input[type=checkbox]:checked,input[type=radio]:checked{background:Highlight;border-color:Highlight}input[type=checkbox]:checked::after{border-color:HighlightText}input[type=radio]:checked{box-shadow:inset 0 0 0 3px Canvas}}`
 
 // The installation's name on these pages (they are drawn without the web's script, so the server says it). Read
 // once per request that draws a page; the default until an administrator names it. A read that fails keeps the

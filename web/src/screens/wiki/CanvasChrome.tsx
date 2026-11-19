@@ -45,14 +45,21 @@ export function CommunitiesPanel({
   nodes,
   hidden,
   onChange,
+  folded = false,
 }: {
   communities: Communities
   // What the filters leave: the counts are of those.
   nodes: Uint8Array
   hidden: ReadonlySet<string>
   onChange: (hidden: ReadonlySet<string>) => void
+  // The inspector is open: the panel folds so that it never covers the page chosen or its name.
+  folded?: boolean
 }) {
   const g = T.graph
+  const details = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    if (folded && details.current) details.current.open = false
+  }, [folded])
   const rows = useMemo(() => {
     const count = new Map<string, number>()
     for (let i = 0; i < nodes.length; i++) {
@@ -95,7 +102,7 @@ export function CommunitiesPanel({
     onChange(next)
   }
   return (
-    <details class="graph-communities" open={openAtStart}>
+    <details class="graph-communities" open={openAtStart} ref={details}>
       <summary class="com-head">
         <span class="sec-title">{g.communities}</span>
         <span class="sec-meta">{rows.length.toLocaleString('en')}</span>

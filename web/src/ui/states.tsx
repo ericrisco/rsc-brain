@@ -46,7 +46,13 @@ export function ErrorState({
     if (focus) focusOnArrival(ref.current)
   }, [])
   return (
-    <div class={`state ${v.kind}`} role="alert" tabIndex={-1} ref={ref} data-state={v.kind}>
+    <div
+      class={`state ${v.kind}${title === 'h1' ? ' whole' : ''}`}
+      role="alert"
+      tabIndex={-1}
+      ref={ref}
+      data-state={v.kind}
+    >
       <span class="kind">{KIND[v.kind]}</span>
       <Title>{v.title}</Title>
       <p>{v.message}</p>
