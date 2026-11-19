@@ -59,9 +59,20 @@ export const luminance = (c: string) => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
+// A colour with alpha, laid over an opaque ground: what the eye gets.
+export const over = (fg: string, bg: string): string => {
+  const [r, g, b, a] = parseRgb(fg)
+  if (a >= 1) return fg
+  const [br, bgg, bb] = parseRgb(bg)
+  const mix = (f: number, k: number) => Math.round(f * a + k * (1 - a))
+  return `rgb(${mix(r, br)}, ${mix(g, bgg)}, ${mix(b, bb)})`
+}
+
+// The ratio between two colours; a colour with alpha (faded text, a hairline) is first laid over the other, the
+// ground, so a faded colour is measured as it is seen.
 export const contrast = (a: string, b: string) => {
-  const x = luminance(a)
-  const y = luminance(b)
+  const x = luminance(over(a, b))
+  const y = luminance(over(b, 'rgb(255, 255, 255)'))
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
 }
 

@@ -135,7 +135,6 @@ for (const [name, path, ready] of [
     await scenario(context, baseURL as string, 'signed-in')
     const shapes: string[][] = []
     for (const mode of ['light', 'dark', 'contrast']) {
-      await page.evaluate((m) => localStorage.setItem('rscb.theme', m), mode).catch(() => {})
       await page.addInitScript((m) => localStorage.setItem('rscb.theme', m), mode)
       await page.goto(path)
       await expect(ready(page)).toBeVisible()
@@ -176,6 +175,8 @@ test('CA10c: dark — the sheet a step lighter than the frame, no blue tint, the
   // The main button, on a screen that always has one.
   await page.goto('/admin/limits')
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+  await expect(page.locator('main input').first()).toBeVisible()
   const primary = await page.evaluate(() => {
     const b = document.querySelector('main .button.primary')
     return b ? [getComputedStyle(b).backgroundColor, getComputedStyle(b).color] : null
@@ -194,6 +195,9 @@ test('CA10d: high contrast — every word at 7:1, every control edged at 4.5:1, 
   await page.addInitScript(() => localStorage.setItem('rscb.theme', 'contrast'))
   await page.goto('/admin/limits')
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+  await expect(page.locator('main input').first()).toBeVisible()
+  await page.evaluate(() => document.fonts.ready)
   const v = await page.evaluate(() => {
     const groundOf = (el: Element | null): string => {
       for (let p = el; p; p = p.parentElement) {
@@ -211,7 +215,20 @@ test('CA10d: high contrast — every word at 7:1, every control edged at 4.5:1, 
           [...el.childNodes].some((n) => n.nodeType === 3 && (n.textContent ?? '').trim())
         )
       })
-      .map((el) => [getComputedStyle(el).color, groundOf(el), (el.textContent ?? '').trim().slice(0, 20)])
+      .map((el) => {
+        // The ink as seen: its own alpha times the opacity of the element and of every ancestor.
+        let k = 1
+        for (let p: Element | null = el; p; p = p.parentElement) k *= Number(getComputedStyle(p).opacity)
+        const m = /rgba?\(([^)]+)\)/.exec(getComputedStyle(el).color)
+        const [r, g, b, a] = (
+          (m?.[1] ?? '0,0,0')
+            .split(/[,\s/]+/)
+            .filter(Boolean)
+            .map(Number) as number[]
+        ).concat([1])
+        const ink = `rgba(${r}, ${g}, ${b}, ${(a ?? 1) * k})`
+        return [ink, groundOf(el), (el.textContent ?? '').trim().slice(0, 20)]
+      })
     const controls = [
       ...document.querySelectorAll('main input, main select, main textarea, main .button.secondary'),
     ]
@@ -246,6 +263,8 @@ test('CA10e: with forced colours, buttons and fields keep their outline', async 
   await page.emulateMedia({ forcedColors: 'active' })
   await page.goto('/admin/limits')
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+  await expect(page.locator('main input').first()).toBeVisible()
   const styles = await page.evaluate(() =>
     [...document.querySelectorAll('main .button, main input, .rail-item[aria-current]')]
       .filter((el) => el.getBoundingClientRect().width > 0)

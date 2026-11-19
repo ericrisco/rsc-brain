@@ -3,7 +3,8 @@
 // for each one a leftover planted on purpose is caught, so the check can fail as well as pass.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { describe, it } from 'node:test'
 
@@ -87,6 +88,19 @@ const SOURCES = [
 ]
 const DIST = join(ROOT, 'dist', 'web')
 
+// The pictures of the interface in a folder that are known by hash to be of the old look.
+export function oldPictures(dir: string, known: ReadonlySet<string>): string[] {
+  return readdirSync(dir)
+    .filter((f) => /^ui-.*\.webp$/.test(f))
+    .filter((f) =>
+      known.has(
+        createHash('sha256')
+          .update(readFileSync(join(dir, f)))
+          .digest('hex'),
+      ),
+    )
+}
+
 describe('no leftovers of the retired look (Annex B)', () => {
   it('each group is caught when a leftover of it is planted', () => {
     const planted: [string, string][] = [
@@ -115,8 +129,19 @@ describe('no leftovers of the retired look (Annex B)', () => {
       for (const f of found) groups.add(Number(/group (\d)/.exec(f)?.[1]))
     }
     assert.deepEqual([...groups].sort(), [1, 2, 3, 4, 5, 6, 7])
-    // Group 8: a picture of the old look is known by its hash.
-    assert.ok(OLD_SHOTS.has('9baef907ba7898f6efa02ef38b2a95da07b9fd01309bc0b728a0f1e417f9633f'))
+  })
+
+  it('group 8 is caught when a picture of the old look is planted', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shots-'))
+    try {
+      writeFileSync(join(dir, 'ui-planted.webp'), 'a picture of the old look')
+      writeFileSync(join(dir, 'ui-new.webp'), 'a picture of the new look')
+      const known = new Set([createHash('sha256').update('a picture of the old look').digest('hex')])
+      assert.deepEqual(oldPictures(dir, known), ['ui-planted.webp'])
+      assert.deepEqual(oldPictures(dir, OLD_SHOTS), [])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('appear in no source of the web, the server-drawn pages or the mails', () => {
@@ -140,15 +165,8 @@ describe('no leftovers of the retired look (Annex B)', () => {
   })
 
   it('the pictures of the docs show the new look (group 8)', () => {
-    const shots = readdirSync(join(ROOT, 'docs/assets')).filter((f) => /^ui-.*\.webp$/.test(f))
-    assert.ok(shots.length > 0)
-    const old = shots.filter((f) =>
-      OLD_SHOTS.has(
-        createHash('sha256')
-          .update(readFileSync(join(ROOT, 'docs/assets', f)))
-          .digest('hex'),
-      ),
-    )
+    assert.ok(readdirSync(join(ROOT, 'docs/assets')).some((f) => /^ui-.*\.webp$/.test(f)))
+    const old = oldPictures(join(ROOT, 'docs/assets'), OLD_SHOTS)
     assert.deepEqual(old, [])
   })
 })

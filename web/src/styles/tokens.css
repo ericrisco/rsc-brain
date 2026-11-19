@@ -37,6 +37,9 @@
   --graph-node: #6b6e72;
   --graph-lone: #b4b7ba;
   --graph-ring: 2.5;
+
+  /* The plate a light logo sits on, in every mode: a logo's tone does not follow the mode. */
+  --plate-dark: #131416;
 }
 
 @media (prefers-color-scheme: dark) {

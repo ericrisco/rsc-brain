@@ -149,6 +149,11 @@ time {
   border-radius: var(--radius-chip);
 }
 
+/* A light logo goes on the dark plate, a dark one on the light plate: it stands out from its plate either way. */
+.brand img[data-tone="light"] {
+  background: var(--plate-dark);
+}
+
 .brand .name {
   overflow: hidden;
   text-overflow: ellipsis;

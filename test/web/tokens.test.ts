@@ -4,6 +4,7 @@
 // and 7:1 in high contrast, every edge that is all a control shows reaches 3:1 (4.5:1 in high contrast). The
 // faces are self-hosted with their licence. With no choice the sheet follows the system.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 
@@ -149,6 +150,35 @@ const MODES: Mode[] = ['light', 'dark', 'contrast']
 describe('shared tokens (shared.css)', () => {
   it('says which version it is, so the copies in both repos can be compared', () => {
     assert.match(shared, /^\/\* shared\.css v\d+ /)
+  })
+
+  // The digests both repos carry: change shared.css or a face in either and this fails in every run, with no
+  // need to have the other repo at hand. When the shared files change on purpose, both repos take the new ones.
+  const PINNED: Record<string, string> = {
+    'shared.css': '9de6dfff55dfa2c9dbd757acb571e8367f8d159af1cef86108d6beaf3676a9da',
+    'fonts/OFL.txt': '7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da',
+    'fonts/ibm-plex-mono-latin1-400.woff2':
+      'e8993d946649b9d01abb1ed06d574b19d8ea3e66b5c3948602db335c44c18e56',
+    'fonts/ibm-plex-mono-latin1-500.woff2':
+      '41201b658a328b9d00368215c2f1102770f80b15952ab82631e4006255e6365d',
+    'fonts/ibm-plex-sans-latin1-400.woff2':
+      'bdb53f2af84b15e0a742428f5e199dacc3e6fd60776f0aebd9f700e2c97c960f',
+    'fonts/ibm-plex-sans-latin1-500.woff2':
+      '668a0d9eabbfac0925f431988f56222b8b989ad66a0a78e91bc5889f73fe274a',
+    'fonts/ibm-plex-sans-latin1-600.woff2':
+      '8251b7fc61b580c2f52550fa69b3c49fb94fc333815ad301ca6b1f6d15420f85',
+  }
+  it('carries the pinned shared.css and faces of both repos, byte for byte (CA26)', () => {
+    const have = ['shared.css', ...readdirSync(new URL('fonts/', STYLES)).map((f) => `fonts/${f}`)].sort()
+    assert.deepEqual(have, Object.keys(PINNED).sort())
+    for (const [f, sha] of Object.entries(PINNED))
+      assert.equal(
+        createHash('sha256')
+          .update(readFileSync(new URL(f, STYLES)))
+          .digest('hex'),
+        sha,
+        f,
+      )
   })
 
   it('is the same file as rsc-factory’s, byte for byte, with the same faces (CA26)', {

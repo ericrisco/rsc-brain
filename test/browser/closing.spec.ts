@@ -246,6 +246,30 @@ for (const theme of ['light', 'dark', 'contrast'] as const)
           frame: getComputedStyle(document.body).backgroundColor,
         }
       })
+      // The logo's own pixels against its plate: read from a picture of the logo's box.
+      await expect(logo).toHaveAttribute('data-tone', /light|dark/)
+      const shot = (await logo.screenshot()).toString('base64')
+      const px = await page.evaluate(async (shot) => {
+        const img = new Image()
+        img.src = `data:image/png;base64,${shot}`
+        await img.decode()
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        const ctx = c.getContext('2d') as CanvasRenderingContext2D
+        ctx.drawImage(img, 0, 0)
+        const at = (x: number, y: number) => {
+          const d = ctx.getImageData(x, y, 1, 1).data
+          return `rgb(${d[0]}, ${d[1]}, ${d[2]})`
+        }
+        const s = img.width
+        // The plate: the padding inside the border; the logo: the middle.
+        return { plate: at(Math.floor(s / 2), 2), logo: at(Math.floor(s / 2), Math.floor(s / 2)) }
+      }, shot)
+      expect(
+        contrast(px.logo, px.plate),
+        `the logo ${px.logo} against its plate ${px.plate}`,
+      ).toBeGreaterThanOrEqual(3)
       expect(v.edgeW).toBeGreaterThanOrEqual(1)
       expect(contrast(v.edge, v.frame), 'the plate edge against the frame').toBeGreaterThanOrEqual(3)
       expect(v.plate).not.toBe('rgba(0, 0, 0, 0)')

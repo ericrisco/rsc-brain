@@ -579,6 +579,7 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
       {loose && !focusItem ? <p class="graph-note">{g.otherPagesNote(group, model?.total ?? 0)}</p> : null}
     </>
   )
+  const target = selected ? targetOf(selected) : null
   const head = list ? (
     <>
       <WikiHead title={g.title} lead={g.lead} />
@@ -625,7 +626,7 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
           nodes={vis.nodes}
           hidden={hidden}
           onChange={setHidden}
-          folded={Boolean(selected) || pinned}
+          folded={Boolean(target) || pinned}
         />
       ) : null}
       {emptyWiki ? null : (
@@ -643,7 +644,6 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
     </>
   )
 
-  const target = selected ? targetOf(selected) : null
   const inspector = (
     <Inspector
       slug={slug}
@@ -881,7 +881,10 @@ function GraphCanvas({
   useLayoutEffect(() => {
     if (!keysOpen) return
     const esc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setKeysOpen(false)
+      if (e.key !== 'Escape') return
+      // Only the help closes: the inspector's own handler (on document) never hears this Escape.
+      e.stopPropagation()
+      setKeysOpen(false)
     }
     window.addEventListener('keydown', esc, true)
     return () => window.removeEventListener('keydown', esc, true)

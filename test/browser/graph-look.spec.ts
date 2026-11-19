@@ -199,3 +199,95 @@ test('the keys button opens the help over the picture and Escape closes it', asy
   await page.keyboard.press('Escape')
   await expect(page.locator('#graph-keys')).toBeHidden()
 })
+
+test('Escape closes only the keys help when the inspector is open too', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.goto(GRAPH)
+  await settled(page)
+  await page.locator('canvas.graph-canvas').focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('link', { name: 'Open page' })).toBeVisible()
+  await page.getByRole('button', { name: 'Keys and gestures' }).click()
+  await expect(page.locator('#graph-keys')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('#graph-keys')).toBeHidden()
+  await expect(page.getByRole('link', { name: 'Open page' }), 'the inspector stays').toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('link', { name: 'Open page' })).toBeHidden()
+})
+
+test('an inspect address that names nothing opens no inspector and leaves the communities open', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.goto(`${GRAPH}?inspect=nonsense`)
+  await settled(page)
+  await expect(page.locator('.graph-inspector[data-open]')).toHaveCount(0)
+  expect(await page.locator('.graph-communities').evaluate((d) => (d as HTMLDetailsElement).open)).toBe(true)
+})
+
+// How the picture reads, from its pixels: the ground is the commonest colour; the nodes are the commonest colour
+// that stands at 3:1 or more against it; the links are the commonest colour between 1.05:1 and 1.5:1.
+async function legibility(page: Page) {
+  const shot = (await page.locator('canvas.graph-canvas').screenshot()).toString('base64')
+  return page.evaluate(async (shot) => {
+    const img = new Image()
+    img.src = `data:image/png;base64,${shot}`
+    await img.decode()
+    const c = document.createElement('canvas')
+    c.width = img.width
+    c.height = img.height
+    const ctx = c.getContext('2d') as CanvasRenderingContext2D
+    ctx.drawImage(img, 0, 0)
+    // The middle of the picture only: the panels over its edges are not the picture.
+    const d = ctx.getImageData(
+      Math.floor(c.width * 0.3),
+      Math.floor(c.height * 0.3),
+      Math.floor(c.width * 0.3),
+      Math.floor(c.height * 0.4),
+    ).data
+    const lum = (r: number, g: number, b: number) => {
+      const f = (v: number) => {
+        const s = v / 255
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+      }
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+    }
+    const count = new Map<number, number>()
+    for (let i = 0; i < d.length; i += 4) {
+      const k = ((d[i] as number) << 16) | ((d[i + 1] as number) << 8) | (d[i + 2] as number)
+      count.set(k, (count.get(k) ?? 0) + 1)
+    }
+    const colours = [...count.entries()].sort((a, b) => b[1] - a[1])
+    const lumOf = (k: number) => lum((k >> 16) & 255, (k >> 8) & 255, k & 255)
+    const ground = lumOf((colours[0] as [number, number])[0])
+    const ratio = (k: number) => {
+      const l = lumOf(k)
+      return (Math.max(l, ground) + 0.05) / (Math.min(l, ground) + 0.05)
+    }
+    const nodes = colours.find(([k, n]) => n > 40 && ratio(k) >= 3)
+    const links = colours.find(([k, n]) => n > 200 && ratio(k) >= 1.05 && ratio(k) < 1.5)
+    return { nodes: nodes ? ratio(nodes[0]) : 0, links: links ? ratio(links[0]) : 0 }
+  }, shot)
+}
+
+for (const mode of ['light', 'dark', 'contrast'] as const)
+  test(`the picture is legible in ${mode}: pages at 3:1 or more, links visible against the ground`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.addInitScript((m) => localStorage.setItem('rscb.theme', m), mode)
+    await page.goto(GRAPH)
+    await settled(page)
+    const v = await legibility(page)
+    expect(v.nodes, 'pages against the ground').toBeGreaterThanOrEqual(3)
+    expect(v.links, 'links against the ground').toBeGreaterThanOrEqual(1.06)
+  })
