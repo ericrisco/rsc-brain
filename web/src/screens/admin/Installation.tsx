@@ -10,6 +10,7 @@ import type { ApiError } from '../../api/client.ts'
 import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
 import { resource } from '../../api/resource.ts'
+import { formatNumber } from '../../locale.ts'
 import { factoryProblem, localWhen, logoProblem, progressLabel, rateProblem } from '../../lib/admin.ts'
 import { lastUpdateText, sizeLabel } from '../../lib/backups.ts'
 import { ago } from '../../lib/brains.ts'
@@ -80,7 +81,7 @@ function Limits({ account }: { account: string }) {
             {theirs ? (
               <Conflict>
                 <p>
-                  {A.rateLabel}: <strong>{theirs.rateLimit.toLocaleString('en')}</strong>
+                  {A.rateLabel}: <strong>{formatNumber(theirs.rateLimit)}</strong>
                 </p>
               </Conflict>
             ) : null}

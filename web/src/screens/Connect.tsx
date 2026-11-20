@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
+import { locale } from '../locale.ts'
 import { invalidate, resource } from '../api/resource.ts'
 import {
   type AgentCheck,
@@ -52,7 +53,7 @@ const kitResource = (brain: string | null) =>
   resource<Kit>(`connect:${brain ?? ''}`, () => api.call<Kit>('connect', { query: brain ? { brain } : {} }))
 
 const clock = (iso: string) =>
-  new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  new Date(iso).toLocaleTimeString(locale.value === 'es' ? 'es-ES' : 'en-GB', { hour: '2-digit', minute: '2-digit' })
 
 // The consent page of the standard sign-in starts from the brain this page names (a hint, not a grant: the
 // person still chooses there). Left only when the person copies the standard command, the step that leads to

@@ -1,5 +1,5 @@
 // The rail at the left of every signed-in screen (plan canvas-ui D3): folded to its icons (56px) until the
-// person opens it to show their names (220px); the choice is remembered in this browser only, like the
+// person opens it to show their names (232–264px); the choice is remembered in this browser only, like the
 // theme. The frame reads the signal as data-rail, which sets its width.
 import { signal } from '@preact/signals'
 

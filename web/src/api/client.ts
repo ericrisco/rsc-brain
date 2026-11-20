@@ -2,6 +2,7 @@
 // only the Brain web sends (B4, CSRF); every refusal arrives as { status, code, message, howToProceed }
 // so a screen can always say what happened and what to do. A lost session leads to sign-in and back.
 import { signInPath } from '../lib/nav.ts'
+import { localizeMessage } from '../text.ts'
 import { type OpName, ROUTE_TABLE } from './routes.ts'
 
 export const WEB_HEADER = 'rsc-brain-web'
@@ -9,12 +10,13 @@ export const WEB_HEADER = 'rsc-brain-web'
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
-  readonly howToProceed: string
   readonly retryAfter: number | undefined
   // The current version after a conflict (an edit on a page that moved on), when the server sends it.
   readonly current: unknown
   // Everything wrong with a change checked as a whole, each with its operation.
-  readonly problems: Array<{ op: number | null; message: string }>
+  private readonly rawMessage: string
+  private readonly rawHowToProceed: string
+  private readonly rawProblems: Array<{ op: number | null; message: string }>
   // The operations the problems are about (an old base names its operation without a message).
   readonly problemOps: number[]
   // Where rsc-factory is, while it is to set this installation up (companion_pending); only a plain http(s) address.
@@ -28,9 +30,14 @@ export class ApiError extends Error {
     extra: { current?: unknown; problems?: unknown; factoryUrl?: unknown } = {},
   ) {
     super(message)
+    this.rawMessage = message
+    this.rawHowToProceed = howToProceed
+    Object.defineProperty(this, 'message', {
+      configurable: true,
+      get: () => localizeMessage(this.rawMessage),
+    })
     this.status = status
     this.code = code
-    this.howToProceed = howToProceed
     this.retryAfter = retryAfter
     this.current = extra.current
     this.factoryUrl =
@@ -40,11 +47,19 @@ export class ApiError extends Error {
     this.problemOps = Array.isArray(extra.problems)
       ? extra.problems.flatMap((p) => (typeof p?.op === 'number' ? [p.op] : []))
       : []
-    this.problems = Array.isArray(extra.problems)
+    this.rawProblems = Array.isArray(extra.problems)
       ? extra.problems
           .filter((p): p is { op?: unknown; message: string } => typeof p?.message === 'string')
           .map((p) => ({ op: typeof p.op === 'number' ? p.op : null, message: p.message }))
       : []
+  }
+
+  get howToProceed(): string {
+    return localizeMessage(this.rawHowToProceed)
+  }
+
+  get problems(): Array<{ op: number | null; message: string }> {
+    return this.rawProblems.map((problem) => ({ ...problem, message: localizeMessage(problem.message) }))
   }
 }
 

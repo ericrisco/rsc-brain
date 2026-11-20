@@ -2,6 +2,8 @@
 // restauración», plan §3.4; PR30), out of the screens so it is tested on its own: a failure and a warning in words,
 // the band of the administration until a good copy, why a copy cannot be restored here, the name to type before a
 // restore, and the file the installation key is saved in. Who may do what is the server's.
+import { formatNumber } from '../locale.ts'
+import { localizeMessage } from '../text.ts'
 
 const FAILURES: Record<string, string> = {
   disk_full: 'the disk of the copies is full',
@@ -26,7 +28,7 @@ const HOW: Record<string, string> = {
 // Why the last copy failed, in words; an unknown category still says it failed.
 export function failureText(category: string): string {
   const why = FAILURES[category] ?? FAILURES.failed
-  return `The last copy failed: ${why}. ${HOW[category] ?? HOW.failed}`
+  return localizeMessage(`The last copy failed: ${why}. ${HOW[category] ?? HOW.failed}`)
 }
 
 const WARNINGS: Record<string, string> = {
@@ -38,7 +40,9 @@ const WARNINGS: Record<string, string> = {
 
 // A copy kept whole, but with something after it not done.
 export function warningText(code: string): string {
-  return `A copy was kept whole, but ${WARNINGS[code] ?? 'something after it was not done'}. Check the disk of the copies.`
+  return localizeMessage(
+    `A copy was kept whole, but ${WARNINGS[code] ?? 'something after it was not done'}. Check the disk of the copies.`,
+  )
 }
 
 const REASONS: Record<string, string> = {
@@ -47,10 +51,10 @@ const REASONS: Record<string, string> = {
   'pre-update': 'Before an update',
   'pre-restore': 'Before a restore',
 }
-export const reasonLabel = (reason: string) => REASONS[reason] ?? reason
+export const reasonLabel = (reason: string) => localizeMessage(REASONS[reason] ?? reason)
 
 export function sizeLabel(bytes: number): string {
-  if (bytes < 1024) return `${bytes} bytes`
+  if (bytes < 1024) return `${formatNumber(bytes)} ${localizeMessage(bytes === 1 ? 'byte' : 'bytes')}`
   const units = ['KB', 'MB', 'GB', 'TB']
   let v = bytes / 1024
   let i = 0
@@ -58,7 +62,7 @@ export function sizeLabel(bytes: number): string {
     v /= 1024
     i++
   }
-  return `${v.toFixed(1)} ${units[i]}`
+  return `${formatNumber(Number(v.toFixed(1)))} ${units[i]}`
 }
 
 type Ok = { at: string; file: string } | null
@@ -76,18 +80,18 @@ export function restoreBlocked(
   item: { needsOldKey: boolean },
   o: { running: boolean; online: boolean },
 ): string | null {
-  if (!o.online) return 'You are offline: restoring needs the server.'
+  if (!o.online) return localizeMessage('You are offline: restoring needs the server.')
   if (item.needsOldKey)
-    return 'Made with an older key: restore it on the machine with that key (rsc-brain restore --key-file).'
-  if (o.running) return 'A copy is being made: restore when it ends.'
+    return localizeMessage('Made with an older key: restore it on the machine with that key (rsc-brain restore --key-file).')
+  if (o.running) return localizeMessage('A copy is being made: restore when it ends.')
   return null
 }
 
 // What is wrong with the name typed to confirm a restore, or null when it is the installation's, exactly.
 export function confirmProblem(typed: string, name: string): string | null {
   if (typed === name) return null
-  if (!typed) return `Type the name of this installation: ${name}`
-  return `Type the name exactly as it is: ${name}`
+  if (!typed) return localizeMessage(`Type the name of this installation: ${name}`)
+  return localizeMessage(`Type the name exactly as it is: ${name}`)
 }
 
 // The file the installation key is saved in holds the key alone, so `rsc-brain restore --key-file <file>` reads it as
@@ -113,9 +117,9 @@ export function lastUpdateOf(x: unknown): LastUpdate | null {
   return { ok: u.ok, from: u.from, to: u.to, at: u.at, log: typeof u.log === 'string' ? u.log : null }
 }
 export function lastUpdateText(u: LastUpdate): string {
-  if (u.ok) return `Updated from ${u.from} to ${u.to}.`
-  return (
+  if (u.ok) return localizeMessage(`Updated from ${u.from} to ${u.to}.`)
+  return localizeMessage(
     `The update from ${u.from} to ${u.to} failed. rsc-brain went back to ${u.from} with the data as it was just ` +
-    'before the update: nothing written was lost, and sessions and keys still work.'
+      'before the update: nothing written was lost, and sessions and keys still work.',
   )
 }

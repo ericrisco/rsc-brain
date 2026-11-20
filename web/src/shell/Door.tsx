@@ -8,6 +8,7 @@ import { OfflineStrip } from '../ui/states.tsx'
 import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
 import { helpOpen } from './keys.ts'
+import { LanguagePicker } from '../ui/LanguagePicker.tsx'
 
 export function Door({
   children,
@@ -24,6 +25,7 @@ export function Door({
     <div class="door">
       <header class="topbar">
         <Brand href={brand ? (signedIn ? '/' : '/sign-in') : null} />
+        <LanguagePicker variant="door" />
       </header>
       <main id="main">
         <OfflineStrip />

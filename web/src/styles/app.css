@@ -673,6 +673,34 @@ pre.command .word {
   padding: 0 20px;
 }
 
+.door .language-picker--door {
+  flex: none;
+  align-self: center;
+  margin-right: 16px;
+}
+
+.language-picker--door .language-picker-options {
+  display: flex;
+  gap: 4px;
+}
+
+.language-picker--door button {
+  min-height: 32px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.language-picker--door button[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 .door main {
   display: grid;
   align-content: start;
@@ -843,6 +871,10 @@ dialog::backdrop {
     padding: 0 12px;
   }
 
+  .door .language-picker--door {
+    margin-right: 8px;
+  }
+
   .rows li {
     grid-template-columns: minmax(0, 1fr) auto;
   }
@@ -892,6 +924,11 @@ dialog::backdrop {
   .door .topbar .brand {
     flex: 0 0 auto;
     padding: 0 8px;
+  }
+
+  .door .language-picker--door button {
+    min-height: 30px;
+    padding-inline: 6px;
   }
 }
 

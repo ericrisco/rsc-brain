@@ -1,6 +1,8 @@
 // A brain's settings and the administration of people and service accounts (spec B6 «Settings de un
 // cerebro», «Admin»; PR25a): what each row may offer, what a save sends, and how numbers read. Who may
 // do what is the server's (B4); this only decides what the screen offers and how it says why not.
+import { formatNumber } from '../locale.ts'
+import { localizeMessage, T } from '../text.ts'
 
 // The server's own reading of a repository address (src/domain/repos.ts), so the screen shows what a link
 // will match before it is sent: host (with an unusual port) and path, lowercase, without ".git".
@@ -74,7 +76,8 @@ export function thresholdProblems(v: Record<ThresholdName, string>): Partial<Rec
     const { min, max } = THRESHOLDS[k]
     const t = v[k].trim()
     const n = /^\d+$/.test(t) ? Number(t) : Number.NaN
-    if (!(n >= min && n <= max)) out[k] = `A whole number from ${min} to ${max}.`
+    if (!(n >= min && n <= max))
+      out[k] = localizeMessage(`A whole number from ${formatNumber(min)} to ${formatNumber(max)}.`)
   }
   return out
 }
@@ -174,15 +177,15 @@ export function serviceRows(accounts: readonly AdminAccount[]): AdminAccount[] {
 }
 
 export function rolesLabel(roles: AdminAccount['roles']): string {
-  if (!roles.length) return 'No brains yet'
-  return roles.map((r) => `${r.name} (${r.role})`).join(' · ')
+  if (!roles.length) return localizeMessage('No brains yet')
+  return roles.map((r) => `${r.name} (${T.invite.role[r.role] ?? r.role})`).join(' · ')
 }
 
 // How many short keys of a main key work now, and the references they carry (at most five named).
 export function refsLabel(live: number, refs: readonly string[]): string {
-  if (!live) return 'No short keys live'
-  const head = `${live} short ${live === 1 ? 'key' : 'keys'} live`
-  if (!refs.length) return head
+  if (!live) return localizeMessage('No short keys live')
+  const head = `${formatNumber(live)} short ${live === 1 ? 'key' : 'keys'} live`
+  if (!refs.length) return localizeMessage(head)
   const shown = refs.slice(0, 5).join(', ')
-  return refs.length > 5 ? `${head}: ${shown} and ${refs.length - 5} more` : `${head}: ${shown}`
+  return localizeMessage(refs.length > 5 ? `${head}: ${shown} and ${refs.length - 5} more` : `${head}: ${shown}`)
 }

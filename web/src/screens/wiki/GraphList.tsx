@@ -7,6 +7,7 @@
 import type { ComponentChildren } from 'preact'
 import { useState } from 'preact/hooks'
 import { countKey, type Filters, keyOf, linksOf, type Model } from '../../graph/model.ts'
+import { formatNumber } from '../../locale.ts'
 import { T } from '../../text.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { pageHref, StatusTag } from './common.tsx'
@@ -177,13 +178,13 @@ function GroupsTable({
                 <th scope="row" class={it.loose ? undefined : 'mono'}>
                   {name}
                 </th>
-                <td class="num">{n.toLocaleString('en-US')}</td>
+                <td class="num">{formatNumber(n)}</td>
                 <td>
                   {Object.entries(types)
                     .map(([t, c]) => `${T.wiki.typesPlural[t] ?? t} ${c}`)
                     .join(', ')}
                 </td>
-                <td class="num">{links.toLocaleString('en-US')}</td>
+                <td class="num">{formatNumber(links)}</td>
                 <td>
                   <RowActions label={g.rowActions(name)}>
                     <button
