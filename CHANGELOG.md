@@ -4,6 +4,14 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.5
+
+- Keep direct pushes from blocking the next Brain release (#62)
+
+## v0.7.4
+
+- fix: add MCP caching hints so modern clients accept tool lists (#57)
+
 ## v0.7.3
 
 - Publish Brain automatically after every merged pull request (#60)
