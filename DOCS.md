@@ -175,6 +175,18 @@ The way back runs in a session of its own, so a Ctrl-C at the terminal cannot cu
 `setsid`, or with `perl` where there is no `setsid` (macOS). A machine with neither runs it like any
 other step: there, do not press Ctrl-C while it goes back.
 
+### Publishing a version
+
+Every pull request merged into `main` publishes a stable version once CI passes. By default,
+GitHub Actions increments the patch number and writes release notes from the merged change.
+To choose a version explicitly, raise it in `src/core/version.ts`, `package.json` and its lockfile
+and add notes under the matching `## vX.Y.Z` heading in `CHANGELOG.md`.
+
+CI tests the release tree before publishing its tag, launcher and SHA-256 checksum. For an
+automatic patch, Actions also fast-forwards `main` to the versioned commit while the merged PR
+is still the tip. Concurrent merges keep their own versions. Existing installations discover
+a release on their next update check. Each administrator chooses when to apply it.
+
 ### Updating from the web (off until you turn it on)
 
 By default only the terminal updates. To let an administrator do it from the web:
@@ -445,6 +457,11 @@ and repeat until `next` is `null`. Parse the joined JSON and review all operatio
 A change to the proposal or page states returns `409 review_changed`; restart from the beginning.
 Every part checks access again. Small reviews keep their ordinary response. The web assembles parts
 automatically and only enables decisions after the complete review has loaded.
+
+Large wiki maps use the same paging parameters. `brain_map` and `GET /v1/brains/:slug/wiki/map`
+return `mapChunk` when the map exceeds the response limit. Keep the same brain and status filter for
+every part. On `409 map_changed`, request the first part again. The web loads the complete map
+automatically, including page summaries and tags.
 
 ## Connect your agent
 

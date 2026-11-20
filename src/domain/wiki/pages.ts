@@ -360,7 +360,7 @@ export async function wikiMap(
   const rows = await ctx.db.query(
     `SELECT address, type, title, summary, tags, status FROM pages
       WHERE brain_id = $1 AND ($2 OR status = 'current')
-      ORDER BY type, split_part(address, '/', 1), address`,
+      ORDER BY type, split_part(address, '/', 1), address, id`,
     [brain.id, Boolean(o.all)],
   )
   const groups: MapGroup[] = []

@@ -26,6 +26,7 @@ import {
 import { checkWiki, writeWiki } from '../../domain/wiki/write.ts'
 import { grantWriter, listWriters, revokeWriter } from '../../domain/wiki/writers.ts'
 import { MAX_REPLY_CHARS } from '../bounds.ts'
+import { chunkedReply } from '../chunked-reply.ts'
 import { bool, compact, obj, oneOf, reqStr, str } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
@@ -64,7 +65,8 @@ export const wikiRoutes: Route[] = [
     const status = q(r.query.get('status'))
     if (status !== undefined && status !== 'all')
       throw invalid('"status" is "all", or left out for current pages only.', 'Fix "status".')
-    return { body: await wikiMap(ctxOf(r), r.params.slug as string, { all: status === 'all' }) }
+    const map = await wikiMap(ctxOf(r), r.params.slug as string, { all: status === 'all' })
+    return { body: chunkedReply('map', map, r.query, r.viaMcp === true), compress: true }
   }),
   route('GET /v1/brains/:slug/wiki/decisions', async (r) => ({
     body: { decisions: await wikiDecisions(ctxOf(r), r.params.slug as string) },

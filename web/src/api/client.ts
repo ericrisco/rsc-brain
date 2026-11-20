@@ -146,26 +146,28 @@ function answerOf(text: string): unknown {
   return value
 }
 
-// Do not expose any operations to the screen until every part of the same review is present.
-async function wholeReview(
+// Render only after every part of the same snapshot has arrived.
+async function wholeReply(
+  kind: 'map' | 'review',
   first: unknown,
   next: (offset: number, snapshot: string) => Promise<unknown>,
 ): Promise<unknown> {
+  const field = `${kind}Chunk`
   const bad = () =>
     new ApiError(
       200,
       'bad_answer',
-      'The review could not be loaded completely.',
-      'Reload the review and try again.',
+      `The ${kind} could not be loaded completely.`,
+      `Reload the ${kind} and try again.`,
     )
-  let value = first as { reviewChunk?: Record<string, unknown> }
-  if (!value?.reviewChunk) return first
+  let value = first as Partial<Record<typeof field, Record<string, unknown>>>
+  if (!value?.[field]) return first
   let offset = 0
   let snapshot: string | undefined
   let total: number | undefined
   const parts: string[] = []
   for (;;) {
-    const p = value?.reviewChunk
+    const p = value?.[field]
     if (
       !p ||
       typeof p.text !== 'string' ||
@@ -189,9 +191,17 @@ async function wholeReview(
     value = (await next(offset, snapshot)) as typeof value
   }
   try {
-    const review = JSON.parse(parts.join(''))
-    if (!review?.proposal || !Array.isArray(review.ops) || typeof review.fingerprint !== 'string') throw bad()
-    return review
+    const result = JSON.parse(parts.join(''))
+    if (kind === 'review') {
+      if (!result?.proposal || !Array.isArray(result.ops) || typeof result.fingerprint !== 'string')
+        throw bad()
+    } else if (
+      typeof result?.intro !== 'string' ||
+      !Array.isArray(result.groups) ||
+      !Number.isSafeInteger(result.count)
+    )
+      throw bad()
+    return result
   } catch {
     throw bad()
   }
@@ -321,9 +331,9 @@ export function createClient(o: {
       if (res.status >= 200 && res.status < 300) {
         const value = answerOf(text)
         return (
-          op === 'proposalReview' && c.query?.offset === undefined
-            ? await wholeReview(value, (offset, snapshot) =>
-                client.call('proposalReview', { ...c, query: { ...c.query, offset, snapshot } }),
+          (op === 'proposalReview' || op === 'wikiMap') && c.query?.offset === undefined
+            ? await wholeReply(op === 'wikiMap' ? 'map' : 'review', value, (offset, snapshot) =>
+                client.call(op, { ...c, query: { ...c.query, offset, snapshot } }),
               )
             : value
         ) as T

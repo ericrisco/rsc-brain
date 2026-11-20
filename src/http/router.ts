@@ -68,7 +68,7 @@ export type PublicReq = {
   // The log of the server (src/core/log.ts).
   log: Log
 }
-export type Req = PublicReq & { who: Principal }
+export type Req = PublicReq & { who: Principal; viaMcp?: boolean }
 // A stream the server keeps writing to (Server-Sent Events) until the client leaves or `end` is called.
 export type StreamOut = {
   write(text: string): void
