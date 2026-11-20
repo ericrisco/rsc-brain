@@ -1,9 +1,133 @@
+import spanish from './i18n/es.json' with { type: 'json' }
+import { formatNumber, locale } from './locale.ts'
+
 const fmt = (n: number) => n.toLocaleString('en-US')
 const plural = (n: number, one: string, many = `${one}s`) => `${fmt(n)} ${n === 1 ? one : many}`
 
-// Every word of the web, in one place, so it can be translated later (spec B6 «Clarificaciones»: English
-// only in this version). Screens import from here; they do not hold sentences of their own.
-export const T = {
+type TranslationGroup = { args: string[]; entries: { from: string; to: string }[] }
+const staticSpanish = spanish.strings as Record<string, string>
+const dynamicSpanish = spanish.functions as Record<string, TranslationGroup>
+const compiledPatterns = new Map<string, { from: string; to: string; regex: RegExp }[]>()
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function patternsFor(path: string): { from: string; to: string; regex: RegExp }[] {
+  const cached = compiledPatterns.get(path)
+  if (cached) return cached
+  const group = dynamicSpanish[path]
+  if (!group) return []
+  const compiled = group.entries.map((entry) => {
+    const seen = new Set<string>()
+    const source = entry.from
+      .split(/(⟦a\d+(?:_\d+)?⟧)/g)
+      .map((part) => {
+        const token = /^⟦a(\d+)(?:_(\d+))?⟧$/.exec(part)
+        if (!token?.[1]) return escapeRegex(part)
+        const index = Number(token[1])
+        const member = token[2] === undefined ? '' : `_${token[2]}`
+        const groupName = `a${index}${member}`
+        if (seen.has(groupName)) return `\\k<${groupName}>`
+        seen.add(groupName)
+        return `(?<${groupName}>[\\s\\S]*?)`
+      })
+      .join('')
+    return { ...entry, regex: new RegExp(`^${source}$`, 'u') }
+  })
+  compiled.sort((a, b) => b.from.length - a.from.length)
+  compiledPatterns.set(path, compiled)
+  return compiled
+}
+
+function localizedEnum(value: string, name: string): string {
+  if (name === 'role') {
+    return ({ reader: 'lector', contributor: 'colaborador', curator: 'curador' } as Record<string, string>)[value] ?? value
+  }
+  return ['status', 'state', 'kind', 'how', 'dir', 'direction'].includes(name) ? (staticSpanish[value] ?? value) : value
+}
+
+function translateDynamic(path: string, output: string, args: unknown[]): string {
+  const direct = staticSpanish[output]
+  if (direct) return direct
+  const group = dynamicSpanish[path]
+  if (!group) return output
+  for (const entry of patternsFor(path)) {
+    const match = entry.regex.exec(output)
+    if (!match?.groups) continue
+    return entry.to.replace(/⟦a(\d+)(?:_(\d+))?⟧/g, (_, index: string, member?: string) => {
+      const argIndex = Number(index)
+      let captured = match.groups?.[`a${argIndex}${member === undefined ? '' : `_${member}`}`] ?? ''
+      const arg = args[argIndex]
+      if (typeof arg === 'number') captured = formatNumber(arg)
+      else if (typeof arg === 'string' && group.args[argIndex]) captured = localizedEnum(captured, group.args[argIndex]!)
+      return captured
+    })
+  }
+  return output
+}
+
+function translateArrayItem(part: unknown, args: unknown[]): unknown {
+  if (typeof part !== 'string') return part
+  for (const arg of args) {
+    if (typeof arg === 'number' && part === arg.toLocaleString('en-US')) return arg.toLocaleString('es-ES')
+  }
+  return staticSpanish[part] ?? part
+}
+
+export function localizeMessage(message: string): string {
+  if (locale.value !== 'es') return message
+  const direct = staticSpanish[message]
+  if (direct) return direct
+  for (const entry of patternsFor('$ui')) {
+    const match = entry.regex.exec(message)
+    if (!match?.groups) continue
+    return entry.to.replace(/⟦a(\d+)(?:_(\d+))?⟧/g, (_, index: string, member?: string) => {
+      const captured = match.groups?.[`a${index}${member === undefined ? '' : `_${member}`}`] ?? ''
+      return staticSpanish[captured] ?? captured
+    })
+  }
+  return message
+}
+
+function localized<T>(value: T, path = ''): T {
+  if (typeof value === 'string') return (locale.value === 'es' ? (staticSpanish[value] ?? value) : value) as T
+  if (typeof value === 'function') {
+    const original = value as (...args: unknown[]) => unknown
+    return ((...args: unknown[]) => {
+      if (locale.value !== 'es') return original(...args)
+      if (path === 'date' || path === 'dateTime') {
+        const date = new Date(String(args[0]))
+        const options: Intl.DateTimeFormatOptions =
+          path === 'date'
+            ? { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }
+            : { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }
+        const formatted = new Intl.DateTimeFormat('es-ES', options).format(date)
+        return path === 'dateTime' ? `${formatted} UTC` : formatted
+      }
+      const output = original(...args)
+      if (typeof output === 'string') return translateDynamic(path, output, args)
+      if (Array.isArray(output)) return output.map((part) => translateArrayItem(part, args))
+      return output
+    }) as T
+  }
+  if (Array.isArray(value)) return value.map((part, index) => localized(part, `${path}.${index}`)) as T
+  if (value && typeof value === 'object') {
+    return new Proxy(value as object, {
+      get(target, property, receiver) {
+        const currentLocale = locale.value
+        const child = Reflect.get(target, property, receiver)
+        if (typeof property === 'symbol') return child
+        void currentLocale
+        return localized(child, path ? `${path}.${property}` : property)
+      },
+    }) as T
+  }
+  return value
+}
+
+// Every word of the web, in one place. Screens import from here; they do not hold sentences of their own.
+const english = {
   product: 'rsc-brain',
   brandFallback: 'rsc-brain',
   skip: 'Skip to content',
@@ -20,6 +144,9 @@ export const T = {
     themeDark: 'Dark theme',
     themeLight: 'Light theme',
     theme: 'Theme',
+    language: 'Language',
+    english: 'English',
+    spanish: 'Spanish',
     signOut: 'Sign out',
     signingOut: 'Signing out…',
     signOutFailed: "Couldn't sign out. Check your connection and try again.",
@@ -47,6 +174,8 @@ export const T = {
     help: 'Help',
     expandRail: 'Expand the side bar',
     foldRail: 'Collapse the side bar',
+    expandRailShort: 'Expand',
+    foldRailShort: 'Collapse',
     switchBrain: 'Switch brain',
     brains: 'Your brains',
     newBrain: 'New brain',
@@ -2366,7 +2495,7 @@ export const T = {
     staleText: (when: string) => `last changed ${when};`,
     staleMore: (n: number) => (n === 1 ? '1 newer entry about it' : `${n} newer entries about it`),
     sourceText: (state: string) => `cites an entry that was ${state}`,
-    longText: (chars: string) => `${chars} characters`,
+    longText: (chars: number) => `${fmt(chars)} characters`,
     similarText: 'have almost the same title',
     entry: 'the entry',
     ask: 'Ask an agent to fix this',
@@ -2418,6 +2547,8 @@ export const T = {
     key: 'Keys',
     does: 'What it does',
     control: 'Same as',
+    then: 'then',
+    or: 'or',
   },
 
   notFound: {
@@ -2438,3 +2569,5 @@ export const T = {
     new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) +
     ' UTC',
 } as const
+
+export const T = localized(english) as typeof english

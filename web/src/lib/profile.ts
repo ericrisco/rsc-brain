@@ -1,26 +1,26 @@
 // Profile as a person reads it (spec B6 «Profile»): what a token reaches and may do, when it was last
 // used and by what, the form of a new token checked before it is sent, the email notices by brain, and
 // the key of the second factor in groups people can type.
-import { T } from '../text.ts'
+import { localizeMessage, T } from '../text.ts'
 import { ago, clientLabel } from './brains.ts'
 
 export function brainsLabel(t: { allBrains: boolean; brains: string[] | null }): string {
-  if (t.allBrains) return 'All your brains, and the ones you join later'
+  if (t.allBrains) return localizeMessage('All your brains, and the ones you join later')
   return (t.brains ?? []).join(', ')
 }
 
 export function permLabel(perm: string): string {
-  return perm === 'read' ? 'Read' : 'Read and write'
+  return localizeMessage(perm === 'read' ? 'Read' : 'Read and write')
 }
 
 export function lastUseLabel(
   t: { lastUsedAt: string | null; lastClient: string | null },
   now: Date = new Date(),
 ): string {
-  if (!t.lastUsedAt) return 'Never used'
+  if (!t.lastUsedAt) return localizeMessage('Never used')
   const when = ago(t.lastUsedAt, now) ?? ''
   const by = clientLabel(t.lastClient)
-  return by ? `Used ${when} by ${by}` : `Used ${when}`
+  return localizeMessage(by ? `Used ${when} by ${by}` : `Used ${when}`)
 }
 
 // A token works with the person's role in each brain (B4): «write» means something only where the person
@@ -84,10 +84,10 @@ export function tokenRequest(f: TokenForm): {
 } {
   const name = f.name.trim()
   const problems: { name?: string; brains?: string } = {}
-  if (!name) problems.name = 'Enter a name.'
-  else if (name.length > 80) problems.name = 'Shorten the name to 80 characters or fewer.'
+  if (!name) problems.name = localizeMessage('Enter a name.')
+  else if (name.length > 80) problems.name = localizeMessage('Shorten the name to 80 characters or fewer.')
   if (f.scope === 'some' && f.brains.length === 0)
-    problems.brains = 'Choose at least one brain, or all of them.'
+    problems.brains = localizeMessage('Choose at least one brain, or all of them.')
   if (problems.name || problems.brains) return { body: null, problems }
   // Only what the token reaches with read + write, and only where the person is a curator (wikiWriteChoices).
   const wikiWrite = f.perm === 'write' ? (f.wikiWrite ?? []) : []

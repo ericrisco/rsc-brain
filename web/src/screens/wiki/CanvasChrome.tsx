@@ -2,6 +2,7 @@
 // which names the clusters the picture is coloured by and hides them, and the canvas while it loads.
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { type Communities, NO_LINKS, OTHER } from '../../graph/communities.ts'
+import { formatNumber } from '../../locale.ts'
 import { T } from '../../text.ts'
 
 // The canvas while the graph loads, in the shape it will have.
@@ -98,7 +99,7 @@ export function CommunitiesPanel({
     <details class="graph-communities" open={openAtStart}>
       <summary class="com-head">
         <span class="panel-title">{g.communities}</span>
-        <span class="panel-meta">{rows.length.toLocaleString('en')}</span>
+        <span class="panel-meta">{formatNumber(rows.length)}</span>
       </summary>
       <fieldset class="com-list">
         <legend class="sr-only">{g.communitiesShown}</legend>
@@ -126,7 +127,7 @@ export function CommunitiesPanel({
                 />
                 <span class="com-dot" aria-hidden="true" />
                 <span class="com-name">{r.name}</span>
-                <span class="com-count">{r.count.toLocaleString('en')}</span>
+                <span class="com-count">{formatNumber(r.count)}</span>
               </label>
             </li>
           ))}

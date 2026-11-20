@@ -1,7 +1,8 @@
-/* The frame of a signed-in screen (plan canvas-ui D1–D3): the rail at the left, 56px of icons or 220px with
-   their names, and the screen in the rest of the width. On a phone the rail is a bar across the top. */
+/* The frame of a signed-in screen (plan canvas-ui D1–D3): the rail at the left, 56px of icons or 232–264px
+   with their names, and the screen in the rest of the width. On a phone the rail is a bar across the top. */
 
 .frame {
+  --rail-w-open: clamp(232px, 20vw, 264px);
   --rail-w: var(--rail-w-folded);
   --rail-col: var(--rail-w);
   min-height: 100dvh;
@@ -36,6 +37,7 @@
   flex-direction: column;
   gap: var(--space-1);
   width: var(--rail-w);
+  min-width: 0;
   height: 100dvh;
   padding: 0 var(--space-2) var(--space-2);
   background: var(--rail-bg);
@@ -72,6 +74,7 @@
 .rail-tools,
 .rail-foot {
   display: grid;
+  min-width: 0;
   gap: 2px;
 }
 
@@ -83,12 +86,14 @@
 .rail-nav {
   display: grid;
   align-content: start;
+  min-width: 0;
   gap: var(--space-2);
   padding-top: var(--space-1);
 }
 
 .rail-nav ul {
   display: grid;
+  min-width: 0;
   gap: 2px;
 }
 
@@ -110,6 +115,7 @@
   align-items: center;
   gap: 12px;
   width: 100%;
+  min-width: 0;
   min-height: 34px;
   padding: 0 10px;
   background: transparent;
@@ -352,6 +358,38 @@
   padding: 8px 10px 10px;
   border-bottom: 1px solid var(--rule);
   margin-bottom: 6px;
+}
+
+.language-picker--menu {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-block: 1px solid var(--rule);
+}
+
+.language-picker-title {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.language-picker-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.language-picker--menu .language-picker-options button {
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 6px;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.language-picker--menu .language-picker-options button[aria-pressed="true"] {
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--rail-line);
 }
 
 /* ── Folded: icons, and their names as tooltips ───────────────────────── */

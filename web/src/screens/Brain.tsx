@@ -349,7 +349,7 @@ export function Brain({ slug }: { slug: string }) {
     <>
       <div class="title-row start">
         <h1 class="title">{b.name}</h1>
-        <span class="tag">{b.role}</span>
+        <span class="tag">{T.invite.role[b.role] ?? b.role}</span>
         {b.status === 'archived' ? <span class="tag">{T.home.archived}</span> : null}
       </div>
       <p class="lead purpose">{b.purpose || <span class="muted">{T.brain.noPurpose}</span>}</p>

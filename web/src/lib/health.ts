@@ -101,7 +101,7 @@ export function healthItems(slug: string, h: Health): Record<SectionId, HealthIt
       ),
     ),
     long: h.long.map((x) =>
-      one(x.address, [page(slug, x.address, x.title)], t.longText(x.chars.toLocaleString('en-US'))),
+      one(x.address, [page(slug, x.address, x.title)], t.longText(x.chars)),
     ),
     similarTitles: h.similarTitles.map((x) => ({
       ...one(`${x.a}~${x.b}`, [page(slug, x.a, x.aTitle), page(slug, x.b, x.bTitle)], t.similarText),

@@ -1,7 +1,7 @@
 // The rail at the left of every signed-in screen (plan canvas-ui D1, D2): the logo, the search, the brain
 // switcher, the sections of the brain, and at the foot what waits for review, People, help, the account
 // and the button that shows the names. Folded it is 56px of icons whose names stay in the page, hidden to
-// the eye and shown as a tooltip on hover or focus (Esc hides it); open it is 220px with the names. On a
+// the eye and shown as a tooltip on hover or focus (Esc hides it); open it is 232–264px with the names. On a
 // phone it is a bar across the top, and the sections fold into a menu.
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
@@ -13,6 +13,7 @@ import type { Me } from '../session.ts'
 import { T } from '../text.ts'
 import { Brand } from '../ui/Brand.tsx'
 import { Icon, type IconName } from '../ui/icons.tsx'
+import { LanguagePicker } from '../ui/LanguagePicker.tsx'
 import { usePopover } from '../ui/usePopover.ts'
 import { createOpen } from './dialogs.ts'
 import { helpOpen, searchOpen } from './keys.ts'
@@ -257,6 +258,7 @@ function AccountMenu({ me }: { me: Me }) {
               <span>{T.shell.admin}</span>
             </a>
           ) : null}
+          <LanguagePicker variant="menu" />
           <button
             type="button"
             class="keyboard-only"
@@ -299,9 +301,14 @@ function ToReview() {
   const { count, href } = toReview(brains)
   if (!count) return null
   return (
-    <a class="rail-item to-review" href={href} aria-current={path === href ? 'page' : undefined}>
+    <a
+      class="rail-item to-review"
+      href={href}
+      aria-current={path === href ? 'page' : undefined}
+      aria-label={T.shell.toReview(count)}
+    >
       <Icon name="review" />
-      <span class="rail-label">{T.shell.toReview(count)}</span>
+      <span class="rail-label">{T.shell.proposals}</span>
       <span class="rail-badge" aria-hidden="true">
         {count}
       </span>
@@ -407,9 +414,10 @@ export function Rail({
           class="rail-item searchbox"
           onClick={() => (searchOpen.value = true)}
           aria-keyshortcuts="Meta+K Control+K"
+          aria-label={T.shell.searchHint}
         >
           <Icon name="search" />
-          <span class="rail-label">{T.shell.searchHint}</span>
+          <span class="rail-label">{T.shell.search}</span>
           <kbd class="rail-end">⌘K</kbd>
         </button>
         {brain ? <BrainSwitcher brain={brain} me={me} /> : null}
@@ -444,10 +452,11 @@ export function Rail({
           class="rail-item rail-toggle"
           aria-expanded={open ? 'true' : 'false'}
           aria-controls="rail"
+          aria-label={open ? T.shell.foldRail : T.shell.expandRail}
           onClick={() => toggleRail()}
         >
           <Icon name="panel" />
-          <span class="rail-label">{open ? T.shell.foldRail : T.shell.expandRail}</span>
+          <span class="rail-label">{open ? T.shell.foldRailShort : T.shell.expandRailShort}</span>
         </button>
       </div>
     </header>
