@@ -118,7 +118,10 @@ describe('the MCP endpoint', { skip: skipPg }, () => {
       assert.equal(r.status, 200, `${method}: ${JSON.stringify(r.body)}`)
       const res = r.body.result as { ttlMs?: unknown; cacheScope?: unknown }
       assert.ok(Number.isInteger(res.ttlMs) && (res.ttlMs as number) >= 0, `${method}: ttlMs ${res.ttlMs}`)
-      assert.ok(['public', 'private'].includes(res.cacheScope as string), `${method}: cacheScope ${res.cacheScope}`)
+      assert.ok(
+        ['public', 'private'].includes(res.cacheScope as string),
+        `${method}: cacheScope ${res.cacheScope}`,
+      )
     }
     // The tools a key sees depend on its role: that list must not be shared across keys.
     const tools = (await mcp(eric.key, 'tools/list')).body.result as { cacheScope: string }
