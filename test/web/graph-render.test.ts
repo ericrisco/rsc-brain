@@ -42,6 +42,7 @@ const palette: Palette = {
   com: ['#c00', '#0c0', '#00c', '#cc0', '#0cc', '#c0c', '#c80', '#08c', '#8c0', '#80c'],
   other: '#777',
   lone: '#555',
+  ring: 2.5,
 }
 // Four pages: 0–1–2 linked in a chain (community 0 and 1), 3 without links.
 const scene: Scene = {

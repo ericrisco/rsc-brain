@@ -43,6 +43,7 @@ import { useLive } from '../../live/follow.ts'
 import { me } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
+import { Dash } from '../../ui/Dash.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import { TextArea } from '../../ui/TextArea.tsx'
@@ -822,7 +823,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
           <h2 id="why-title" class="section-title">
             {w.why}
           </h2>
-          <p>{p.reason || '—'}</p>
+          <p>{p.reason || <Dash />}</p>
           {p.collected.length ? <p class="muted small">{w.collected(p.collected.length)}</p> : null}
           {review.warnings.length ? (
             <ul class="plain op-warnings">
@@ -936,7 +937,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
               {chose ? approveAll : null}
               <p class="decide-row">
                 <Button
-                  kind="quiet"
+                  kind="secondary"
                   data-shortcut="return"
                   data-needs={b.backNeedsComment ? 'proposal-comment' : undefined}
                   aria-keyshortcuts="r"

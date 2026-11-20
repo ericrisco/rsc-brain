@@ -592,7 +592,7 @@ function Invitations({
           <>
             <p>{p.withdrawLead(asking.email)}</p>
             <div class="actions">
-              <Button kind="primary" onClick={() => void withdraw(asking)}>
+              <Button kind="danger" onClick={() => void withdraw(asking)}>
                 {p.withdrawConfirm}
               </Button>
               <Button kind="quiet" onClick={() => setAsking(null)}>

@@ -909,7 +909,7 @@ function RevokeAll() {
           <p>{P.revokeAllLead}</p>
           <div class="actions" ref={yes}>
             <Button
-              kind="primary"
+              kind="danger"
               pending={pending}
               pendingLabel={T.states.pending}
               blocked={blocked()}

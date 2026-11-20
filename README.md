@@ -100,11 +100,11 @@ superseded never outranks what replaced it.
 
 ### The graph — see what your agents know
 
-<p align="center"><img width="100%" alt="The wiki as a full-screen graph: pages as dots coloured by community, a ring of pages with no links yet around it, and the communities panel with a checkbox and count per community." src="docs/assets/ui-graph.webp" /></p>
+<p align="center"><img width="100%" alt="The wiki as a full-screen graph: pages as grey dots on a pale ground, pages with no links yet fainter, and the communities panel with a checkbox and count per community." src="docs/assets/ui-graph.webp" /></p>
 
 A living picture of the wiki: pages pull toward what they link to and settle; drag one and its neighbours follow.
-Colours are communities found in the links themselves, each named after its most linked page. Pages with no links
-yet circle the whole brain, so what is disconnected is obvious at a glance. Hover for the title; click to read.
+Communities are found in the links themselves, each named after its most linked page, and shown or hidden from a
+panel. The page you pick and its neighbours light up in one colour. Pages with no links yet circle the whole brain, so what is disconnected is obvious at a glance. Hover for the title; click to read.
 
 **[Docs →](DOCS.md#the-web)**
 

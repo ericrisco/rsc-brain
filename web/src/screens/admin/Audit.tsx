@@ -11,6 +11,7 @@ import { type AuditFilters, auditExportHref, auditQuery, localWhen, localZone } 
 import type { AdminAccount } from '../../lib/settings.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
+import { Dash } from '../../ui/Dash.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import { AdminFrame } from './Admin.tsx'
@@ -241,10 +242,10 @@ function Screen() {
                     <td>
                       <time dateTime={r.at}>{localWhen(r.at)}</time>
                     </td>
-                    <td>{r.actor?.name ?? r.actor?.id ?? '—'}</td>
+                    <td>{r.actor?.name ?? r.actor?.id ?? <Dash />}</td>
                     <td class="mono">{r.action}</td>
-                    <td>{r.brain ?? '—'}</td>
-                    <td class="mono">{r.target ?? '—'}</td>
+                    <td>{r.brain ?? <Dash />}</td>
+                    <td class="mono">{r.target ?? <Dash />}</td>
                     <td>{A.outcomes[r.outcome] ?? r.outcome}</td>
                     <td>{r.detail}</td>
                   </tr>

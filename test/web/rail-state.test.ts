@@ -1,5 +1,5 @@
-// Plan canvas-ui D3 and CA1: the rail starts folded (56px), opens to 220px with a button, and the choice is
-// remembered in this browser only. A storage that is blocked or holds something else never breaks it.
+// Spec web redesign (Annex C 17, CA34): the rail starts open (228px) the first time, folds to 56px with a
+// button, and the choice is remembered in this browser only. A storage that is blocked or holds something else never breaks it.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { foldRail, RAIL_KEY, rail, readRail, setRail, startRail, toggleRail } from '../../web/src/lib/rail.ts'
@@ -27,39 +27,39 @@ describe('the rail', () => {
     assert.equal(RAIL_KEY, 'rscb.rail')
   })
 
-  it('starts folded when nothing is remembered, or something else is', () => {
-    assert.equal(readRail(memory()), 'folded')
-    assert.equal(readRail(memory({ 'rscb.rail': 'wide' })), 'folded')
-    assert.equal(readRail(null), 'folded')
-    assert.equal(readRail(blocked), 'folded')
+  it('starts open when nothing is remembered, or something else is', () => {
+    assert.equal(readRail(memory()), 'open')
+    assert.equal(readRail(memory({ 'rscb.rail': 'wide' })), 'open')
+    assert.equal(readRail(null), 'open')
+    assert.equal(readRail(blocked), 'open')
   })
 
-  it('starts open when open was remembered', () => {
-    assert.equal(readRail(memory({ 'rscb.rail': 'open' })), 'open')
-    const s = memory({ 'rscb.rail': 'open' })
+  it('starts folded when folded was remembered', () => {
+    assert.equal(readRail(memory({ 'rscb.rail': 'folded' })), 'folded')
+    const s = memory({ 'rscb.rail': 'folded' })
     startRail(s)
-    assert.equal(rail.value, 'open')
-    startRail(memory())
     assert.equal(rail.value, 'folded')
+    startRail(memory())
+    assert.equal(rail.value, 'open')
   })
 
   it('opening and folding is shown at once and remembered', () => {
     const s = memory()
     startRail(s)
     toggleRail(s)
-    assert.equal(rail.value, 'open')
-    assert.equal(s.data.get('rscb.rail'), 'open')
-    toggleRail(s)
     assert.equal(rail.value, 'folded')
     assert.equal(s.data.get('rscb.rail'), 'folded')
-    setRail('open', s)
+    toggleRail(s)
     assert.equal(rail.value, 'open')
+    assert.equal(s.data.get('rscb.rail'), 'open')
+    setRail('folded', s)
+    assert.equal(rail.value, 'folded')
   })
 
   it('a blocked storage only means the choice is not remembered', () => {
     startRail(blocked)
     assert.doesNotThrow(() => toggleRail(blocked))
-    assert.equal(rail.value, 'open')
+    assert.equal(rail.value, 'folded')
   })
 
   // Review R2: on a tablet (768–1099px) the open rail covers the screen, so opening it there is for the

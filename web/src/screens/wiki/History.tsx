@@ -18,7 +18,7 @@ import {
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
 import { Dialog } from '../../ui/Dialog.tsx'
-import { colourAt, PanelHead } from '../../ui/Panel.tsx'
+import { SectionHead } from '../../ui/Section.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import type { BrainOne } from '../Brain.tsx'
 import { blockedNow, isCurator, pageHref, Said } from './common.tsx'
@@ -44,13 +44,13 @@ function Why({ r }: { r: RevisionSummary }) {
   return r.reason ? <p class="why">{T.wiki.why(r.reason)}</p> : null
 }
 
-export function RecentHistory({ slug, address, n }: { slug: string; address: string; n: number }) {
+export function RecentHistory({ slug, address }: { slug: string; address: string }) {
   const r = pageResource(slug, address)
   const w = T.wiki
   const list = r.data.value?.history
   return (
-    <section class="aside-block panel pad" data-c={colourAt(n - 1)} aria-labelledby="recent-title">
-      <PanelHead n={n} id="recent-title" title={w.recent} meta={list?.length} />
+    <section class="aside-block card pad" aria-labelledby="recent-title">
+      <SectionHead id="recent-title" title={w.recent} meta={list?.length} />
       {list ? (
         <>
           <ul class="plain">
