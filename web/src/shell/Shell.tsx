@@ -66,6 +66,13 @@ export function Shell({
       for (const el of document.querySelectorAll<HTMLElement>('nav.tabs:not([data-watched])')) {
         el.setAttribute('data-watched', '')
         el.addEventListener('scroll', () => mark(el), { passive: true })
+        // The row can grow with no scroll (a font arrives and the tabs widen, the screen turns): look again
+        // whenever the row or one of its tabs changes size.
+        if (typeof ResizeObserver !== 'undefined') {
+          const ro = new ResizeObserver(() => mark(el))
+          ro.observe(el)
+          for (const a of el.querySelectorAll('a')) ro.observe(a)
+        }
         const bring = () => {
           const cur = el.querySelector('[aria-current]')?.getBoundingClientRect()
           const box = el.getBoundingClientRect()

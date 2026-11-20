@@ -8,10 +8,37 @@ const GRAPH = '/b/growth/wiki/graph'
 const settled = (page: Page) =>
   expect(page.locator('canvas.graph-canvas[data-settled]')).toHaveCount(1, { timeout: 20_000 })
 
+// Hides everything in the page but the canvas (it fills the frame under the bar and the panels) (through the CSSOM: the page's CSP bars an injected
+// style sheet), and puts it back.
+const only = (page: Page, on: boolean) =>
+  page.evaluate((on) => {
+    const w = window as unknown as { __kept?: Map<HTMLElement, string> }
+    w.__kept = w.__kept ?? new Map()
+    const keep = w.__kept
+    if (on) {
+      for (const el of document.querySelectorAll<HTMLElement>('body *')) {
+        if (el.matches('canvas.graph-canvas')) continue
+        keep.set(el, el.style.visibility)
+        el.style.setProperty('visibility', 'hidden', 'important')
+      }
+      document
+        .querySelector<HTMLElement>('canvas.graph-canvas')
+        ?.style.setProperty('visibility', 'visible', 'important')
+    } else {
+      for (const [el, v] of keep) el.style.visibility = v
+      document.querySelector<HTMLElement>('canvas.graph-canvas')?.style.removeProperty('visibility')
+      keep.clear()
+    }
+  }, on)
+
 // How many pixels of the canvas carry a hue (saturation over 35%), and how many are near the accent's hue.
 async function hues(page: Page, accentHue: number) {
   const canvas = page.locator('canvas.graph-canvas')
+  // Only the canvas's own pixels: the panels and buttons over it are hidden for the shot, since their text
+  // is smoothed with coloured fringes on some platforms (Linux) and is not what is being measured.
+  await only(page, true)
   const shot = (await canvas.screenshot()).toString('base64')
+  await only(page, false)
   return page.evaluate(
     async ({ shot, accentHue }) => {
       const img = new Image()
