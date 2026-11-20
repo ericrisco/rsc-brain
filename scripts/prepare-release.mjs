@@ -71,16 +71,19 @@ function selectedVersion(pr, version) {
     ],
     { encoding: 'utf8' },
   )
+  const sides = new Map()
   for (const line of patch.split('\n')) {
-    if (!line.startsWith('+')) continue
-    const field = /^\+ {2}"version"\s*:\s*"([^"]+)"/.exec(line)
-    if (field) return field[1] === version
-    // A compact manifest can fit on one added line.
-    if (line.startsWith('+{') && line.includes('"version"'))
-      return JSON.parse(line.slice(1)).version === version
-    if (/^\+\s*"version"\s*:/.test(line)) throw Error('Cannot identify the top-level version change')
+    const side = line[0]
+    if (side !== '+' && side !== '-') continue
+    const text = line.slice(1)
+    const field = /^ {2}"version"\s*:\s*"([^"]+)"/.exec(text)
+    if (field) sides.set(side, field[1])
+    else if (text.startsWith('{') && text.includes('"version"')) sides.set(side, JSON.parse(text).version)
+    else if (/^\s*"version"\s*:/.test(text)) throw Error('Cannot identify the top-level version change')
   }
-  return false
+  if (!sides.size) return false
+  if (!sides.has('-') || !sides.has('+')) throw Error('Incomplete package version delta')
+  return sides.get('+') === version && sides.get('-') !== version
 }
 
 // Follow the source version back to its tag or to the commit that chose it.

@@ -103,6 +103,21 @@ pr "$staged_pr" 71
 stamped=$(prepare "$staged")
 [[ $stamped != "$staged_pr" && $(jq -r .version package.json) == 0.9.1 ]]
 grep -Fq 'Document the new feature (#71)' CHANGELOG.md
+# A formatting-only PR after a directly staged version owns its patch even
+# when another PR merges before publication. Use the actual manifest diff.
+git switch -q --detach "$staged"
+jq . package.json > formatted
+mv formatted package.json
+git commit -qam 'Format manifest'
+formatted_pr=$(git rev-parse HEAD)
+pr "$formatted_pr" 72
+git diff "$staged" "$formatted_pr" -- package.json > "$tmp/pr-72.patch"
+git commit -q --allow-empty -m 'Follow formatting'
+format_follow=$(git rev-parse HEAD)
+pr "$format_follow" 73
+prepare "$formatted_pr" >/dev/null
+[[ $(jq -r .version package.json) == 0.9.2 ]]
+grep -Fq 'Format manifest (#72)' CHANGELOG.md
 git switch -q --detach "$base"
 
 # A direct push runs verification without a release. The next PR must still publish a single patch.
@@ -218,7 +233,7 @@ git commit -q --allow-empty -m 'Small follow-up'
 follow=$(git rev-parse HEAD)
 pr "$follow" 64
 mv "$tmp/$inner.json" "$tmp/late-rebase-association"
-echo '+  "version": "0.8.0",' > "$tmp/pr-63.patch"
+printf '%s\n' '-  "version": "0.7.4",' '+  "version": "0.8.0",' > "$tmp/pr-63.patch"
 prepare "$explicit" >/dev/null
 mv "$tmp/late-rebase-association" "$tmp/$inner.json"
 [[ $(jq -r .version package.json) == 0.8.1 ]]
