@@ -25,6 +25,15 @@ cat > "$tmp/gh" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1 $2" in
+  'api --paginate')
+    if [[ $3 == 'repos/{owner}/{repo}/pulls/'*'/files?per_page=100' ]]; then
+      number=${3%/files*}
+      if [[ -f $FIXTURE/pr-${number##*/}.patch ]]; then cat "$FIXTURE/pr-${number##*/}.patch"; fi
+      exit 0
+    fi
+    [[ $3 == 'repos/{owner}/{repo}/pulls?base=main&state=closed&per_page=100' && $4 == --jq ]] || exit 2
+    [[ ! -e $FIXTURE/api-failure ]] || exit 1
+    cat "$FIXTURE/merged.tsv" ;;
   'api repos/{owner}/{repo}/commits/'*'/pulls')
     sha=${2%/pulls}
     if [[ -e $FIXTURE/${sha##*/}.json ]]; then cat "$FIXTURE/${sha##*/}.json"; else echo '[]'; fi ;;
@@ -55,7 +64,9 @@ case "$1 $2" in
 esac
 MOCK
 chmod +x "$tmp/gh"
+: > "$tmp/merged.tsv"
 pr() {
+  printf '%s\t%s\n' "$1" "$2" >> "$tmp/merged.tsv"
   printf '[{"merged_at":"today","merge_commit_sha":"%s","number":%s,"base":{"ref":"main","repo":{"full_name":"test/product"}}}]\n' "$1" "$2" > "$tmp/$1.json"
 }
 prepare() { node "$scripts/prepare-release.mjs" "$1"; }
@@ -67,19 +78,55 @@ refuse() {
   if "$@" > "$tmp/failure" 2>&1; then echo "Unexpected success: $*" >&2; exit 1; fi
   [[ -z $reason ]] || grep -Fq "$reason" "$tmp/failure"
 }
+# The current PR may be visible in the merged records before the commit association index.
+git commit -q --allow-empty -m 'Merge with delayed indexing'
+unindexed=$(git rev-parse HEAD)
+pr "$unindexed" 70
+rm "$tmp/$unindexed.json"
+touch "$tmp/api-failure"
+refuse '' prepare "$base"
+rm "$tmp/api-failure"
+unindexed_release=$(prepare "$base")
+[[ $unindexed_release != "$unindexed" && $(jq -r .version package.json) == 0.7.3 ]]
+grep -Fq 'Merge with delayed indexing (#70)' CHANGELOG.md
+git switch -q --detach "$base"
+
+# A version already staged by a direct push is the baseline, not an explicit choice by a later PR.
+echo '{"version":"0.9.0"}' > package.json
+echo '{"version":"0.9.0","packages":{"":{"version":"0.9.0"}}}' > package-lock.json
+echo "export const VERSION = '0.9.0'" > src/core/version.ts
+git commit -qam 'Stage version directly'
+staged=$(git rev-parse HEAD)
+git commit -q --allow-empty -m 'Document the new feature'
+staged_pr=$(git rev-parse HEAD)
+pr "$staged_pr" 71
+stamped=$(prepare "$staged")
+[[ $stamped != "$staged_pr" && $(jq -r .version package.json) == 0.9.1 ]]
+grep -Fq 'Document the new feature (#71)' CHANGELOG.md
+git switch -q --detach "$base"
+
+# A direct push runs verification without a release. The next PR must still publish a single patch.
+git commit -q --allow-empty -m 'Direct documentation edit'
+direct=$(git rev-parse HEAD)
+direct_candidate=$(prepare "$base")
+[[ -z $direct_candidate ]]
+[[ $(git rev-parse HEAD) == "$direct" ]]
 git commit -q --allow-empty -m 'First change (#60)'
 first=$(git rev-parse HEAD)
-refuse 'No merged PR' prepare "$base"
 pr "$first" 60
-first_release=$(prepare "$base")
+touch "$tmp/api-failure"
+refuse '' prepare "$direct"
+rm "$tmp/api-failure"
+first_release=$(prepare "$direct")
 [[ $first_release != "$first" && $(jq -r .version package.json) == 0.7.3 ]]
 grep -Fq 'First change (#60)' CHANGELOG.md
+if grep -Fq 'Direct documentation edit' CHANGELOG.md; then exit 1; fi
 [[ $(jq -r '.packages[""].version' package-lock.json) == 0.7.3 ]]
 grep -Fq "VERSION = '0.7.3'" src/core/version.ts
 git branch ci-release "$first_release"
 git bundle create "$tmp/brain.bundle" refs/heads/ci-release "^$first"
 git switch -q --detach "$first"
-[[ $(prepare "$base") == "$first_release" ]]
+[[ $(prepare "$direct") == "$first_release" ]]
 
 # A second PR can merge and finish before the first publication. Model a two-commit rebase.
 git switch -q --detach "$first"
@@ -147,10 +194,8 @@ git commit -qam 'Overlapping version choice'
 overlap=$(git rev-parse HEAD)
 pr "$overlap" 67
 mv "$tmp/$first.json" "$tmp/late-association"
-(sleep 2; mv "$tmp/late-association" "$tmp/$first.json") &
-lookup=$!
 overlap_release=$(prepare "$first")
-wait "$lookup"
+mv "$tmp/late-association" "$tmp/$first.json"
 [[ $overlap_release != "$overlap" ]]
 grep -Fq '## v0.7.3' CHANGELOG.md
 grep -Fq 'Explicit notes.' CHANGELOG.md
@@ -173,10 +218,9 @@ git commit -q --allow-empty -m 'Small follow-up'
 follow=$(git rev-parse HEAD)
 pr "$follow" 64
 mv "$tmp/$inner.json" "$tmp/late-rebase-association"
-(sleep 2; mv "$tmp/late-rebase-association" "$tmp/$inner.json") &
-lookup=$!
+echo '+  "version": "0.8.0",' > "$tmp/pr-63.patch"
 prepare "$explicit" >/dev/null
-wait "$lookup"
+mv "$tmp/late-rebase-association" "$tmp/$inner.json"
 [[ $(jq -r .version package.json) == 0.8.1 ]]
 [[ $(grep -c '^## v0.8.0$' CHANGELOG.md) == 1 ]]
 git switch -q --detach "$explicit"

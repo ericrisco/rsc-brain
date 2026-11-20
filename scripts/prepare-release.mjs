@@ -12,13 +12,40 @@ function pullsAt(sha) {
       pr.merged_at && pr.base.ref === 'main' && pr.base.repo.full_name === process.env.GITHUB_REPOSITORY,
   )
 }
-async function confirmedPulls(sha, match) {
+// The commit-association index can lag a merge. The PR records distinguish an
+// actual merge endpoint from an unrelated direct push or the interior of a rebase.
+function mergedPulls() {
+  const rows = execFileSync(
+    'gh',
+    [
+      'api',
+      '--paginate',
+      'repos/{owner}/{repo}/pulls?base=main&state=closed&per_page=100',
+      '--jq',
+      '.[] | select(.merged_at != null) | [.merge_commit_sha, .number] | @tsv',
+    ],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+  ).trim()
+  const merged = new Map()
+  for (const row of rows.split('\n').filter(Boolean)) {
+    const [sha, number] = row.split('\t')
+    if (!/^[0-9a-f]{40}$/.test(sha) || !/^[1-9]\d*$/.test(number ?? ''))
+      throw Error('Invalid merged PR record')
+    merged.set(sha, { number: Number(number) })
+  }
+  return merged
+}
+async function associatedPulls(sha, match) {
   for (const wait of [0, 1000, 3000, 6000, 10000]) {
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait))
-    const matches = pullsAt(sha).filter(match)
-    if (matches.length) return matches
+    const found = pullsAt(sha).filter(match)
+    if (found.length) return found
   }
-  throw Error(`No merged PR confirmed for ${sha}. Rerun after GitHub indexes the merge.`)
+  return []
+}
+async function currentMerge(sha) {
+  const [indexed] = await associatedPulls(sha, (pr) => pr.merge_commit_sha === sha)
+  return indexed ?? mergedPulls().get(sha)
 }
 const patch = (version) => version.replace(/\d+$/, (n) => String(BigInt(n) + 1n))
 const note = (sha, pr) => {
@@ -30,22 +57,55 @@ const note = (sha, pr) => {
   return `- ${title || 'Merge pull request'} (#${pr.number})`
 }
 
-// Usually the preceding main commit already carries its release number. For overlapping
-// runs, count each as-yet unstamped PR at its merge SHA, including a multi-commit rebase just once.
+// Only needed when GitHub cannot associate the version-setting commit inside
+// a rebase. Inspect the first following PR's manifest delta before assigning it a patch.
+function selectedVersion(pr, version) {
+  const patch = execFileSync(
+    'gh',
+    [
+      'api',
+      '--paginate',
+      `repos/{owner}/{repo}/pulls/${pr.number}/files?per_page=100`,
+      '--jq',
+      '.[] | select(.filename == "package.json") | (.patch // error("missing package.json diff"))',
+    ],
+    { encoding: 'utf8' },
+  )
+  for (const line of patch.split('\n')) {
+    if (!line.startsWith('+')) continue
+    const field = /^\+ {2}"version"\s*:\s*"([^"]+)"/.exec(line)
+    if (field) return field[1] === version
+    // A compact manifest can fit on one added line.
+    if (line.startsWith('+{') && line.includes('"version"'))
+      return JSON.parse(line.slice(1)).version === version
+    if (/^\+\s*"version"\s*:/.test(line)) throw Error('Cannot identify the top-level version change')
+  }
+  return false
+}
+
+// Follow the source version back to its tag or to the commit that chose it.
+// Only PR merge endpoints along this path can have an outstanding patch.
 async function unstamped(before, version) {
   const commits = git('rev-list', '--first-parent', before).split('\n')
   const pending = []
+  let merged
   for (let i = 0; i < commits.length - 1; i++) {
     const sha = commits[i]
     if (git('tag', '--points-at', sha, '--list', `v${version}`)) break
     if (versionAt(commits[i + 1]) !== version) {
-      // With a rebase, the commit that set an explicit version can precede its PR's merge SHA.
-      if (!pending.length) return []
-      const owners = new Set((await confirmedPulls(sha, () => true)).map((pr) => pr.number))
-      return pending.filter(({ pr }) => !owners.has(pr.number)).reverse()
+      if (!pending.length) break
+      // The version-setting commit can be inside a rebase, at its tip, or a direct push.
+      // Exclude the PR that chose this explicit baseline from the outstanding patches.
+      if (merged.has(sha)) break
+      const first = pending.at(-1).pr
+      const owners = await associatedPulls(sha, () => true)
+      if (owners.length ? owners.some((pr) => pr.number === first.number) : selectedVersion(first, version)) {
+        pending.pop()
+      }
+      break
     }
-    const associated = await confirmedPulls(sha, () => true)
-    const pr = associated.find((candidate) => candidate.merge_commit_sha === sha)
+    merged ??= mergedPulls()
+    const pr = merged.get(sha)
     if (pr) pending.push({ sha, pr })
   }
   return pending.reverse()
@@ -53,12 +113,13 @@ async function unstamped(before, version) {
 
 async function prepare(before) {
   const source = git('rev-parse', 'HEAD')
-  const [pr] = await confirmedPulls(source, (candidate) => candidate.merge_commit_sha === source)
+  const pr = await currentMerge(source)
+  if (!pr) return
   git('merge-base', '--is-ancestor', before, source)
   const declared = versionAt(source)
   const previous = versionAt(before)
-  if (![declared, previous].every((v) => isPublished(`v${v}`))) throw Error('Expected stable versions')
   const missing = await unstamped(before, previous)
+  if (![declared, previous].every((v) => isPublished(`v${v}`))) throw Error('Expected stable versions')
   const last = missing.reduce((v) => patch(v), previous)
   const automatic = declared === previous
   const version = automatic ? patch(last) : declared
@@ -125,4 +186,5 @@ function commitRelease(source, version, number) {
   )
   return git('rev-parse', 'HEAD')
 }
-console.log(await prepare(process.argv[2]))
+const release = await prepare(process.argv[2])
+if (release) console.log(release)
