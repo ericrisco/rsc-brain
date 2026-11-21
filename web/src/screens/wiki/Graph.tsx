@@ -28,6 +28,7 @@ import {
 } from '../../graph/model.ts'
 import type { DrawnMessage, FromWorker, ToWorker } from '../../graph/protocol.ts'
 import { NODE_R, type Palette, Renderer, type Scene, type State } from '../../graph/render.ts'
+import { graphLook, setGraphLook } from '../../lib/graphLook.ts'
 import { landing } from '../../lib/landing.ts'
 import { isField } from '../../lib/screen.ts'
 import { PAGE_STATUSES, PAGE_TYPES } from '../../lib/wiki.ts'
@@ -872,6 +873,8 @@ function GraphCanvas({
   const [tip, setTip] = useState(-1)
   const tipNow = useRef(-1)
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 })
+  // The look the person chose (plain or hologram): reading it here repaints when it changes.
+  const look = graphLook.value
   // Once the person pans, zooms or drags a page, the view stays theirs until what is drawn changes.
   const auto = useRef(true)
   const hover = useRef(-1)
@@ -1042,6 +1045,7 @@ function GraphCanvas({
       height: h,
       dpr: dpr.current,
       palette: palette(),
+      look: graphLook.value,
       nodes: s.nodes,
       edges: s.edges,
       fit: s.nodes,
@@ -1304,7 +1308,7 @@ function GraphCanvas({
     const moved = panel && bringIntoView(latest.current.selected, true)
     if (toggled || moved) sendState()
   }, [panel, selected])
-  useEffect(sendState, [nodes, edges, focus, selected, active, refit, rings, hop, bridgePairs])
+  useEffect(sendState, [nodes, edges, focus, selected, active, refit, rings, hop, bridgePairs, look])
   // A hidden item is not named.
   useEffect(() => {
     if (tipNow.current >= 0 && !nodes[tipNow.current]) showTip(-1)
@@ -1626,8 +1630,18 @@ function GraphCanvas({
   return (
     <section class="graph-section" aria-label={g.graphView}>
       <div class="graph-stage">
-        <div class="graph-box" ref={box} data-scroll-x>
+        <div class={`graph-box${look === 'holo' ? ' holo' : ''}`} ref={box} data-scroll-x>
           <div class="graph-tools" ref={tools}>
+            <button
+              type="button"
+              class="tool"
+              onClick={() => setGraphLook(look === 'holo' ? 'plain' : 'holo')}
+              aria-label={g.holoLook}
+              aria-pressed={look === 'holo' ? 'true' : 'false'}
+              title={g.holoLook}
+            >
+              <Icon name="holo" />
+            </button>
             <button
               type="button"
               class="tool"

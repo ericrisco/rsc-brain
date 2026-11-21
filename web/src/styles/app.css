@@ -4764,3 +4764,59 @@ input[type="file"]::file-selector-button {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+/* The graph's hologram look (the tools' last button): the ground deepens into a glow, faint scan lines run
+   over the picture and the corners of a sight frame it. Over the canvas but under the tools, and never in the
+   way of the pointer. The canvas paints the rest (graph/render.ts, look "holo"). */
+.graph-box.holo {
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    color-mix(in oklch, var(--accent) 9%, var(--ground)) 0%,
+    var(--ground) 70%
+  );
+}
+
+.graph-box.holo::before,
+.graph-box.holo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.graph-box.holo::before {
+  background: repeating-linear-gradient(
+    to bottom,
+    color-mix(in oklch, var(--accent) 5%, transparent) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+.graph-box.holo::after {
+  --c: color-mix(in oklch, var(--accent) 60%, transparent);
+  inset: 10px;
+  background:
+    linear-gradient(var(--c), var(--c)) top left / 28px 1.5px,
+    linear-gradient(var(--c), var(--c)) top left / 1.5px 28px,
+    linear-gradient(var(--c), var(--c)) top right / 28px 1.5px,
+    linear-gradient(var(--c), var(--c)) top right / 1.5px 28px,
+    linear-gradient(var(--c), var(--c)) bottom left / 28px 1.5px,
+    linear-gradient(var(--c), var(--c)) bottom left / 1.5px 28px,
+    linear-gradient(var(--c), var(--c)) bottom right / 28px 1.5px,
+    linear-gradient(var(--c), var(--c)) bottom right / 1.5px 28px;
+  background-repeat: no-repeat;
+}
+
+.graph-screen .graph-box.holo {
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    color-mix(in oklch, var(--accent) 9%, var(--ground)) 0%,
+    var(--ground) 70%
+  );
+}
+
+.graph-tools .tool[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--raised);
+}

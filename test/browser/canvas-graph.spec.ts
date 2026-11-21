@@ -580,3 +580,36 @@ test.describe('motion allowed', () => {
   test.use({ reducedMotion: 'no-preference' })
   pickingAndClearance()
 })
+
+test('the hologram look: a tool turns it on and off, the picture keeps its items, the choice is remembered', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.setViewportSize({ width: 1366, height: 768 })
+  await page.goto(GRAPH)
+  await settled(page)
+  await upToDate(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  const before = await canvas.getAttribute('data-items')
+  const holo = page.locator('.graph-tools').getByRole('button', { name: 'Hologram look', exact: true })
+  await expect(holo).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.locator('.graph-box.holo')).toHaveCount(0)
+  await holo.click()
+  await expect(holo).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.graph-box.holo')).toHaveCount(1)
+  await upToDate(page)
+  expect(await canvas.getAttribute('data-items')).toBe(before)
+  expect(await page.evaluate(() => localStorage.getItem('rscb.graphLook'))).toBe('holo')
+  // The overlay never takes the pointer from the canvas.
+  const overlay = await page
+    .locator('.graph-box.holo')
+    .evaluate((el) => getComputedStyle(el, '::before').pointerEvents)
+  expect(overlay).toBe('none')
+  await page.reload()
+  await settled(page)
+  await expect(page.locator('.graph-box.holo')).toHaveCount(1)
+  await page.locator('.graph-tools').getByRole('button', { name: 'Hologram look', exact: true }).click()
+  await expect(page.locator('.graph-box.holo')).toHaveCount(0)
+})

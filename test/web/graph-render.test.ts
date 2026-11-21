@@ -4,7 +4,16 @@
 // hidden (a filter, a community unticked).
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { DIM, EDGE, type Palette, Renderer, type Scene, type State } from '../../web/src/graph/render.ts'
+import {
+  DIM,
+  EDGE,
+  HOLO,
+  hubs,
+  type Palette,
+  Renderer,
+  type Scene,
+  type State,
+} from '../../web/src/graph/render.ts'
 
 type Op = { op: string; args: unknown[]; alpha: number; fill: string; stroke: string }
 // A 2D context that records every call with the alpha and colours in force.
@@ -180,5 +189,54 @@ describe('the painter of the graph', () => {
     r.setScene(scene)
     r.state = state()
     assert.equal(r.paint(recorder().ctx), null)
+  })
+  it('plain by default: no glow, no grid, no reticle', () => {
+    const { ops, d } = paint()
+    assert.equal(d?.reticles, undefined)
+    assert.ok(!ops.some((o) => o.op === 'save'), 'no grid drawn')
+  })
+
+  it('the hologram look adds a grid behind, a glow and a reticle round the hubs, and still writes no words', () => {
+    // Page 1 becomes a hub: three links.
+    const hub: Scene = { ...scene, degree: new Uint32Array([1, HOLO.hubMin, 1, 0]) }
+    const r = new Renderer()
+    r.setScene(hub)
+    r.layout = new Float32Array([-60, 0, 0, 0, 60, 0, 0, 120])
+    r.state = state({ look: 'holo' })
+    const { ctx, ops } = recorder()
+    const d = r.paint(ctx)
+    assert.deepEqual(hubs(hub, r.state), [1])
+    assert.equal(d?.reticles, 1)
+    // The grid sits behind: drawn before the first page.
+    const grid = ops.findIndex((o) => o.op === 'save')
+    const firstFill = ops.findIndex((o) => o.op === 'fill')
+    assert.ok(grid >= 0 && grid < firstFill, 'grid under the pages')
+    assert.equal(ops.filter((o) => o.op === 'fillText' || o.op === 'strokeText').length, 0)
+    // The same items and lines as the plain look.
+    const plain = new Renderer()
+    plain.setScene(hub)
+    plain.layout = r.layout
+    plain.state = state()
+    assert.deepEqual(plain.paint(recorder().ctx)?.counts, d?.counts)
+  })
+
+  it('the hologram look never puts a reticle on a page with few links, and at most HOLO.hubs', () => {
+    const n = HOLO.hubs + 10
+    const big: Scene = {
+      n,
+      pages: n,
+      byGroups: false,
+      group: new Uint8Array(n),
+      superseded: new Uint8Array(n),
+      count: new Uint32Array(n),
+      degree: Uint32Array.from({ length: n }, (_, i) => (i === 0 ? 1 : HOLO.hubMin + i)),
+      edges: new Uint32Array(0),
+      colour: new Uint8Array(n),
+    }
+    const st = state({ nodes: new Uint8Array(n).fill(1), look: 'holo' })
+    const h = hubs(big, st)
+    assert.equal(h.length, HOLO.hubs)
+    assert.ok(!h.includes(0))
+    assert.equal(h[0], n - 1, 'the best-linked first')
   })
 })
