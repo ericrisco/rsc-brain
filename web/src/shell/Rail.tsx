@@ -118,7 +118,9 @@ function RailLink({ item }: { item: Item }) {
 }
 
 // The sections of the brain, and the way back to all brains. Also the content of the menu on a phone.
-export function BrainLinks({ brain }: { brain: BrainNav | null }) {
+// Outside a brain (Administration, People, all brains) the phone's menu, which is given `me`, has no sections
+// to hold, so it holds the places a person goes from there. The rail on a wide screen has them elsewhere.
+export function BrainLinks({ brain, me }: { brain: BrainNav | null; me?: Me }) {
   const { path } = useLocation()
   // How many proposals wait in this brain, beside its section (from the brains and their numbers).
   const waiting = brain
@@ -131,6 +133,25 @@ export function BrainLinks({ brain }: { brain: BrainNav | null }) {
         <li>
           <RailLink item={home} />
         </li>
+        {!brain && me?.account.canInvite ? (
+          <li>
+            <RailLink
+              item={{ href: '/people', label: T.shell.people, icon: 'people', here: path === '/people' }}
+            />
+          </li>
+        ) : null}
+        {!brain && me?.account.isAdmin ? (
+          <li>
+            <RailLink
+              item={{
+                href: '/admin/people',
+                label: T.shell.admin,
+                icon: 'admin',
+                here: path.startsWith('/admin'),
+              }}
+            />
+          </li>
+        ) : null}
       </ul>
       {brain ? (
         <ul class="rail-group">
@@ -300,12 +321,14 @@ function AccountMenu({ me }: { me: Me }) {
 
 // What waits for me to review: the proposals of the brains I curate; with one brain waiting it leads to
 // its inbox, with more to home, where each card says how many.
-function ToReview() {
+function ToReview({ brain }: { brain: BrainNav | null }) {
   const { path } = useLocation()
   const brains = brainsResource().data.value?.brains
   if (!brains) return null
   const { count, href } = toReview(brains)
   if (!count) return null
+  // In the one brain that holds all of them, its own Proposals item already says so: not twice.
+  if (brain && brains.find((b) => b.slug === brain.slug)?.stats.pendingProposals === count) return null
   return (
     <a class="rail-item to-review" href={href} aria-current={path === href ? 'page' : undefined}>
       <Icon name="review" />
@@ -397,16 +420,14 @@ export function Rail({
       onFocusIn={tips.moved}
     >
       <div class="rail-head">
-        {brain ? (
-          <button
-            type="button"
-            class="button quiet only-narrow"
-            aria-expanded={menu ? 'true' : 'false'}
-            onClick={onMenu}
-          >
-            {T.shell.menu}
-          </button>
-        ) : null}
+        <button
+          type="button"
+          class="button quiet only-narrow"
+          aria-expanded={menu ? 'true' : 'false'}
+          onClick={onMenu}
+        >
+          {T.shell.menu}
+        </button>
         <Brand />
       </div>
       <div class="rail-tools">
@@ -423,7 +444,7 @@ export function Rail({
       </div>
       <BrainLinks brain={brain} />
       <div class="rail-foot">
-        <ToReview />
+        <ToReview brain={brain} />
         {me.account.canInvite ? (
           <a
             class="rail-item"

@@ -42,18 +42,32 @@
   --plate-dark: #131416;
 }
 
+/* Dark, on top of shared.css v4 (which raised the grounds, the edges and the controls for both repositories): what
+   only Brain draws or needs. The muted words, the neutral and the positive tints (a diff addition is the positive
+   tint), and the graph's quiet pages and links. Light and high contrast are as they were. Muted words reach 4.5:1
+   or more on every ground; the graph's quiet marks 4.5:1 on its well. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
-    --edge: #5c6066;
-    --graph-node: #a4a7ab;
-    --graph-lone: #5f6267;
+    --muted: #b4b7bb;
+    --pill-neutral-bg: #3a3c3f;
+    --pill-neutral-ink: #e3e5e8;
+    --pill-positive-bg: #245c3a;
+    --pill-positive-ink: #d3f5e2;
+    --edge: #8d9197;
+    --graph-node: #c4c7cb;
+    --graph-lone: #8a8e94;
   }
 }
 
 :root[data-theme="dark"] {
-  --edge: #5c6066;
-  --graph-node: #a4a7ab;
-  --graph-lone: #5f6267;
+  --muted: #b4b7bb;
+  --pill-neutral-bg: #3a3c3f;
+  --pill-neutral-ink: #e3e5e8;
+  --pill-positive-bg: #245c3a;
+  --pill-positive-ink: #d3f5e2;
+  --edge: #8d9197;
+  --graph-node: #c4c7cb;
+  --graph-lone: #8a8e94;
 }
 
 @media (prefers-contrast: more) {

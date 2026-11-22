@@ -37,7 +37,9 @@ export const blockedNow = (pending: boolean) => writeBlocked({ online: online.va
 
 export function StatusTag({ status }: { status: string }) {
   const word = T.wiki.statuses[status] ?? status
-  return <span class={`tag status-${status}${status === 'current' ? '' : ' warn'}`}>{word}</span>
+  // Current is the sound state (a check), stale and superseded want a look (a sign), retired is simply off.
+  const tone = status === 'current' ? ' ok' : status === 'retired' ? '' : ' warn'
+  return <span class={`tag status-${status}${tone}`}>{word}</span>
 }
 
 export function TypeTag({ type }: { type: string }) {

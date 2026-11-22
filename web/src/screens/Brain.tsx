@@ -79,7 +79,7 @@ function Step({
         </h3>
         <span class="tag">{word}</span>
       </div>
-      {children}
+      <div class="step-body">{children}</div>
     </li>
   )
 }

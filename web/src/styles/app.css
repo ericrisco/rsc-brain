@@ -483,6 +483,11 @@ legend .step {
   color: var(--pill-warning-ink);
 }
 
+/* A message at the top of a screen (set up, welcome, deleted) does not touch what is under it. */
+.page > .alert {
+  margin-bottom: var(--gap);
+}
+
 .alert.ok {
   background: var(--pill-positive-bg);
   border-color: var(--positive);
@@ -651,7 +656,14 @@ legend .step {
   font-weight: 600;
 }
 
-/* Something happening now (an open session, an invitation that waits): the neutral pill with a dot. */
+/* Something happening now (an open session, a proposal or an invitation that waits): an accent tint with an
+   accent edge and a dot, so it is not the grey of the states that are over. */
+.tag.live {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
 .tag.live::before {
   content: "●" / "";
   margin-right: 4px;
@@ -1356,13 +1368,25 @@ dialog::backdrop {
   margin-top: 8px;
 }
 
+/* Each step spans two rows of the list's grid, its head and its body, so the heads line up across the columns
+   and so do the bodies, whatever one head or one body holds. */
 /* biome-ignore lint/style/noDescendingSpecificity: a different list from .list; the rules never meet */
 .first-steps li {
   display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
   gap: 8px;
   justify-items: start;
   padding: 16px 0;
   border-top: var(--line) solid var(--rule);
+}
+
+.step-body {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  justify-items: start;
+  width: 100%;
 }
 
 .step-head {
@@ -1694,6 +1718,8 @@ select:disabled {
 .tabs a {
   display: inline-flex;
   align-items: center;
+  /* A count after the label is a flex item: the space between them is this gap, not a text space. */
+  gap: 6px;
   min-height: 40px;
   color: var(--muted);
   text-decoration: none;
@@ -1734,7 +1760,23 @@ select:disabled {
     flex: none;
   }
 
-  /* More tabs to the right: a mark at the edge, gone once the row is slid to its end. */
+  /* More tabs to the left or the right: a mark at that edge, gone once the row is slid to that end. */
+  .tabs[data-more-start]::before {
+    content: "‹";
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    flex: none;
+    align-self: center;
+    /* No width of its own: the glyph hangs in the blank before the first tab (see tabsStart). */
+    width: 0;
+    margin-right: -24px;
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
   .tabs[data-more]::after {
     content: "›";
     position: sticky;
@@ -2162,13 +2204,12 @@ h2.section-title:focus {
 
 .choice {
   gap: 8px;
-  padding: 12px;
-  border: var(--line) solid var(--border);
-  border-radius: var(--radius-card);
+  padding: 0;
+  border: 0;
 }
 
 .choice legend {
-  padding: 0 4px;
+  padding: 0 0 4px;
   color: var(--text);
 }
 
@@ -2289,6 +2330,13 @@ pre.version {
 
 .filter-box .filters {
   margin: 8px 0 0;
+}
+
+/* In a part (already a card on the sheet) the audit's filters are not a card of their own: frame, sheet, card. */
+.part-body > form.filter-box {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 /* The button of a filter form sits apart from the last field. */
@@ -2970,6 +3018,25 @@ label.op-head:hover {
 .table-wrap {
   max-width: 100%;
   overflow-x: auto;
+}
+
+/* A table wider than its box: a mark at the right edge, over the header row, while more columns wait. */
+.table-wrap[data-more]::before,
+.table-scroll[data-more]::before {
+  content: "›";
+  display: block;
+  position: sticky;
+  left: calc(100% - 28px);
+  z-index: 1;
+  width: 28px;
+  height: 36px;
+  margin-bottom: -36px;
+  background: var(--surface);
+  border-left: var(--line) solid var(--rule);
+  color: var(--text);
+  font-size: 20px;
+  line-height: 36px;
+  text-align: center;
 }
 
 .table-wrap + .table-wrap {
@@ -4485,7 +4552,9 @@ dialog.search-dialog {
 
 .audit-filters {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  /* Six fields: one row on a wide sheet, never five and one left alone. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  align-items: end;
   gap: 8px 16px;
   margin: 0;
   padding: 0;
@@ -4524,22 +4593,37 @@ input[type="date"]:focus {
 }
 
 /* Fixes of PR25b: the file picker looks like the other controls; the audit's time zone spans the filters. */
+/* A file field is drawn as the other fields: the same height, edge, radius and fill, its button inside it. */
 input[type="file"] {
+  width: 100%;
   max-width: 100%;
-  font: 14px var(--sans);
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0;
+  background: var(--surface);
   color: var(--muted);
+  border: var(--line) solid var(--field-line);
+  border-radius: var(--radius-control);
+  font: var(--fs-body) var(--font-sans);
+  line-height: calc(var(--control-height) - 2px);
 }
 
 input[type="file"]::file-selector-button {
-  min-height: 36px;
-  margin-right: 12px;
-  padding: 0 14px;
-  background: var(--raised, var(--surface));
+  height: calc(var(--control-height) - 2px);
+  margin: 0 12px 0 0;
+  padding: 0 12px;
+  background: var(--raised);
   color: var(--text);
-  border: 1px solid var(--field-line);
-  border-radius: 999px;
-  font: 500 14px var(--sans);
+  border: 0;
+  border-right: var(--line) solid var(--field-line);
+  border-radius: 0;
+  font: 500 var(--fs-body) var(--font-sans);
   cursor: pointer;
+}
+
+input[type="file"]:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
 }
 
 .audit-zone {
@@ -5040,4 +5124,148 @@ input[type="file"]::file-selector-button {
 /* An absent datum. */
 .none {
   color: var(--muted);
+}
+
+/* ── The graph on a phone ─────────────────────────────────────────────────
+   The strip floats a little off the top bar as a plate like the other controls (it touched the bar), Graph | List
+   and the filters sit under it where they are first seen (they had dropped under the communities at the foot),
+   and the place card comes after them. The count of pages is on the place card: the strip drops it. */
+@media (max-width: 767px) {
+  .graph-strip {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    min-height: 40px;
+    padding: 0 12px;
+    border: var(--line) solid var(--border);
+    border-radius: var(--r-card);
+  }
+
+  .graph-strip .sec-meta {
+    display: none;
+  }
+
+  .graph-screen .graph-center,
+  .graph-screen:has(.graph-mark) .graph-center {
+    top: 56px;
+    bottom: auto;
+    left: 8px;
+  }
+
+  .graph-screen .graph-left {
+    top: 108px;
+    left: 8px;
+  }
+
+  .graph-center .graph-filters > search {
+    top: calc(100% + 10px);
+    bottom: auto;
+  }
+
+  .graph-screen .graph-communities {
+    bottom: 64px;
+  }
+
+  .graph-screen:has(.graph-mark) .graph-communities {
+    bottom: 106px;
+  }
+
+  .graph-screen .graph-box:has(.graph-canvas:focus-visible)::after {
+    top: 57px;
+  }
+}
+
+/* ── Checkboxes and radios in dark ────────────────────────────────────────
+   The system draws an empty one as a grey fill with a faint edge. In dark they are drawn here: the sheet's
+   own fill, an edge at 3:1 or more, and the accent when on. Light and high contrast keep the system's. The size
+   is the lowest-priority rule (a screen that sets its own, 18px or 16px, keeps it). */
+:where(:root[data-theme="dark"]) :where(input[type="checkbox"], input[type="radio"]) {
+  width: 16px;
+  height: 16px;
+}
+
+:root[data-theme="dark"] :where(input[type="checkbox"], input[type="radio"]) {
+  appearance: none;
+  flex: none;
+  background: var(--surface);
+  border: var(--line) solid var(--control-strong);
+}
+
+:root[data-theme="dark"] input[type="checkbox"] {
+  border-radius: 4px;
+}
+
+:root[data-theme="dark"] input[type="radio"] {
+  border-radius: 50%;
+}
+
+:root[data-theme="dark"] :where(input[type="checkbox"], input[type="radio"]):checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+:root[data-theme="dark"] input[type="checkbox"]:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%230f1011' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+:root[data-theme="dark"] input[type="radio"]:checked {
+  box-shadow: inset 0 0 0 3px var(--surface);
+}
+
+:root[data-theme="dark"] :where(input[type="checkbox"], input[type="radio"]):disabled {
+  opacity: 0.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme])) :where(input[type="checkbox"], input[type="radio"]) {
+    width: 16px;
+    height: 16px;
+  }
+
+  :root:not([data-theme]) :where(input[type="checkbox"], input[type="radio"]) {
+    appearance: none;
+    flex: none;
+    background: var(--surface);
+    border: var(--line) solid var(--control-strong);
+  }
+
+  :root:not([data-theme]) input[type="checkbox"] {
+    border-radius: 4px;
+  }
+
+  :root:not([data-theme]) input[type="radio"] {
+    border-radius: 50%;
+  }
+
+  :root:not([data-theme]) :where(input[type="checkbox"], input[type="radio"]):checked {
+    background-color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  :root:not([data-theme]) input[type="checkbox"]:checked {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%230f1011' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  :root:not([data-theme]) input[type="radio"]:checked {
+    box-shadow: inset 0 0 0 3px var(--surface);
+  }
+
+  :root:not([data-theme]) :where(input[type="checkbox"], input[type="radio"]):disabled {
+    opacity: 0.5;
+  }
+}
+
+/* Forced colours paint every fill and shadow over, so the drawn checked state would vanish: give the controls back
+   to the system, which draws checked and unchecked in the person's own colours. Important, because the drawn rules
+   above are scoped by theme and outrank a plain selector. */
+@media (forced-colors: active) {
+  input[type="checkbox"],
+  input[type="radio"] {
+    appearance: auto !important;
+    background-image: none !important;
+  }
 }

@@ -126,15 +126,16 @@ export const VALUES: Record<string, string> = {
   '--fs-body': '14px',
   '--fs-small': '12px',
 }
-// The dark mode's starting values (spec, provisional).
+// The dark mode's values of shared.css v4 (raised by the review of the redesign, for both repositories).
 export const DARK: Record<string, string> = {
-  '--ground': '#0f1011',
-  '--surface': '#17181a',
-  '--raised': '#1e2022',
-  '--active': '#26282b',
-  '--border': '#2a2c2f',
-  '--rule': '#202224',
-  '--control': '#6b6f75',
+  '--ground': '#0a0b0c',
+  '--surface': '#1a1b1d',
+  '--raised': '#222427',
+  '--active': '#2c2e32',
+  '--border': '#45474b',
+  '--rule': '#303236',
+  '--control': '#7a7e84',
+  '--control-strong': '#868a90',
   '--text': '#f2f3f4',
   '--muted': '#a4a7ab',
   '--accent': '#5fb3c7',
@@ -155,7 +156,7 @@ describe('shared tokens (shared.css)', () => {
   // The digests both repos carry: change shared.css or a face in either and this fails in every run, with no
   // need to have the other repo at hand. When the shared files change on purpose, both repos take the new ones.
   const PINNED: Record<string, string> = {
-    'shared.css': '9de6dfff55dfa2c9dbd757acb571e8367f8d159af1cef86108d6beaf3676a9da',
+    'shared.css': 'ac16c38fb5624b6f3476de21f507f9332c900b28d2f62ec94b27cdc8a26ea41a',
     'fonts/OFL.txt': '7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da',
     'fonts/ibm-plex-mono-latin1-400.woff2':
       'e8993d946649b9d01abb1ed06d574b19d8ea3e66b5c3948602db335c44c18e56',
@@ -314,6 +315,59 @@ describe("Brain's tokens over the shared ones (tokens.css)", () => {
       const [r, , b] = hex(vars.get(k) as string)
       assert.ok(b - r <= 6, `${k} has a blue tint`)
     }
+  })
+
+  // Dark's values of shared.css were provisional; tokens.css raises them (review of the redesign, finding 13).
+  // Chosen or asked by the system, they are the same, and every one is held to its floor.
+  it('dark: edges, muted words, pills and the quiet graph are raised, chosen or asked by the system', () => {
+    const asked = new Map(chosen(sharedBlocks, 'dark'))
+    for (const b of blocks(tokens))
+      if (b.media?.includes('prefers-color-scheme: dark') && b.selector === ':root:not([data-theme])')
+        for (const [k, v] of b.vars) asked.set(k, v)
+    const picked = chosen(brain, 'dark')
+    for (const vars of [picked, asked]) {
+      // A control's edge (shared.css v4), on the sheet and on the graph's well: 3:1.
+      for (const ground of ['--surface', '--raised'])
+        assert.ok(contrast(vars, '--control-strong', ground) >= 3, `--control-strong on ${ground}`)
+      assert.ok(contrast(vars, '--control', '--surface') >= 3, '--control on --surface')
+      // Muted words, on every ground they sit on: 4.5:1.
+      for (const ground of ['--surface', '--raised', '--active', '--pill-neutral-bg'])
+        assert.ok(contrast(vars, '--muted', ground) >= 4.5, `--muted on ${ground}`)
+      // The edge of the sheet and the cards reads against the frame and the sheet; the neutral pill against the sheet.
+      assert.ok(contrast(vars, '--border', '--surface') >= 1.6, '--border on --surface')
+      assert.ok(contrast(vars, '--border', '--ground') >= 1.6, '--border on --ground')
+      assert.ok(contrast(vars, '--pill-neutral-bg', '--surface') >= 1.4, 'neutral pill on the sheet')
+      assert.ok(contrast(vars, '--pill-positive-bg', '--surface') >= 1.9, 'a diff addition on the sheet')
+      // The graph's quiet pages and links on its well.
+      for (const k of ['--graph-node', '--graph-lone', '--edge'])
+        assert.ok(contrast(vars, k, '--raised') >= 4.5, `${k} on --raised`)
+    }
+  })
+
+  it('light and high contrast keep the values of before (the review raises dark only)', () => {
+    const light = chosen(brain, 'light')
+    for (const [k, v] of Object.entries({
+      '--border': '#e8eaec',
+      '--rule': '#f0f1f2',
+      '--control-strong': '#878a8e',
+      '--muted': '#5d5f60',
+      '--pill-neutral-bg': '#ebedee',
+      '--pill-positive-bg': '#dcfae5',
+      '--edge': '#9a9da1',
+      '--graph-node': '#6b6e72',
+      '--graph-lone': '#b4b7ba',
+    }))
+      assert.equal(light.get(k), v, k)
+    const high = chosen(brain, 'contrast')
+    for (const [k, v] of Object.entries({
+      '--border': '#595959',
+      '--control-strong': '#595959',
+      '--muted': '#3d3d3d',
+      '--edge': '#595959',
+      '--graph-node': '#3d3d3d',
+      '--graph-lone': '#767676',
+    }))
+      assert.equal(high.get(k), v, k)
   })
 
   it('the pick in the graph has a thicker ring in high contrast', () => {

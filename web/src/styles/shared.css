@@ -1,4 +1,4 @@
-/* shared.css v3 — the tokens rsc-brain and rsc-factory share. The same file lives in both repositories, byte for
+/* shared.css v4 — the tokens rsc-brain and rsc-factory share. The same file lives in both repositories, byte for
    byte: change it in one, copy it (and fonts/ beside it) to the other, and raise the version above.
 
    The look: the app chrome is one tinted L-shaped frame (sidebar and top bar on one ground, no
@@ -120,6 +120,8 @@
   --control: #cdced1;
   /* WCAG 1.4.11: where a border is all that shows a control (a text field, an empty checkbox), it reaches 3:1. */
   --control-strong: #878a8e;
+  /* A canvas card's edge: the hairline in light and high contrast; a step stronger in dark, where the card sits on a lighter well. */
+  --node-edge: var(--border);
   --text: #131416;
   --muted: #5d5f60;
   --accent: #1b6c80;
@@ -154,14 +156,15 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --ground: #0f1011;
-    --surface: #17181a;
-    --raised: #1e2022;
-    --active: #26282b;
-    --border: #2a2c2f;
-    --rule: #202224;
-    --control: #6b6f75;
-    --control-strong: #6b6f75;
+    --ground: #0a0b0c;
+    --surface: #1a1b1d;
+    --raised: #222427;
+    --active: #2c2e32;
+    --border: #45474b;
+    --rule: #303236;
+    --control: #7a7e84;
+    --control-strong: #868a90;
+    --node-edge: #5d6167;
     --text: #f2f3f4;
     --muted: #a4a7ab;
     --accent: #5fb3c7;
@@ -191,14 +194,15 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --ground: #0f1011;
-  --surface: #17181a;
-  --raised: #1e2022;
-  --active: #26282b;
-  --border: #2a2c2f;
-  --rule: #202224;
-  --control: #6b6f75;
-  --control-strong: #6b6f75;
+  --ground: #0a0b0c;
+  --surface: #1a1b1d;
+  --raised: #222427;
+  --active: #2c2e32;
+  --border: #45474b;
+  --rule: #303236;
+  --control: #7a7e84;
+  --control-strong: #868a90;
+  --node-edge: #5d6167;
   --text: #f2f3f4;
   --muted: #a4a7ab;
   --accent: #5fb3c7;
@@ -238,6 +242,7 @@
     --rule: #767676;
     --control: #595959;
     --control-strong: #595959;
+    --node-edge: var(--border);
     --text: #000000;
     --muted: #3d3d3d;
     --accent: #0b4f60;
@@ -276,6 +281,7 @@
   --rule: #767676;
   --control: #595959;
   --control-strong: #595959;
+  --node-edge: var(--border);
   --text: #000000;
   --muted: #3d3d3d;
   --accent: #0b4f60;
