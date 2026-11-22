@@ -404,3 +404,19 @@ test('a forget heard live takes the title off the rows already shown, for a memb
   await s.emit('growth', 'session.closed', { target: { id: 'ses_x', label: null } as never })
   await expect(feed(page).first()).toContainText('closed a session')
 })
+
+test('the quiet sessions start a section of their own, clear of the list above', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto(A)
+  const active = page.getByRole('region', { name: 'Active sessions now' })
+  const quiet = page.getByRole('region', { name: 'Quiet sessions' })
+  await expect(quiet).toBeVisible()
+  const above = await active.boundingBox()
+  const below = await quiet.boundingBox()
+  expect(above && below).toBeTruthy()
+  expect((below?.y ?? 0) - ((above?.y ?? 0) + (above?.height ?? 0))).toBeGreaterThanOrEqual(20)
+})

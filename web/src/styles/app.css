@@ -3686,6 +3686,11 @@ label.op-head:hover {
   gap: 8px;
 }
 
+/* The quiet sessions are a second list: they keep the space of a new section from the list above. */
+.act-sessions > section + section {
+  margin-top: 24px;
+}
+
 .act-sessions .count {
   font: 500 12px var(--font-sans);
   font-variant-numeric: tabular-nums;
