@@ -4,6 +4,10 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.8
+
+- Activity: the quiet sessions start clear of the list above (#67)
+
 ## v0.7.7
 
 - Web fixes from the outside design review, and clearer dark theme (#66)
