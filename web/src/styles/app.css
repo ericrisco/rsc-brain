@@ -5267,6 +5267,5 @@ input[type="file"]:focus-visible {
   input[type="radio"] {
     appearance: auto !important;
     background-image: none !important;
-    box-shadow: none !important;
   }
 }
