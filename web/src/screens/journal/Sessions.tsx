@@ -159,6 +159,9 @@ function Filters({
   )
 }
 
+// A session in progress is live, one closed with its summary is done, one closed without it wants a look.
+const SESSION_TONE: Record<string, string> = { open: ' live', closed: ' ok', closed_no_summary: ' warn' }
+
 function SessionItem({ slug, s }: { slug: string; s: SessionView }) {
   const j = T.journal
   const summary = s.summary ? plainText(s.summary) : null
@@ -166,7 +169,7 @@ function SessionItem({ slug, s }: { slug: string; s: SessionView }) {
     <li>
       <p class="list-title">
         <a href={sessionHref(slug, s.id)}>{sessionLabel(s)}</a>{' '}
-        <span class={`tag${s.status === 'open' ? ' live' : ''}`}>{j.statuses[s.status] ?? s.status}</span>
+        <span class={`tag${SESSION_TONE[s.status] ?? ''}`}>{j.statuses[s.status] ?? s.status}</span>
       </p>
       <p class="meta">
         {byline({ author: s.author, onBehalf: null, client: s.client, ref: null })} · {j.entriesIn(s.entries)}{' '}

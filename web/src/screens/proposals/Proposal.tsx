@@ -62,6 +62,14 @@ import {
 } from './data.ts'
 import { DecidedLine, proposer, ReadOnlyLine } from './Inbox.tsx'
 
+// A proposal waiting is live; approved is done, partly approved or returned want a look; the rest is just off.
+const PROPOSAL_TONE: Record<string, string> = {
+  pending: ' live',
+  approved: ' ok',
+  partially_approved: ' warn',
+  returned: ' bad',
+}
+
 const NONE: Choices = { selected: [], corrections: {}, baseReviewed: [], comment: '' }
 
 // The person's choices on this proposal, kept as they type (a reload or a failed send keeps them), per
@@ -758,9 +766,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
         <a href={backHref}>{w.back}</a>
       </p>
       <WikiHead title={p.title}>
-        <span class={`tag${p.status === 'pending' ? '' : ' warn'}`}>
-          {w.statusWord[p.status] ?? p.status}
-        </span>
+        <span class={`tag${PROPOSAL_TONE[p.status] ?? ''}`}>{w.statusWord[p.status] ?? p.status}</span>
         {p.old && p.status === 'pending' ? (
           <span class="tag warn" title={w.oldTitle}>
             {w.old}

@@ -26,10 +26,10 @@ export const LIGHT = {
 
 // The dark mode's starting values (spec, provisional).
 export const DARK = {
-  ground: 'rgb(15, 16, 17)',
-  surface: 'rgb(23, 24, 26)',
+  ground: 'rgb(10, 11, 12)',
+  surface: 'rgb(26, 27, 29)',
   text: 'rgb(242, 243, 244)',
-  muted: 'rgb(164, 167, 171)',
+  muted: 'rgb(180, 183, 187)',
   accent: 'rgb(95, 179, 199)',
 } as const
 
