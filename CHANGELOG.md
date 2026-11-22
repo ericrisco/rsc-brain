@@ -4,6 +4,10 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.6
+
+- ✨ Redesign the web app: one sheet, IBM Plex, light, dark and high contrast (#61)
+
 ## v0.7.5
 
 - Keep direct pushes from blocking the next Brain release (#62)
