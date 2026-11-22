@@ -119,9 +119,7 @@ export async function branded(db: Db, m: Message): Promise<Message> {
     `<div style="max-width:560px;margin:0 auto;padding:24px;background:${MAIL.surface};border:1px solid ${MAIL.border};border-radius:16px">`,
     `<p style="margin:0 0 20px;font-size:16px;line-height:22px;font-weight:600;color:${MAIL.text}">`,
     logo
-      ? // No fixed height or width: a client that does not show the inline logo then leaves no empty box where it
-        // would be (a 32px square and a gap before the name), only the gap.
-        `<img src="cid:${LOGO_CID}" alt="" style="max-height:32px;width:auto;vertical-align:middle;margin-right:10px">`
+      ? `<img src="cid:${LOGO_CID}" alt="" height="32" style="height:32px;width:auto;vertical-align:middle;margin-right:10px">`
       : '',
     `${esc(name)}</p>`,
     `<div style="white-space:pre-wrap;font-size:14px;line-height:22px;color:${MAIL.text}">${body}</div>`,

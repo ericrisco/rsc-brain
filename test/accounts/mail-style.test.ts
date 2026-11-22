@@ -45,9 +45,6 @@ describe('the look of a mail', () => {
       text: 'y',
     })
     assert.match(m.html as string, new RegExp(`src="cid:${LOGO_CID}"`))
-    // Sized by a maximum only, so a client that does not show it leaves no empty square before the name.
-    assert.match(m.html as string, /<img [^>]*style="max-height:32px;width:auto/)
-    assert.doesNotMatch(m.html as string, /<img [^>]*\b(height|width)="/)
     assert.equal(m.attachments?.[0]?.cid, LOGO_CID)
   })
 
