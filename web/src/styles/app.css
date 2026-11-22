@@ -5258,3 +5258,15 @@ input[type="file"]:focus-visible {
     opacity: 0.5;
   }
 }
+
+/* Forced colours paint every fill and shadow over, so the drawn checked state would vanish: give the controls back
+   to the system, which draws checked and unchecked in the person's own colours. Important, because the drawn rules
+   above are scoped by theme and outrank a plain selector. */
+@media (forced-colors: active) {
+  input[type="checkbox"],
+  input[type="radio"] {
+    appearance: auto !important;
+    background-image: none !important;
+    box-shadow: none !important;
+  }
+}
