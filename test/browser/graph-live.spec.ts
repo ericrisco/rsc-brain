@@ -325,7 +325,7 @@ for (const width of [1100, 1366, 1920])
     for (const open of [false, true]) {
       if (open) await page.getByRole('button', { name: 'Inspector', exact: true }).click()
       const controls = [await boxOf('.graph-center'), await boxOf('.inspector-toggle')]
-      for (const q of ['.graph-strip .panel-about', '.graph-strip .panel-meta', '.graph-strip h1']) {
+      for (const q of ['.graph-strip .sec-about', '.graph-strip .sec-meta', '.graph-strip h1']) {
         const w = await boxOf(q)
         if (!w.shown) continue
         for (const c of controls)
@@ -442,10 +442,11 @@ test.describe('out of sight and less motion (motion allowed)', () => {
   })
 })
 
-// Polish (2026-11-09): the canvas is framed like a panel: coloured corners, and a strip with the numbered
-// chip, «GRAPH · <brain> · what your agents know» and «<N> PAGES · <M> LINKS». Graph | List | Filters and the
-// Inspector switch sit in that strip. v0.5.0: the Communities panel at the right folds from its header.
-test('the canvas is a panel with its strip; the communities fold from their header', async ({
+// Polish (2026-11-09), as the web redesign leaves it: the canvas fills the sheet with a strip along its top,
+// «Graph · <brain> · what your agents know» and «<N> pages · <M> links», no number and no coloured corners.
+// Graph | List | Filters and the Inspector switch sit in that strip. v0.5.0: the Communities panel at the right
+// folds from its header.
+test('the canvas has its strip, with no numbered panel; the communities fold from their header', async ({
   page,
   context,
   baseURL,
@@ -455,18 +456,16 @@ test('the canvas is a panel with its strip; the communities fold from their head
   await page.goto(GRAPH)
   await settled(page)
   const screen = page.locator('.graph-screen')
-  await expect(screen).toHaveClass(/\bpanel\b/)
-  const corners = await screen.evaluate(
-    (el) => getComputedStyle(el, '::before').backgroundImage.split('linear-gradient').length - 1,
-  )
-  expect(corners).toBe(8)
+  await expect(screen).not.toHaveClass(/\bpanel\b/)
+  const corners = await screen.evaluate((el) => getComputedStyle(el, '::before').backgroundImage)
+  expect(corners).toBe('none')
   const strip = page.locator('.graph-strip')
-  await expect(strip.locator('.panel-num')).toHaveText('01')
+  await expect(strip.locator('.panel-num')).toHaveCount(0)
   await expect(strip.getByRole('heading', { level: 1 })).toHaveText('Graph')
   await expect(strip).toContainText('Growth')
   await expect(strip).toContainText('what your agents know')
   const shown = Number(await page.locator('canvas.graph-canvas').getAttribute('data-items'))
-  await expect(strip.locator('.panel-meta')).toHaveText(new RegExp(`^${shown} pages · [\\d,]+ links$`))
+  await expect(strip.locator('.sec-meta')).toHaveText(new RegExp(`^${shown} pages · [\\d,]+ links$`))
   const s = (await strip.boundingBox()) as { x: number; y: number; width: number; height: number }
   const c = (await page.locator('canvas.graph-canvas').boundingBox()) as {
     x: number

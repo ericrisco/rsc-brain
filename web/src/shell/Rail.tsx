@@ -1,13 +1,14 @@
-// The rail at the left of every signed-in screen (plan canvas-ui D1, D2): the logo, the search, the brain
-// switcher, the sections of the brain, and at the foot what waits for review, People, help, the account
-// and the button that shows the names. Folded it is 56px of icons whose names stay in the page, hidden to
-// the eye and shown as a tooltip on hover or focus (Esc hides it); open it is 220px with the names. On a
-// phone it is a bar across the top, and the sections fold into a menu.
+// The rail at the left of every signed-in screen: the logo, the brain switcher, the sections of the brain, and
+// at the foot what waits for review, People, help, the account and the button that folds it. Open it is 228px
+// with the names (the first time, and until the person folds it); folded it is 56px of icons whose names stay
+// in the page, hidden to the eye and shown as a tooltip on hover or focus (Esc hides it). The search is in the
+// top bar. On a phone it is the bar across the top, with the search as an icon, and the sections fold into a
+// menu.
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import { toReview } from '../lib/brains.ts'
+import { CHOICES, choice, chooseMode } from '../lib/mode.ts'
 import { foldRail, isTablet, rail, startRail, TABLET, toggleRail } from '../lib/rail.ts'
-import { applyTheme, theme } from '../lib/theme.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import type { Me } from '../session.ts'
 import { T } from '../text.ts'
@@ -268,14 +269,21 @@ function AccountMenu({ me }: { me: Me }) {
             <span>{T.shell.shortcuts}</span>
             <kbd>?</kbd>
           </button>
-          <button
-            type="button"
-            aria-pressed={theme.value === 'light' ? 'true' : 'false'}
-            onClick={() => applyTheme(theme.value === 'light' ? 'dark' : 'light')}
-          >
-            <span>{T.shell.themeLight}</span>
-            <span class="meta">{theme.value === 'light' ? 'on' : 'off'}</span>
-          </button>
+          <fieldset class="mode-picker">
+            <legend class="meta">{T.shell.mode}</legend>
+            <div class="mode-choices">
+              {CHOICES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-pressed={choice.value === c ? 'true' : 'false'}
+                  onClick={() => chooseMode(c)}
+                >
+                  {T.shell.modes[c]}
+                </button>
+              ))}
+            </div>
+          </fieldset>
           <button type="button" onClick={() => void signOut()} aria-busy={leaving ? 'true' : undefined}>
             <span>{leaving ? T.shell.signingOut : T.shell.signOut}</span>
           </button>
@@ -404,13 +412,12 @@ export function Rail({
       <div class="rail-tools">
         <button
           type="button"
-          class="rail-item searchbox"
+          class="rail-item searchbox only-narrow"
           onClick={() => (searchOpen.value = true)}
           aria-keyshortcuts="Meta+K Control+K"
         >
           <Icon name="search" />
           <span class="rail-label">{T.shell.searchHint}</span>
-          <kbd class="rail-end">⌘K</kbd>
         </button>
         {brain ? <BrainSwitcher brain={brain} me={me} /> : null}
       </div>

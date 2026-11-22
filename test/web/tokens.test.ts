@@ -1,11 +1,11 @@
-// Plan canvas-ui §0, B1 and S.0 (shared.css v2): the shared tokens (the same file in rsc-brain and
-// rsc-factory) hold the contract's names in both themes, dark on :root (the default) and light when the person
-// chooses it (data-theme on <html>); the seven family colours, each with a dim variant; the monospaced stack
-// with its self-hosted font; the panel classes with their coloured corners; the glow and pulse tokens. Brain's
-// own tokens keep the old names as aliases of the new ones, and every pair of ink and ground meant to be read
-// passes 4.5:1 (WCAG 2.2 AA) in light and in dark.
+// The shared tokens (the same file in rsc-brain and rsc-factory, byte for byte) and Brain's own over them
+// (spec web redesign, «Los valores», «Los tres modos»; CA26, CA27, CA33). The light mode holds the values of
+// the table; dark and high contrast hold their own; every ink meant to be read passes 4.5:1 in light and dark
+// and 7:1 in high contrast, every edge that is all a control shows reaches 3:1 (4.5:1 in high contrast). The
+// faces are self-hosted with their licence. With no choice the sheet follows the system.
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 
 const STYLES = new URL('../../web/src/styles/', import.meta.url)
@@ -14,7 +14,6 @@ const tokens = readFileSync(new URL('tokens.css', STYLES), 'utf8')
 
 type Block = { selector: string; media: string | null; vars: Map<string, string> }
 
-// The rule blocks of a sheet with their custom properties, and the @media each sits in (one level deep).
 function blocks(css: string): Block[] {
   const text = css.replace(/\/\*[\s\S]*?\*\//g, '')
   const out: Block[] = []
@@ -40,46 +39,41 @@ function blocks(css: string): Block[] {
   return out
 }
 
-// What a theme sees: the values on :root (dark, the default), then, in light, the light ones over them, and in
-// dark the ones the person's explicit choice sets (data-theme="dark", the same values).
-function theme(sheet: Block[], t: 'light' | 'dark') {
+type Mode = 'light' | 'dark' | 'contrast'
+// What a mode chosen by the person sees: :root, then its own block.
+function chosen(sheet: Block[], mode: Mode) {
   const vars = new Map<string, string>()
   const take = (b: Block) => {
     for (const [k, v] of b.vars) vars.set(k, v)
   }
   const sel = (b: Block) => b.selector.split(',').map((s) => s.trim())
   for (const b of sheet) if (!b.media && sel(b).includes(':root')) take(b)
-  for (const b of sheet) if (!b.media && sel(b).includes(`:root[data-theme="${t}"]`)) take(b)
+  for (const b of sheet) if (!b.media && sel(b).includes(`:root[data-theme="${mode}"]`)) take(b)
   return vars
 }
-// Only :root, with no attribute: what a first visit sees before any choice.
-function first(sheet: Block[]) {
+// What the system's preference gives with no choice (no data-theme): :root, then its media block.
+function system(sheet: Block[], query: string) {
   const vars = new Map<string, string>()
+  for (const b of sheet) if (!b.media && b.selector === ':root') for (const [k, v] of b.vars) vars.set(k, v)
   for (const b of sheet)
-    if (!b.media && b.selector.split(',').some((s) => s.trim() === ':root'))
+    if (b.media?.includes(query) && b.selector === ':root:not([data-theme])')
       for (const [k, v] of b.vars) vars.set(k, v)
   return vars
 }
 
-// oklch(L C H) to its relative luminance (sRGB, WCAG), through OKLab.
-function luminance(value: string): number {
-  const m = /^oklch\(\s*([\d.]+)(%?)\s+([\d.]+)\s+([\d.]+)\s*\)$/.exec(value)
-  assert.ok(m, `${value} is an opaque oklch() colour`)
-  const L = Number(m[1]) / (m[2] ? 100 : 1)
-  const C = Number(m[3])
-  const h = (Number(m[4]) * Math.PI) / 180
-  const a = C * Math.cos(h)
-  const b = C * Math.sin(h)
-  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
-  const mm = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
-  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3
-  const clamp = (x: number) => Math.min(1, Math.max(0, x))
-  const r = clamp(4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s)
-  const g = clamp(-1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s)
-  const bl = clamp(-0.0041960863 * l - 0.7034186147 * mm + 1.707614701 * s)
-  return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+const hex = (v: string) => {
+  const m = /^#([0-9a-f]{6})$/i.exec(v.trim())
+  assert.ok(m, `${v} is a #rrggbb colour`)
+  const n = Number.parseInt(m[1] as string, 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255] as const
 }
-
+const lum = (v: string) => {
+  const [r, g, b] = hex(v).map((c) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }) as [number, number, number]
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
 function resolve(vars: Map<string, string>, value: string, depth = 0): string {
   const m = /^var\((--[\w-]+)\)$/.exec(value)
   if (!m || depth > 8) return value
@@ -87,105 +81,166 @@ function resolve(vars: Map<string, string>, value: string, depth = 0): string {
   assert.ok(next, `${m[1]} is defined`)
   return resolve(vars, next, depth + 1)
 }
-
-function contrast(vars: Map<string, string>, ink: string, ground: string): number {
-  const a = luminance(resolve(vars, vars.get(ink) ?? `missing ${ink}`))
-  const b = luminance(resolve(vars, vars.get(ground) ?? `missing ${ground}`))
-  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+const contrast = (vars: Map<string, string>, a: string, b: string) => {
+  const x = lum(resolve(vars, vars.get(a) ?? `missing ${a}`))
+  const y = lum(resolve(vars, vars.get(b) ?? `missing ${b}`))
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
 }
 
-const STATES = ['ok', 'bad', 'warn', 'run', 'neutral']
-const FAMILIES = ['orange', 'amber', 'blue', 'cyan', 'pink', 'violet', 'green']
-const CONTRACT = [
-  ...['--space-1', '--space-2', '--space-3', '--space-4', '--space-5', '--space-6', '--space-8'],
-  ...['--r-chip', '--r-control', '--r-card', '--r-sheet'],
-  ...['--rail-w-folded', '--rail-w-open', '--rail-bg', '--rail-line', '--rail-ink', '--rail-hover'],
-  ...STATES.flatMap((s) => [`--${s}-fg`, `--${s}-bg`, `--${s}-line`]),
-  ...['--grid-dot', '--edge', '--node-bg', '--node-line', '--node-ink', '--node-sub'],
-  ...['--ease', '--t-fast', '--t'],
-  '--page-cap',
-  ...FAMILIES.flatMap((f) => [`--fam-${f}`, `--fam-${f}-dim`]),
-  ...['--font-mono', '--panel-bg', '--panel-line', '--panel-head-bg', '--panel-ink'],
-  ...['--glow', '--glow-strong', '--pulse', '--pulse-len', '--pulse-speed'],
-]
-const COLOURS = CONTRACT.filter((n) =>
-  /-(fg|bg|line|ink|sub|hover|dim)$|^--(grid-dot|edge|rail-bg|node-bg)$|^--fam-[a-z]+$/.test(n),
-)
+// The table of «Los valores» of the spec: the light mode.
+export const VALUES: Record<string, string> = {
+  '--ground': '#f9fbfc',
+  '--surface': '#ffffff',
+  '--raised': '#f4f6f8',
+  '--active': '#ebedee',
+  '--border': '#e8eaec',
+  '--rule': '#f0f1f2',
+  '--control': '#cdced1',
+  '--text': '#131416',
+  '--muted': '#5d5f60',
+  '--accent': '#1b6c80',
+  '--positive': '#1e7b4f',
+  '--negative': '#c4242a',
+  '--warning': '#92400e',
+  '--pill-positive-bg': '#dcfae5',
+  '--pill-positive-ink': '#04250e',
+  '--pill-negative-bg': '#ffedea',
+  '--pill-negative-ink': '#831c1e',
+  '--pill-warning-bg': '#fffbeb',
+  '--pill-warning-ink': '#92400e',
+  '--pill-neutral-bg': '#ebedee',
+  '--pill-neutral-ink': '#353736',
+  '--radius-card': '8px',
+  '--radius-control': '6px',
+  '--radius-sheet': '16px',
+  '--row-height': '48px',
+  '--control-height': '32px',
+  '--gap': '24px',
+  '--pad': '24px',
+  '--sidebar-width': '228px',
+  '--topbar-height': '48px',
+  '--sheet-inset': '8px',
+  '--fs-title': '22px',
+  '--fs-section': '16px',
+  '--fs-kpi': '28px',
+  '--fs-body': '14px',
+  '--fs-small': '12px',
+}
+// The dark mode's starting values (spec, provisional).
+export const DARK: Record<string, string> = {
+  '--ground': '#0f1011',
+  '--surface': '#17181a',
+  '--raised': '#1e2022',
+  '--active': '#26282b',
+  '--border': '#2a2c2f',
+  '--rule': '#202224',
+  '--control': '#6b6f75',
+  '--text': '#f2f3f4',
+  '--muted': '#a4a7ab',
+  '--accent': '#5fb3c7',
+  '--positive': '#4cc38a',
+  '--negative': '#f0787c',
+  '--warning': '#e0a85a',
+}
 
 const sharedBlocks = blocks(shared)
 const brain = [...sharedBlocks, ...blocks(tokens)]
+const MODES: Mode[] = ['light', 'dark', 'contrast']
 
 describe('shared tokens (shared.css)', () => {
   it('says which version it is, so the copies in both repos can be compared', () => {
     assert.match(shared, /^\/\* shared\.css v\d+ /)
   })
 
-  for (const t of ['light', 'dark'] as const) {
-    it(`hold every name of the contract in ${t}`, () => {
-      const vars = theme(sharedBlocks, t)
-      const missing = CONTRACT.filter((n) => !vars.has(n))
-      assert.deepEqual(missing, [])
-    })
+  // The digests both repos carry: change shared.css or a face in either and this fails in every run, with no
+  // need to have the other repo at hand. When the shared files change on purpose, both repos take the new ones.
+  const PINNED: Record<string, string> = {
+    'shared.css': '9de6dfff55dfa2c9dbd757acb571e8367f8d159af1cef86108d6beaf3676a9da',
+    'fonts/OFL.txt': '7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da',
+    'fonts/ibm-plex-mono-latin1-400.woff2':
+      'e8993d946649b9d01abb1ed06d574b19d8ea3e66b5c3948602db335c44c18e56',
+    'fonts/ibm-plex-mono-latin1-500.woff2':
+      '41201b658a328b9d00368215c2f1102770f80b15952ab82631e4006255e6365d',
+    'fonts/ibm-plex-sans-latin1-400.woff2':
+      'bdb53f2af84b15e0a742428f5e199dacc3e6fd60776f0aebd9f700e2c97c960f',
+    'fonts/ibm-plex-sans-latin1-500.woff2':
+      '668a0d9eabbfac0925f431988f56222b8b989ad66a0a78e91bc5889f73fe274a',
+    'fonts/ibm-plex-sans-latin1-600.woff2':
+      '8251b7fc61b580c2f52550fa69b3c49fb94fc333815ad301ca6b1f6d15420f85',
   }
+  it('carries the pinned shared.css and faces of both repos, byte for byte (CA26)', () => {
+    const have = ['shared.css', ...readdirSync(new URL('fonts/', STYLES)).map((f) => `fonts/${f}`)].sort()
+    assert.deepEqual(have, Object.keys(PINNED).sort())
+    for (const [f, sha] of Object.entries(PINNED))
+      assert.equal(
+        createHash('sha256')
+          .update(readFileSync(new URL(f, STYLES)))
+          .digest('hex'),
+        sha,
+        f,
+      )
+  })
 
-  it('dark is the default: :root alone holds the dark values, the same the dark choice sets', () => {
-    const root = first(sharedBlocks)
-    const dark = theme(sharedBlocks, 'dark')
-    for (const n of COLOURS) assert.equal(root.get(n), dark.get(n), n)
-    // No block waits for the system to say dark: dark needs no media query.
-    assert.equal(
-      sharedBlocks.some((b) => b.media?.includes('prefers-color-scheme')),
-      false,
+  it('is the same file as rsc-factory’s, byte for byte, with the same faces (CA26)', {
+    skip: process.env.FACTORY_SHARED_DIR
+      ? false
+      : 'set FACTORY_SHARED_DIR to the folder holding rsc-factory’s shared.css and fonts/ to compare',
+  }, () => {
+    const dir = process.env.FACTORY_SHARED_DIR as string
+    assert.equal(readFileSync(`${dir}/shared.css`, 'utf8'), shared)
+    const theirs = readdirSync(`${dir}/fonts`).sort()
+    const ours = readdirSync(new URL('fonts/', STYLES)).sort()
+    assert.deepEqual(ours, theirs)
+    for (const f of ours)
+      assert.ok(readFileSync(`${dir}/fonts/${f}`).equals(readFileSync(new URL(`fonts/${f}`, STYLES))), f)
+  })
+
+  it('holds the values of the spec in light (CA27, CA33)', () => {
+    const vars = chosen(sharedBlocks, 'light')
+    for (const [k, v] of Object.entries(VALUES)) assert.equal(vars.get(k)?.toLowerCase(), v, k)
+    // With no choice and nothing asked, it is the same.
+    const first = system(sharedBlocks, 'nothing')
+    for (const [k, v] of Object.entries(VALUES)) assert.equal(first.get(k)?.toLowerCase(), v, k)
+  })
+
+  it('holds the starting values of dark, chosen or asked by the system', () => {
+    for (const vars of [chosen(sharedBlocks, 'dark'), system(sharedBlocks, 'prefers-color-scheme: dark')])
+      for (const [k, v] of Object.entries(DARK)) assert.equal(vars.get(k)?.toLowerCase(), v, k)
+  })
+
+  it('high contrast: chosen or asked by the system, white ground and black text, a 3px focus', () => {
+    for (const vars of [chosen(sharedBlocks, 'contrast'), system(sharedBlocks, 'prefers-contrast: more')]) {
+      assert.equal(vars.get('--surface'), '#ffffff')
+      assert.equal(vars.get('--text'), '#000000')
+      assert.equal(vars.get('--focus-w'), '3px')
+    }
+  })
+
+  it('the layout, sizes and type are the same in the three modes (CA10b)', () => {
+    const SIZES = Object.keys(VALUES).filter((k) =>
+      /^--(radius|row|control-height|gap|pad|sidebar|topbar|sheet|fs-)/.test(k),
     )
+    const light = chosen(sharedBlocks, 'light')
+    for (const mode of ['dark', 'contrast'] as const) {
+      const vars = chosen(sharedBlocks, mode)
+      for (const k of [...SIZES, '--font-sans', '--font-mono'])
+        assert.equal(vars.get(k), light.get(k), `${k} in ${mode}`)
+    }
   })
 
-  it('dark is not light: every colour of the contract has its own dark value', () => {
-    const light = theme(sharedBlocks, 'light')
-    const dark = theme(sharedBlocks, 'dark')
-    const same = COLOURS.filter((n) => light.get(n) === dark.get(n))
-    assert.deepEqual(same, [])
-  })
-
-  it('the page cap is 2400px and the rail is 56px folded, 220px open', () => {
-    const vars = theme(sharedBlocks, 'light')
-    assert.equal(vars.get('--page-cap'), '2400px')
-    assert.equal(vars.get('--rail-w-folded'), '56px')
-    assert.equal(vars.get('--rail-w-open'), '220px')
-    assert.deepEqual(
-      ['--r-chip', '--r-control', '--r-card', '--r-sheet'].map((n) => vars.get(n)),
-      ['4px', '6px', '8px', '14px'],
-    )
-  })
-
-  it('the monospaced stack starts with the self-hosted font and falls back to the system ones', () => {
-    const mono = theme(sharedBlocks, 'dark').get('--font-mono') ?? ''
-    assert.match(mono, /^"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas/)
+  it('the faces are IBM Plex, self-hosted, with their licence', () => {
     const faces = [...shared.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((m) => m[1] ?? '')
-    assert.ok(faces.length >= 2, 'a regular and a bold face')
+    assert.ok(faces.length >= 4)
     for (const f of faces) {
-      assert.match(f, /font-family:\s*"JetBrains Mono"/)
+      assert.match(f, /font-family:\s*"IBM Plex (Sans|Mono)"/)
       assert.match(f, /font-display:\s*swap/)
-      // Served from the same origin (the CSP's font-src 'self'): a relative file, never a URL elsewhere.
       assert.match(f, /src:\s*url\("\.\/fonts\/[\w.-]+\.woff2"\)\s*format\("woff2"\)/)
-    }
-    for (const f of faces) {
       const file = /url\("\.\/fonts\/([\w.-]+)"\)/.exec(f)?.[1] as string
-      assert.ok(readFileSync(new URL(`fonts/${file}`, STYLES)).length > 10_000, `${file} is there`)
+      assert.ok(existsSync(new URL(`fonts/${file}`, STYLES)), `${file} is there`)
     }
-    assert.match(readFileSync(new URL('fonts/OFL.txt', STYLES), 'utf8'), /SIL OPEN FONT LICENSE Version 1\.1/)
-  })
-
-  it('a panel has coloured corners from --panel-c, a numbered chip and a head', () => {
-    const text = shared.replace(/\/\*[\s\S]*?\*\//g, '')
-    for (const cls of ['.panel', '.panel-head', '.panel-num'])
-      assert.match(text, new RegExp(`(^|[\\s,}])\\${cls}\\s*[{,]`), `${cls} is styled`)
-    // The corners and the chip take the panel's colour; a panel without one is orange.
-    assert.match(text, /\.panel\s*\{[^}]*--panel-c:\s*var\(--fam-orange\)/)
-    assert.match(text, /\.panel::before\s*\{[^}]*var\(--panel-c\)/)
-    assert.match(text, /\.panel-num\s*\{[^}]*background:\s*var\(--panel-c\)/)
-    // Any element takes a family by data-c: a panel, a figure in it, a pill.
-    for (const f of FAMILIES)
-      assert.match(text, new RegExp(`(^|\\s)\\[data-c="${f}"\\]\\s*\\{\\s*--panel-c:\\s*var\\(--fam-${f}\\)`))
+    assert.match(readFileSync(new URL('fonts/OFL.txt', STYLES), 'utf8'), /SIL OPEN FONT LICENSE/i)
+    assert.match(chosen(sharedBlocks, 'light').get('--font-sans') ?? '', /^"IBM Plex Sans"/)
+    assert.match(chosen(sharedBlocks, 'light').get('--font-mono') ?? '', /^"IBM Plex Mono"/)
   })
 
   it('reduced motion turns the durations to zero', () => {
@@ -194,104 +249,75 @@ describe('shared tokens (shared.css)', () => {
     assert.equal(vars.get('--t-fast'), '0ms')
     assert.equal(vars.get('--t'), '0ms')
   })
-
-  for (const t of ['light', 'dark'] as const) {
-    it(`each state's words read at 4.5:1 on its own ground and on a node, in ${t}`, () => {
-      const vars = theme(sharedBlocks, t)
-      for (const s of STATES) {
-        for (const ground of [`--${s}-bg`, '--node-bg']) {
-          const c = contrast(vars, `--${s}-fg`, ground)
-          assert.ok(c >= 4.5, `--${s}-fg on ${ground} in ${t}: ${c.toFixed(2)}:1`)
-        }
-      }
-      for (const f of FAMILIES) {
-        // A family's colour is read as words (a panel's meta, a figure, a legend count) on a panel and on the
-        // page; its dim variant is the ground of its pill, where the panel's ink is written.
-        for (const ground of ['--panel-bg', '--panel-head-bg', '--node-bg']) {
-          const c = contrast(vars, `--fam-${f}`, ground)
-          assert.ok(c >= 4.5, `--fam-${f} on ${ground} in ${t}: ${c.toFixed(2)}:1`)
-        }
-        const pill = contrast(vars, '--panel-ink', `--fam-${f}-dim`)
-        assert.ok(pill >= 4.5, `--panel-ink on --fam-${f}-dim in ${t}: ${pill.toFixed(2)}:1`)
-        // The numbered chip: the panel's ground written on the family colour.
-        const chip = contrast(vars, '--panel-bg', `--fam-${f}`)
-        assert.ok(chip >= 4.5, `--panel-bg on --fam-${f} in ${t}: ${chip.toFixed(2)}:1`)
-      }
-      for (const [ink, ground] of [
-        ['--panel-ink', '--panel-bg'],
-        ['--panel-ink', '--panel-head-bg'],
-        ['--node-ink', '--node-bg'],
-        ['--node-sub', '--node-bg'],
-        ['--rail-ink', '--rail-bg'],
-        ['--rail-ink', '--rail-hover'],
-      ] as const) {
-        const c = contrast(vars, ink, ground)
-        assert.ok(c >= 4.5, `${ink} on ${ground} in ${t}: ${c.toFixed(2)}:1`)
-      }
-    })
-  }
 })
 
 describe("Brain's tokens over the shared ones (tokens.css)", () => {
-  for (const t of ['light', 'dark'] as const) {
-    it(`keep the old names as aliases of the shared ones, in ${t}`, () => {
-      const vars = theme(brain, t)
-      assert.equal(vars.get('--danger'), 'var(--bad)')
-      assert.equal(vars.get('--warning'), 'var(--warn)')
-      assert.equal(vars.get('--positive'), 'var(--ok)')
-      assert.equal(vars.get('--radius'), 'var(--r-card)')
-      for (const s of ['ok', 'bad', 'warn']) assert.equal(vars.get(`--${s}`), `var(--${s}-fg)`)
-    })
+  it('give the screens their names as aliases of the shared ones', () => {
+    const vars = chosen(brain, 'light')
+    assert.equal(vars.get('--sans'), 'var(--font-sans)')
+    assert.equal(vars.get('--mono'), 'var(--font-mono)')
+    assert.equal(vars.get('--danger'), 'var(--negative)')
+    assert.equal(vars.get('--primary-bg'), 'var(--primary)')
+    assert.equal(vars.get('--rail-w-open'), 'var(--sidebar-width)')
+    assert.equal(vars.get('--field-line'), 'var(--control-strong)')
+  })
 
-    it(`the words of the page read at 4.5:1 on its grounds, in ${t}`, () => {
-      const vars = theme(brain, t)
+  for (const mode of MODES) {
+    const floor = mode === 'contrast' ? 7 : 4.5
+    it(`the words read at ${floor}:1 on their grounds, in ${mode}`, () => {
+      const vars = chosen(brain, mode)
       for (const [ink, ground] of [
         ['--text', '--ground'],
         ['--text', '--surface'],
         ['--text', '--raised'],
+        ['--text', '--active'],
         ['--muted', '--ground'],
         ['--muted', '--surface'],
-        ['--nav', '--ground'],
-        ['--primary-fg', '--primary-bg'],
-        ['--danger', '--ground'],
-        ['--warning', '--ground'],
-        ['--positive', '--ground'],
+        ['--muted', '--raised'],
+        ['--accent', '--surface'],
+        ['--negative', '--surface'],
+        ['--warning', '--surface'],
+        ['--positive', '--surface'],
+        ['--primary-ink', '--primary'],
+        ['--pill-positive-ink', '--pill-positive-bg'],
+        ['--pill-negative-ink', '--pill-negative-bg'],
+        ['--pill-warning-ink', '--pill-warning-bg'],
+        ['--pill-neutral-ink', '--pill-neutral-bg'],
       ] as const) {
         const c = contrast(vars, ink, ground)
-        assert.ok(c >= 4.5, `${ink} on ${ground} in ${t}: ${c.toFixed(2)}:1`)
+        assert.ok(c >= floor, `${ink} on ${ground} in ${mode}: ${c.toFixed(2)}:1`)
+      }
+    })
+
+    it(`an edge that is all a control shows reaches ${mode === 'contrast' ? '4.5' : '3'}:1, in ${mode}`, () => {
+      const vars = chosen(brain, mode)
+      const c = contrast(vars, '--control-strong', '--surface')
+      assert.ok(
+        c >= (mode === 'contrast' ? 4.5 : 3),
+        `--control-strong on --surface in ${mode}: ${c.toFixed(2)}:1`,
+      )
+    })
+
+    it(`the graph's pages and what is picked stand out from its well, in ${mode}`, () => {
+      const vars = chosen(brain, mode)
+      for (const n of ['--graph-node', '--accent']) {
+        const c = contrast(vars, n, '--raised')
+        assert.ok(c >= 3, `${n} on --raised in ${mode}: ${c.toFixed(2)}:1`)
       }
     })
   }
 
-  // v0.5.0: the graph's communities, dots on the canvas's ground: each colour stands out from the ground
-  // (3:1, WCAG 1.4.11 for graphics) and from the other nine, and the two greys from both.
-  for (const t of ['light', 'dark'] as const) {
-    it(`the communities' colours stand out from the ground and from each other, in ${t}`, () => {
-      const vars = theme(brain, t)
-      const names = [...Array.from({ length: 10 }, (_, k) => `--com-${k}`), '--com-other', '--com-lone']
-      for (const n of names) {
-        const c = contrast(vars, n, '--ground')
-        assert.ok(c >= 3, `${n} on --ground in ${t}: ${c.toFixed(2)}:1`)
-      }
-      // Two colours differ in hue or clearly in lightness (OKLCH, as written).
-      const lch = (n: string) => {
-        const m = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)$/.exec(vars.get(n) ?? '')
-        assert.ok(m, `${n} is an oklch() colour`)
-        return [Number(m[1]), Number(m[2]), Number(m[3])] as const
-      }
-      for (let a = 0; a < names.length; a++)
-        for (let b = a + 1; b < names.length; b++) {
-          const [la, ca, ha] = lch(names[a] as string)
-          const [lb, cb, hb] = lch(names[b] as string)
-          const hue = Math.min(Math.abs(ha - hb), 360 - Math.abs(ha - hb))
-          const apart =
-            (ca > 0.05 && cb > 0.05 && hue >= 25) || Math.abs(la - lb) >= 0.08 || Math.abs(ca - cb) >= 0.06
-          assert.ok(apart, `${names[a]} and ${names[b]} too alike in ${t}`)
-        }
-    })
-  }
+  it('dark: the sheet is a step lighter than the frame, and no ground is tinted blue (CA10c)', () => {
+    const vars = chosen(brain, 'dark')
+    assert.ok(lum(vars.get('--surface') as string) > lum(vars.get('--ground') as string))
+    for (const k of ['--ground', '--surface', '--raised', '--active', '--border']) {
+      const [r, , b] = hex(vars.get(k) as string)
+      assert.ok(b - r <= 6, `${k} has a blue tint`)
+    }
+  })
 
-  it('Brain keeps its own accent (hue 156) over the shared sheet', () => {
-    for (const t of ['light', 'dark'] as const) assert.match(theme(brain, t).get('--accent') ?? '', / 156\)$/)
+  it('the pick in the graph has a thicker ring in high contrast', () => {
+    assert.equal(chosen(brain, 'light').get('--graph-ring'), '2.5')
+    assert.equal(chosen(brain, 'contrast').get('--graph-ring'), '4')
   })
 })

@@ -233,7 +233,9 @@ test.describe('settings of a brain', () => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/b/growth/settings/agents')
     const repos = region(page, 'Repositories')
-    await expect(repos.getByRole('listitem').filter({ hasText: 'github.com/acme/growth-site' })).toBeVisible()
+    await expect(
+      repos.getByRole('listitem').filter({ hasText: 'github.com/lumen-labs/growth-site' }),
+    ).toBeVisible()
     const field = repos.getByLabel('Repository address')
     await field.fill('~/code/app')
     await expect(repos).toContainText('That is a folder on your machine')

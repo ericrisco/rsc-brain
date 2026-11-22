@@ -4,7 +4,8 @@ import type { ComponentChildren, JSX } from 'preact'
 import { useId } from 'preact/hooks'
 
 type Props = Omit<JSX.HTMLAttributes<HTMLButtonElement>, 'disabled'> & {
-  kind?: 'primary' | 'secondary' | 'quiet'
+  // danger: what destroys, only inside its confirmation.
+  kind?: 'primary' | 'secondary' | 'quiet' | 'danger'
   pending?: boolean
   pendingLabel?: string
   // Why it cannot be used now; shown next to it.

@@ -17,6 +17,7 @@ import { lastUpdateFor, type UpdateInfo, updateView } from '../../lib/updates.ts
 import { branding, me } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
+import { Dash } from '../../ui/Dash.tsx'
 import { Dialog } from '../../ui/Dialog.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
@@ -276,7 +277,7 @@ function Factory({ account }: { account: string }) {
             {theirs ? (
               <Conflict>
                 <p>
-                  {A.factoryLabel}: <strong>{theirs.factoryUrl ?? '—'}</strong>
+                  {A.factoryLabel}: <strong>{theirs.factoryUrl ?? <Dash />}</strong>
                 </p>
               </Conflict>
             ) : null}
@@ -301,7 +302,7 @@ function Factory({ account }: { account: string }) {
             <div class="actions">
               <Button
                 type="submit"
-                kind="primary"
+                kind="secondary"
                 pending={pending}
                 pendingLabel={A.saving}
                 blocked={blocked()}
@@ -632,7 +633,7 @@ function Logo() {
         <FormAlert error={error} />
         <div class="actions">
           <Button
-            kind="primary"
+            kind="danger"
             pending={pending}
             pendingLabel={T.states.pending}
             blocked={blocked()}

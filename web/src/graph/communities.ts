@@ -6,7 +6,7 @@
 import type { Item, Model } from './model.ts'
 import { roles } from './model.ts'
 
-// How many communities get a colour of their own (tokens.css --com-0 … --com-9).
+// How many communities get a slot of their own in the panel and the picture (the biggest; the rest share one).
 export const COLOURS = 10
 // The colour slots after them: the small communities, and the items outside any (no links, the rim's groups).
 export const OTHER = COLOURS

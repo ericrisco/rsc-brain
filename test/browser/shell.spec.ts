@@ -68,13 +68,15 @@ test('on a phone, the side bar folds into a menu that Esc closes, giving the foc
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
 
-test('the light theme is a choice that stays; dark is the default', async ({ page, context, baseURL }) => {
+// Spec web redesign (CA10): with no choice the web follows the system; the mode picker in the account menu
+// replaces the light-theme switch, and a choice stays whatever the system says.
+test('the mode is a choice that stays; the system is the default', async ({ page, context, baseURL }) => {
   await page.emulateMedia({ colorScheme: 'dark' })
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   await page.getByRole('button', { name: /Account/ }).click()
-  await page.getByRole('button', { name: /Light theme/ }).click()
+  await page.getByRole('group', { name: 'Mode' }).getByRole('button', { name: 'Light', exact: true }).click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   const ground = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
   await page.reload()
@@ -82,10 +84,8 @@ test('the light theme is a choice that stays; dark is the default', async ({ pag
   expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(ground)
 })
 
-// Spec amendment 2026-11-09 (CA11): until the person chooses, the web is dark whatever the system says; once
-// chosen, the choice stays, whatever the system says.
 for (const system of ['dark', 'light'] as const) {
-  test(`with a ${system} system and no choice yet, the web is dark; a choice then stays`, async ({
+  test(`with a ${system} system and no choice yet, the web is ${system} and follows it; a choice then stays`, async ({
     page,
     context,
     baseURL,
@@ -94,15 +94,17 @@ for (const system of ['dark', 'light'] as const) {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/')
     const html = page.locator('html')
-    await expect(html).toHaveAttribute('data-theme', 'dark')
-    // The system changes while the page is open, and no choice was made: the web stays dark.
+    await expect(html).toHaveAttribute('data-theme', system)
+    // The system changes while the page is open, and no choice was made: the web follows it.
     const other = system === 'dark' ? 'light' : 'dark'
     await page.emulateMedia({ colorScheme: other })
-    await page.waitForTimeout(200)
-    await expect(html).toHaveAttribute('data-theme', 'dark')
+    await expect(html).toHaveAttribute('data-theme', other)
     // The person chooses light: it stays, whatever the system says.
     await page.getByRole('button', { name: /Account/ }).click()
-    await page.getByRole('button', { name: /Light theme/ }).click()
+    await page
+      .getByRole('group', { name: 'Mode' })
+      .getByRole('button', { name: 'Light', exact: true })
+      .click()
     await expect(html).toHaveAttribute('data-theme', 'light')
     await page.reload()
     await expect(html).toHaveAttribute('data-theme', 'light')
@@ -151,7 +153,7 @@ for (const how of ['the server fails', 'the browser is offline'] as const) {
   })
 }
 
-test('the focus is always visible: a 2px outline in the accent', async ({ page, context, baseURL }) => {
+test('the focus is always visible: a 2px outline', async ({ page, context, baseURL }) => {
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/')
   await expect(page.getByRole('link', { name: 'Growth' })).toBeVisible()

@@ -34,11 +34,13 @@ export function Part({
 }) {
   return (
     <section class="settings-part" aria-labelledby={`${id}-title`}>
-      <h2 id={`${id}-title`} class="part-heading" tabIndex={-1} data-start={start ? true : undefined}>
-        {title}
-      </h2>
-      {lead ? <p class="muted">{lead}</p> : null}
-      {children}
+      <div class="part-label">
+        <h2 id={`${id}-title`} class="part-heading" tabIndex={-1} data-start={start ? true : undefined}>
+          {title}
+        </h2>
+        {lead ? <p class="muted">{lead}</p> : null}
+      </div>
+      <div class="part-body">{children}</div>
     </section>
   )
 }
