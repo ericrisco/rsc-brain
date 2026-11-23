@@ -4,6 +4,14 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.10
+
+- Keep inline code in imported page summaries and skip leading quotes (#69)
+
+## v0.7.9
+
+- Advertise the journal entry types MCP agents can write (#68)
+
 ## v0.7.8
 
 - Activity: the quiet sessions start clear of the list above (#67)
