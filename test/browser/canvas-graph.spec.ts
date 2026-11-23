@@ -609,11 +609,13 @@ test('the hologram look: a tool turns it on and off, the picture keeps its items
   await expect(canvas).toHaveAttribute('data-reticles', /^[1-9]\d*$/)
   expect(await canvas.getAttribute('data-items')).toBe(before)
   expect(await page.evaluate(() => localStorage.getItem('rscb.graphLook'))).toBe('holo')
-  // The overlay never takes the pointer from the canvas.
-  const overlay = await page
-    .locator('.graph-box.holo')
-    .evaluate((el) => getComputedStyle(el, '::before').pointerEvents)
-  expect(overlay).toBe('none')
+  // The hologram decorations leave the canvas available to the pointer.
+  expect(
+    await canvas.evaluate((el) => {
+      const box = el.getBoundingClientRect()
+      return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === el
+    }),
+  ).toBe(true)
   await page.reload()
   await settled(page)
   await expect(page.locator('.graph-box.holo')).toHaveCount(1)

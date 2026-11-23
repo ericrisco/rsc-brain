@@ -3262,37 +3262,6 @@ label.op-head:hover {
   background: var(--raised);
 }
 
-/* The optional hologram ground and corner marks sit below the tools. The keyboard focus outline uses
-   ::after, so it remains visible with the hologram on. */
-.graph-screen .graph-box.holo {
-  background:
-    repeating-linear-gradient(
-      to bottom,
-      color-mix(in oklch, var(--accent) 5%, transparent) 0 1px,
-      transparent 1px 3px
-    ),
-    var(--ground);
-}
-
-.graph-box.holo::before {
-  --c: color-mix(in oklch, var(--accent) 60%, transparent);
-  content: "";
-  position: absolute;
-  inset: 10px;
-  z-index: 1;
-  pointer-events: none;
-  background:
-    linear-gradient(var(--c), var(--c)) top left / 28px 1.5px,
-    linear-gradient(var(--c), var(--c)) top left / 1.5px 28px,
-    linear-gradient(var(--c), var(--c)) top right / 28px 1.5px,
-    linear-gradient(var(--c), var(--c)) top right / 1.5px 28px,
-    linear-gradient(var(--c), var(--c)) bottom left / 28px 1.5px,
-    linear-gradient(var(--c), var(--c)) bottom left / 1.5px 28px,
-    linear-gradient(var(--c), var(--c)) bottom right / 28px 1.5px,
-    linear-gradient(var(--c), var(--c)) bottom right / 1.5px 28px;
-  background-repeat: no-repeat;
-}
-
 .graph-tools .tool[aria-pressed="true"] {
   color: var(--accent);
   background: var(--raised);

@@ -425,6 +425,27 @@ function backdrop(
   ctx.save()
   ctx.strokeStyle = palette.accent
   ctx.lineWidth = 1
+  // Paint the scan lines and corner marks on the same canvas as the grid. They stay
+  // behind the nodes and cannot cover the keyboard outline or intercept the pointer.
+  ctx.globalAlpha = 0.05
+  ctx.beginPath()
+  for (let y = 0.5; y < st.height; y += 3) {
+    ctx.moveTo(0, y)
+    ctx.lineTo(st.width, y)
+  }
+  ctx.stroke()
+  ctx.globalAlpha = 0.6
+  ctx.beginPath()
+  for (const dx of [1, -1]) {
+    for (const dy of [1, -1]) {
+      const x = dx === 1 ? 10 : st.width - 10
+      const y = dy === 1 ? 10 : st.height - 10
+      ctx.moveTo(x + dx * 28, y)
+      ctx.lineTo(x, y)
+      ctx.lineTo(x, y + dy * 28)
+    }
+  }
+  ctx.stroke()
   ctx.globalAlpha = HOLO.grid
   ctx.setLineDash([2, 5])
   ctx.beginPath()
