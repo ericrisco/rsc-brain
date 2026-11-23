@@ -1036,7 +1036,7 @@ export const T = {
     // Meaning search.
     meaningLead:
       'Search by meaning finds pages and entries about the same thing in other words. It sends their text to a provider.',
-    meaningOff: 'Off: searches use words only.',
+    meaningOff: 'Off: searches use words only. A question in one language can miss pages written in another.',
     meaningOn: (label: string, model: string | null) => `On with ${label}${model ? ` (${model})` : ''}.`,
     meaningAccepted: (when: string) => `Warning accepted ${when}.`,
     processing: 'Processing',
