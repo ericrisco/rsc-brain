@@ -172,6 +172,7 @@ export async function writeReadable(db: Db, zip: Zip, o: ExportOptions): Promise
     const left = srcs.filter((s) => !s.ok).length
     const superseded = r.superseded_by == null ? null : byId.get(String(r.superseded_by))?.address
     const head = frontmatter([
+      ['export', 2],
       ['title', String(r.title)],
       ['address', String(r.address)],
       ['type', String(r.type)],

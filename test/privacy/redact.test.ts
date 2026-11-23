@@ -124,6 +124,8 @@ describe('redaction', () => {
       ['passphrase = tr0ub4dor&3', `passphrase = ${SECRET_MARK}`],
       ['pwd is abcdefghijkl', `pwd is ${SECRET_MARK}`],
       ['passwd: s3cr3t', `passwd: ${SECRET_MARK}`],
+      ['password = "p@ss"', `password = "${SECRET_MARK}"`],
+      ['{"password": "hunter2"}', `{"password": "${SECRET_MARK}"}`],
       ['the password is "hunter2hunter2"', `the password is "${SECRET_MARK}"`],
     ]
     for (const [input, expected] of cases) assert.equal(redact(input).text, expected, input)
@@ -140,6 +142,10 @@ describe('redaction', () => {
       'la clave es 12',
       'password es corta',
       'a strong password is long',
+      'clave primaria: id_usuario_2',
+      'la clave foránea es fk_pedido_1',
+      'la clave de búsqueda es q_2024',
+      'password policy: min_len_12',
     ])
       assert.deepEqual(redact(text), { text, redactions: 0 }, text)
   })

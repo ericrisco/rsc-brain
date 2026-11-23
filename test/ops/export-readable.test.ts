@@ -230,6 +230,10 @@ describe('the readable export (CA11, CA12)', { skip: skipPg }, () => {
     }
   })
 
+  it('every page says it is from this version of the export', () => {
+    for (const [name, text] of files) if (name.startsWith('wiki/')) assert.match(text, /^export: 2$/m, name)
+  })
+
   it('CA11: every [[link]] of the vault opens a file that exists, and every block it names', () => {
     const broken: string[] = []
     let count = 0

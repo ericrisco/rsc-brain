@@ -8,6 +8,7 @@ import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
+import { bodyWithLinks, GENERATED_MARK } from '../../src/ops/export/vault.ts'
 import { planDocs } from '../../src/ops/import/docs.ts'
 import { type FileTree, treeFromFolder, treeFromZip } from '../../src/ops/import/tree.ts'
 import { skipPg } from '../helpers/pg.ts'
@@ -57,9 +58,38 @@ describe('the sections a readable export adds at the end of a page', () => {
   })
 
   it('strips the unmarked sections of an export made before the marker, by its header', async () => {
-    const p = await bodyOf(`${head('related: ["[[wiki/a/two]]"]\n')}# A\n\nText.\n\n${gen}`)
+    const p = await bodyOf(
+      `${head('related: ["[[wiki/a/two]]"]\nsources: ["https://example.com/d"]\n')}# A\n\nText.\n\n${gen}`,
+    )
     assert.equal(p?.body.trim(), 'Text.')
     assert.deepEqual(p?.links, [{ kind: 'related', to: 'a/two' }])
+  })
+
+  it('a page of this version of the export keeps a trailing list of its own, with no links or sources', async () => {
+    const own = await bodyOf(`${head('export: 2\n')}# A\n\nText.\n\n## Sources\n\n- my real note\n`)
+    assert.match(own?.body ?? '', /my real note/)
+  })
+
+  it('an unmarked section is taken off only when it matches the header', async () => {
+    const mismatch = await bodyOf(
+      `${head('related: ["[[wiki/a/two]]"]\n')}# A\n\nText.\n\n## Links\n\n- related: [[wiki/a/two|Two]]\n- related: [[wiki/a/three|Three]]\n`,
+    )
+    assert.match(mismatch?.body ?? '', /## Links/)
+    const none = await bodyOf(`${head()}# A\n\nText.\n\n## Sources\n\n- my real note\n`)
+    assert.match(none?.body ?? '', /my real note/)
+  })
+
+  it('a mark inside a body does not eat the text after it', async () => {
+    const p = await bodyOf(
+      `${head('export: 2\n')}# A\n\nText.\n\n<!-- rsc-brain:generated -->\n## Links\n- keep me\nmore text\n`,
+    )
+    assert.match(p?.body ?? '', /more text/)
+    assert.match(p?.body ?? '', /keep me/)
+  })
+
+  it('the export writes a mark found in a body as text that is no mark', () => {
+    const out = bodyWithLinks(`a\n${GENERATED_MARK}\n## Links`, () => null)
+    assert.ok(!out.includes(GENERATED_MARK))
   })
 
   it('never strips a Links heading a person wrote in a page that is not from an export', async () => {

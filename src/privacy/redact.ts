@@ -53,12 +53,12 @@ const RULES: Rule[] = [
   },
   // A password said in a sentence ("la contraseña del servidor es hunter2hunter2", "the password is
   // hunter2"): the word, at most five words of subject, a connector (is, es, is set to, ":" or "="), then one
-  // value of 6 or more characters that is not a plain word (it has a digit or a symbol, or it is 12 or more
+  // value of 6 or more characters (4 when it is quoted) that is not a plain word (it has a digit or a symbol, or it is 12 or more
   // characters long): "the password policy is strict" stays. English and Spanish, any case, with or
   // without the accent.
   {
     name: 'spoken-password',
-    re: /((?<![\p{L}\p{N}_])(?:password|passwd|pwd|passphrase|contrase[ñn]a|clave)(?![\p{L}\p{N}_])(?:\s+[\p{L}\p{N}_-]{1,30}){0,5}?\s*(?:(?:is set to|is|es|ser[aá])(?![\p{L}\p{N}_])\s*[:=]?|[:=])\s*["']?)(?=[^\s"']{5,256}[^\s"'.,;:!?)])(?:(?=[^\s"']*[\d!@#$%^&*+=~?_])|(?=[^\s"']{12}))[^\s"']*[^\s"'.,;:!?)]/giu,
+    re: /((?<![\p{L}\p{N}_])(?:password|passwd|pwd|passphrase|contrase[ñn]a|clave)(?![\p{L}\p{N}_])(?!\s+(?:primaria|for[aá]nea|externa|[uú]nica|de\s+b[uú]squeda|policy|policies)(?![\p{L}\p{N}_]))["']?(?:\s+[\p{L}\p{N}_-]{1,30}){0,5}?\s*(?:(?:is set to|is|es|ser[aá])(?![\p{L}\p{N}_])\s*[:=]?|[:=])\s*["']?)(?:(?<=["'])(?=[^\s"']{3,256}[^\s"'.,;:!?)])|(?=[^\s"']{5,256}[^\s"'.,;:!?)]))(?:(?=[^\s"']*[\d!@#$%^&*+=~?_])|(?=[^\s"']{12}))[^\s"']*[^\s"'.,;:!?)]/giu,
     replace: `$1${SECRET_MARK}`,
   },
 ]
