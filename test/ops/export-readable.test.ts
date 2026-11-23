@@ -159,6 +159,81 @@ describe('the readable export (CA11, CA12)', { skip: skipPg }, () => {
     assert.ok(!files.has('wiki/b/old.md'))
   })
 
+  it('a round trip is lossless: export, import, export gives the same pages and the same links', async () => {
+    const { importTree } = await import('../../src/ops/import/import.ts')
+    const { treeFromZip } = await import('../../src/ops/import/tree.ts')
+    const { principalOfSession } = await import('../helpers/principal.ts')
+    const who = await principalOfSession(w, web)
+    const linkSet = async (slug: string) =>
+      (
+        await w.db.query(
+          `SELECT f.address AS "from", l.kind, coalesce(t.address, l.to_address) AS "to"
+             FROM page_links l JOIN brains b ON b.id = l.brain_id JOIN pages f ON f.id = l.from_page
+             LEFT JOIN pages t ON t.id = l.to_page
+            WHERE b.slug = $1 AND f.status <> 'retired' AND (t.id IS NULL OR t.status <> 'retired')
+            ORDER BY 1, 2, 3`,
+          [slug],
+        )
+      ).map((l) => `${l.from} ${l.kind} ${l.to}`)
+    // What the export can carry: the links between its pages (a mention of an old address leads to the page now
+    // at it; a mention of a page that is not exported, or of nothing, is not a link of the vault).
+    const original = await linkSet('vault')
+    const typed = original.filter((l) => !l.includes(' mentions ') && !l.includes('b/old'))
+    assert.ok(typed.some((l) => l.includes('depends-on')))
+    let before: string[] | null = null
+    // The mentions of the bodies of the first export: the links written in the text, before what is generated.
+    const addressOf = (file: string) => file.replace(/^wiki\//, '').replace(/\.md$/, '')
+    const inBodiesSet = new Set<string>()
+    for (const [name, text] of files) {
+      if (!name.startsWith('wiki/')) continue
+      for (const l of linksIn(
+        ((text.split('<!-- rsc-brain:generated -->')[0] as string).split(/^---$/m)[2] as string) ?? '',
+      )) {
+        const to = resolveIn(files, l.target)
+        if (to?.startsWith('wiki/') && to !== name)
+          inBodiesSet.add(`${addressOf(name)} mentions ${addressOf(to)}`)
+      }
+    }
+    const inBodies = [...inBodiesSet].sort()
+    let bytes = got.bytes
+    let last = files
+    for (const slug of ['again', 'thrice']) {
+      await w.call(eric.key, 'POST', '/v1/brains', { slug, name: slug, purpose: 'Round trip.' })
+      await importTree({ db: w.db, clock: w.clock, who }, slug, treeFromZip(bytes), { from: 'round-trip' })
+      const set = await linkSet(slug)
+      for (const l of typed) assert.ok(set.includes(l), `${slug} lost ${l}`)
+      // Nothing is added by the import: a page mentions what its body links to, and no more (the two pages
+      // that mention each other through "## Links" would show as an extra mention here).
+      assert.deepEqual(
+        set.filter((l) => l.includes(' mentions ')),
+        inBodies,
+        `mentions of ${slug}`,
+      )
+      if (before) assert.deepEqual(set, before, `links of ${slug}`)
+      before = set
+      const next = await download(w, { session: web }, `/v1/brains/${slug}/export?format=readable`)
+      assert.equal(next.status, 200)
+      const now = filesOf(next.bytes)
+      // The page files, from the title on (the header holds dates and revisions), up to the sources (their
+      // notes have new ids in a new brain).
+      const shape = (f: Map<string, string>) =>
+        [...f]
+          .filter(([n]) => n.startsWith('wiki/'))
+          .map(([n, text]) => [
+            n,
+            text.replace(/^---[\s\S]*?\n---\n/, '').replace(/\n## Sources[\s\S]*$/, ''),
+          ])
+      assert.deepEqual(shape(now), shape(last), `pages of ${slug}`)
+      for (const [, text] of shape(now)) assert.ok(!/## Links[\s\S]*## Links/.test(text as string))
+      bytes = next.bytes
+      last = now
+    }
+  })
+
+  it('every page says it is from this version of the export', () => {
+    for (const [name, text] of files) if (name.startsWith('wiki/')) assert.match(text, /^export: 2$/m, name)
+  })
+
   it('CA11: every [[link]] of the vault opens a file that exists, and every block it names', () => {
     const broken: string[] = []
     let count = 0

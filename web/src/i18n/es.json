@@ -642,6 +642,7 @@
     "Test email": "Correo electrónico de prueba",
     "Search by meaning finds pages and entries about the same thing in other words. It sends their text to a provider.": "La búsqueda por significado encuentra páginas y entradas sobre lo mismo, en otras palabras. Envía su texto a un proveedor.",
     "Off: searches use words only.": "Apagado: las búsquedas usan solo palabras.",
+    "Off: searches use words only. A question in one language can miss pages written in another.": "Apagado: las búsquedas usan solo palabras. Una pregunta en un idioma puede no encontrar páginas escritas en otro.",
     "Processing": "Procesamiento",
     "Turn off meaning search": "Desactivar la búsqueda de significado",
     "Turn off meaning search?": "¿Desactivar la búsqueda de significado?",
