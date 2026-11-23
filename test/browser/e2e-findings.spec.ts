@@ -86,6 +86,123 @@ test('a proposal shows a new page as it will read, and an edit by its changed li
   await noSideScroll(page)
 })
 
+async function reviewWith(page: Page, before: string[], after: string[]) {
+  await page.route('**/v1/proposals/prp_growth1/review*', async (route) => {
+    const res = await route.fetch()
+    const j = await res.json()
+    j.ops[0].before.body = before.join('\n')
+    j.ops[0].after.body = after.join('\n')
+    await route.fulfill({ response: res, json: j })
+  })
+  await page.goto('/b/growth/proposals/prp_growth1')
+  return page.locator('.op-diff').first().locator('.body-diff')
+}
+const numbered = (n: number) => Array.from({ length: n }, (_, i) => `Line ${i + 1} of the page.`)
+
+test('folding keeps two lines of context round a change, at the start, the end and in the middle', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  const lines = numbered(14)
+  // Line 7 of 14: lines 5, 6, 8 and 9 stay; lines 1 to 4 and 10 to 14 are folded.
+  let diff = await reviewWith(
+    page,
+    lines,
+    lines.map((l, i) => (i === 6 ? 'Changed.' : l)),
+  )
+  for (const n of [5, 6, 8, 9]) await expect(diff.getByText(`Line ${n} of the page.`)).toBeVisible()
+  for (const n of [1, 4, 10, 14]) await expect(diff.getByText(`Line ${n} of the page.`)).toHaveCount(0)
+  await expect(diff.getByRole('button', { name: 'Show 4 unchanged lines' })).toBeVisible()
+  await expect(diff.getByRole('button', { name: 'Show 5 unchanged lines' })).toBeVisible()
+  // The first line changes: only the end is folded.
+  await page.unrouteAll()
+  diff = await reviewWith(
+    page,
+    lines,
+    lines.map((l, i) => (i === 0 ? 'Changed.' : l)),
+  )
+  await expect(diff.getByText('Line 3 of the page.')).toBeVisible()
+  await expect(diff.getByText('Line 4 of the page.')).toHaveCount(0)
+  await expect(diff.getByRole('button', { name: /Show \d+ unchanged lines/ })).toHaveCount(1)
+  // The last line changes: only the start is folded.
+  await page.unrouteAll()
+  diff = await reviewWith(
+    page,
+    lines,
+    lines.map((l, i) => (i === 13 ? 'Changed.' : l)),
+  )
+  await expect(diff.getByText('Line 12 of the page.')).toBeVisible()
+  await expect(diff.getByText('Line 11 of the page.')).toHaveCount(0)
+  await expect(diff.getByRole('button', { name: /Show \d+ unchanged lines/ })).toHaveCount(1)
+  // A run that folds would hide a single line (5 lines between two changes) is shown whole: no button for 1 line.
+  await page.unrouteAll()
+  const seven = numbered(7)
+  diff = await reviewWith(
+    page,
+    seven,
+    seven.map((l, i) => (i === 0 || i === 6 ? 'Changed.' : l)),
+  )
+  await expect(diff.getByText('Line 4 of the page.')).toBeVisible()
+  await expect(diff.getByRole('button', { name: /Show \d+ unchanged lines?/ })).toHaveCount(0)
+  // One line more, and the two in the middle fold.
+  await page.unrouteAll()
+  const eight = numbered(8)
+  diff = await reviewWith(
+    page,
+    eight,
+    eight.map((l, i) => (i === 0 || i === 7 ? 'Changed.' : l)),
+  )
+  await expect(diff.getByRole('button', { name: 'Show 2 unchanged lines' })).toBeVisible()
+})
+
+test('Enter then the typing pause sends once; the same words typed again after clearing are searched again', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth')
+  await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
+  await page.keyboard.press('Control+k')
+  const d = page.getByRole('dialog', { name: 'Search' })
+  const asked: string[] = []
+  page.on('request', (r) => {
+    if (r.url().includes('/v1/search')) asked.push(new URL(r.url()).searchParams.get('q') ?? '')
+  })
+  const field = d.getByLabel('Search for')
+  await field.fill('retention')
+  await field.press('Enter')
+  await expect(d.getByRole('list', { name: 'Results' })).toBeVisible()
+  await page.waitForTimeout(500)
+  expect(asked).toEqual(['retention'])
+  await field.fill('')
+  await page.waitForTimeout(300)
+  await field.fill('retention')
+  await expect.poll(() => asked.length).toBe(2)
+})
+
+test('the meaning-search hint is hidden when the answer says meaning search is on', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.route('**/v1/search?*', async (route) => {
+    const res = await route.fetch()
+    const j = await res.json()
+    await route.fulfill({ response: res, json: { ...j, meaning: 'on' } })
+  })
+  await page.goto('/b/growth')
+  await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
+  await page.keyboard.press('Control+k')
+  const d = page.getByRole('dialog', { name: 'Search' })
+  await d.getByLabel('Search for').fill('retention')
+  await expect(d.getByRole('list', { name: 'Results' }).getByRole('listitem').first()).toBeVisible()
+  await expect(d.getByText(/Meaning search is off/)).toHaveCount(0)
+})
+
 test('search runs as you type, with the arrows still moving through the results', async ({
   page,
   context,

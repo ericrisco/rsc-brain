@@ -238,7 +238,11 @@ export async function cleanupDue(ctx: Ctx, brain: Brain, role: Role): Promise<Cl
     counts,
     health,
     suggestion: `The wiki of "${brain.slug}" has ${problems} problem${problems === 1 ? '' : 's'} (${listed}) and ${
-      maintenance.lastAt || cleaned.baseline ? 'no cleanup in the last 24 hours' : 'has never been cleaned'
+      maintenance.lastAt
+        ? 'no cleanup in the last 24 hours'
+        : cleaned.baseline
+          ? 'no cleanup since it was imported'
+          : 'has never been cleaned'
     }. Before your task, or after it, clean what you can: link orphan pages where they belong, fix or remove broken links, settle contradictions (a deliberate debate between two pages is not one; a curator marks it as known), update stale pages from the journal, split long pages, merge pages about the same thing. Send it as one change marked as maintenance: brain_propose (or brain_write, if your key may write) with "maintenance": true.`,
   }
 }

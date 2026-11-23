@@ -72,11 +72,14 @@ describe('known debates and the import baseline', { skip: skipPg }, () => {
   it('a known debate does not make the wiki need a cleanup, and the agent is not told to settle it', async () => {
     w.advance(25 * 3_600_000)
     assert.equal((await health()).maintenance.suggested, true)
+    const context = async () =>
+      ((await w.call(ana.key, 'GET', '/v1/brains/yt/context')).body as { cleanup?: unknown }).cleanup ?? null
+    // Positive control: before the debate is marked, the agent is asked for a cleanup.
+    assert.notEqual(await context(), null)
     await debate(ericWeb, true)
     const h = await health()
     assert.equal(h.maintenance.suggested, false)
-    const ctx = (await w.call(ana.key, 'GET', '/v1/brains/yt/context')).body as { cleanup?: unknown }
-    assert.equal(ctx.cleanup ?? null, null)
+    assert.equal(await context(), null)
     await debate(ericWeb, false)
     assert.equal((await health()).maintenance.suggested, true)
   })
@@ -154,6 +157,50 @@ describe('known debates and the import baseline', { skip: skipPg }, () => {
     )
   })
 
+  it('a debate survives a revert to a revision that still lists its contradicts link', async () => {
+    const change = (op: Record<string, unknown>) =>
+      w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
+    assert.equal((await make('papers/ww')).status, 201)
+    assert.equal((await make('papers/vv', { links: [{ kind: 'contradicts', to: 'papers/ww' }] })).status, 201)
+    assert.equal(
+      (await change({ op: 'edit', address: 'papers/vv', baseRevision: 1, body: 'Edited.' })).status,
+      201,
+    )
+    assert.equal((await debate(ericWeb, true, 'papers/vv', 'papers/ww')).status, 200)
+    assert.equal((await change({ op: 'revert', address: 'papers/vv', toRevision: 1 })).status, 201)
+    const h = await health()
+    assert.equal(
+      h.debates.some((d) => d.a === 'papers/vv' && d.b === 'papers/ww'),
+      true,
+    )
+    assert.equal(
+      h.conflicts.some((c) => c.a === 'papers/vv'),
+      false,
+    )
+  })
+
+  it('with the contradiction written both ways, the debate stays until the last link goes', async () => {
+    const change = (op: Record<string, unknown>) =>
+      w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
+    assert.equal((await make('papers/bb')).status, 201)
+    assert.equal((await make('papers/aa', { links: [{ kind: 'contradicts', to: 'papers/bb' }] })).status, 201)
+    assert.equal(
+      (await change({ op: 'link', address: 'papers/bb', kind: 'contradicts', to: 'papers/aa' })).status,
+      201,
+    )
+    assert.equal((await debate(ericWeb, true, 'papers/aa', 'papers/bb')).status, 200)
+    await change({ op: 'unlink', address: 'papers/aa', kind: 'contradicts', to: 'papers/bb' })
+    assert.equal(
+      (await health()).debates.some((d) => d.a === 'papers/aa'),
+      true,
+    )
+    await change({ op: 'unlink', address: 'papers/bb', kind: 'contradicts', to: 'papers/aa' })
+    assert.equal(
+      (await health()).debates.some((d) => d.a === 'papers/aa'),
+      false,
+    )
+  })
+
   it('an import is a baseline: the cleanup is not due for 24 hours after it', async () => {
     assert.equal((await health()).maintenance.suggested, true)
     await w.db.query("UPDATE brains SET imported_at = $1, imported_from = 'a folder' WHERE slug = 'yt'", [
@@ -162,5 +209,13 @@ describe('known debates and the import baseline', { skip: skipPg }, () => {
     assert.equal((await health()).maintenance.suggested, false)
     w.advance(25 * 3_600_000)
     assert.equal((await health()).maintenance.suggested, true)
+    const cleanup = (
+      (await w.call(ana.key, 'GET', '/v1/brains/yt/context')).body as {
+        cleanup?: { suggestion: string }
+      }
+    ).cleanup
+    assert.ok(cleanup)
+    assert.doesNotMatch(cleanup.suggestion, /never been cleaned/)
+    assert.match(cleanup.suggestion, /no cleanup since it was imported/)
   })
 })

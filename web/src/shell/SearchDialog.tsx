@@ -141,7 +141,11 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
   useEffect(() => {
     if (!open || !online.value) return
     const text = q.trim()
-    if (!text) return
+    if (!text) {
+      // An emptied field forgets what was sent: the same words typed again are searched again.
+      sent.current = ''
+      return
+    }
     // Checked when the pause ends: Enter pressed meanwhile has sent these words already.
     const timer = setTimeout(() => {
       if (sent.current !== text) run()

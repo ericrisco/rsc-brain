@@ -479,19 +479,27 @@ export async function applyOps(
             String(p.id),
             was.filter((s) => !('entryId' in s) || alive.has(s.entryId)),
           )
-          await db.query('DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL', [p.id])
+          // Only the links the revision does not list go, and only the missing ones come back: a link the page
+          // keeps is never deleted (a known debate rides on its contradicts link).
+          const want: { kind: LinkKind; to: string }[] = []
           for (const l of (old.links as { kind: LinkKind; to: string }[]) ?? []) {
             const t = await db.one(
               'SELECT p.id FROM page_addresses a JOIN pages p ON p.id = a.page_id WHERE a.brain_id = $1 AND a.address = $2',
               [brainId, l.to],
             )
-            if (t && t.id !== p.id) {
-              await db.query(
-                `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
+            if (t && t.id !== p.id) want.push({ kind: l.kind, to: String(t.id) })
+          }
+          await db.query(
+            `DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL
+               AND (kind, to_page) NOT IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
+            [p.id, want.map((l) => l.kind), want.map((l) => l.to)],
+          )
+          for (const l of want) {
+            await db.query(
+              `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
                ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
-                [brainId, p.id, l.kind, t.id],
-              )
-            }
+              [brainId, p.id, l.kind, l.to],
+            )
           }
           await setMentions({ id: String(p.id), address: String(p.address) }, String(old.body))
           await revise(it, String(p.id), `back to revision ${o.toRevision}`)
