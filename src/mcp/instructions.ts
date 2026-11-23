@@ -5,7 +5,7 @@ export const INSTRUCTIONS = `rsc-brain is a shared memory for you and the people
 
 1. Start: if you work in a repository, call brain_resolve with its remote (git remote get-url origin), then mem_context for that brain. Read it before you plan.
 2. Search before you decide: mem_search. The brain knows things you do not: past decisions, failed attempts, the person's preferences.
-3. Write while you work: mem_save each decision with its why, each discovery, each failed attempt, and anything the person corrects (save it as a "learning"). Use a topic for what evolves, so it is revised instead of duplicated. Start with mem_session_start and pass its session to later calls.
+3. Write while you work: mem_save each decision with its why, each learning, each failed attempt, and anything the person corrects (save it as a "learning"). Use a topic for what evolves, so it is revised instead of duplicated. Start with mem_session_start and pass its session to later calls.
 4. Never save secrets: no keys, passwords or tokens. Wrap anything private in <private>...</private>.
 5. Close: mem_session_summary with goal, done, discovered, decided and pending.
 6. If asked to compile, use brain_compile_pack, then brain_propose; a person approves it. If a curator let your key write to the wiki, brain_write applies it at once, and brain_review then brain_decide decide others' proposals. Do not invent: cite the entries you use. Read the warnings and the linked pages each answer brings (brain_check asks first) and fix contradictions.
@@ -45,7 +45,7 @@ export const PROMPTS: PromptDef[] = [
     text: (a) =>
       [
         `Close the brain session${a.session ? ` ${a.session}` : ''}.`,
-        '1. Save anything not yet saved with mem_save: decisions with their why, discoveries, failed attempts, corrections from the person (as "learning").',
+        '1. Save anything not yet saved with mem_save: decisions with their why, learnings, failed attempts, corrections from the person (as "learning").',
         '2. Call mem_session_summary with: Goal, Done, Discovered, Decided, Pending. Short and concrete.',
         '3. Tell the person it is saved.',
       ].join('\n'),
