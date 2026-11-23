@@ -12,7 +12,8 @@ import { isWrite, underMaintenance } from '../http/maintenance.ts'
 import { match, type PublicReq, type Reply, type Route } from '../http/router.ts'
 import { headerValue, NAMED_METHODS } from './headers.ts'
 import { INSTRUCTIONS, PROMPTS } from './instructions.ts'
-import { allowed, defaultBrain, TOOLS } from './tools.ts'
+import { allowed, defaultBrain, listedTools, TOOLS } from './tools.ts'
+import { validateArgs } from './validate.ts'
 
 export const MODERN = '2026-07-28'
 // 2025-03-26 is not offered: it asks servers to take batches, which later revisions dropped.
@@ -326,7 +327,7 @@ async function dispatch(
       return {}
     case 'tools/list':
       return {
-        tools: TOOLS.filter((t) => allowed(t, who) === null).map((t) => ({
+        tools: (await listedTools(r.db, who)).map((t) => ({
           name: t.name,
           title: t.title,
           description: t.description,
@@ -391,6 +392,14 @@ async function callTool(
     )
   }
   try {
+    // The arguments must fit the schema tools/list showed: required fields, unknown ones, types, values.
+    const problems = validateArgs(tool.inputSchema, args)
+    if (problems.length > 0) {
+      throw invalid(
+        `${tool.name}: ${problems.join(' ')}`,
+        `Send the arguments as the inputSchema of ${tool.name} says (tools/list).`,
+      )
+    }
     const call = await tool.call(args, { db: r.db, who, brain: (a) => defaultBrain(r.db, who, a) })
     const query = new URLSearchParams(call.query ?? {})
     const found = match(routes(), call.method, call.path)

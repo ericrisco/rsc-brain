@@ -1,14 +1,15 @@
 // The protocol that travels with the server (spec B5): what an agent reads when it connects, under
 // 2 000 characters, and the two guides a person can invoke.
+import { AGENT_ENTRY_TYPES } from './tools.ts'
 
 export const INSTRUCTIONS = `rsc-brain is a shared memory for you and the people you work with. Use it like this:
 
 1. Start: if you work in a repository, call brain_resolve with its remote (git remote get-url origin), then mem_context for that brain. Read it before you plan.
 2. Search before you decide: mem_search. The brain knows things you do not: past decisions, failed attempts, the person's preferences.
-3. Write while you work: mem_save each decision with its why, each learning, each failed attempt, and anything the person corrects (save it as a "learning"). Use a topic for what evolves, so it is revised instead of duplicated. Start with mem_session_start and pass its session to later calls.
+3. Write while you work: mem_save each decision with its why, each learning, each failed attempt, and anything the person corrects (as a "learning"; "correction" is only for people). Types: ${AGENT_ENTRY_TYPES.join(', ')}. Use a topic for what evolves, so it is revised instead of duplicated. Start with mem_session_start and pass its session to later calls.
 4. Never save secrets: no keys, passwords or tokens. Wrap anything private in <private>...</private>.
 5. Close: mem_session_summary with goal, done, discovered, decided and pending.
-6. If asked to compile, use brain_compile_pack, then brain_propose; a person approves it. If a curator let your key write to the wiki, brain_write applies it at once, and brain_review then brain_decide decide others' proposals. Do not invent: cite the entries you use. Read the warnings and the linked pages each answer brings (brain_check asks first) and fix contradictions.
+6. If asked to compile, use brain_compile_pack (it shows each operation with an example), then brain_propose; a person approves it. If a curator let your key write to the wiki, brain_write applies it at once, and brain_review then brain_decide decide others' proposals. Do not invent: cite the entries you use. Read the warnings and the linked pages each answer brings (brain_check asks first) and fix contradictions.
 7. When mem_context brings a cleanup, fix what its report lists and send it with "maintenance": true.
 
 Every error says what happened and how to proceed. A brain you cannot use answers as if it did not exist.`

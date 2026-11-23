@@ -119,6 +119,9 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return bad('An operation must be a JSON object.')
   const o = raw as Raw
   const kind = o.op
+  if (kind === undefined || kind === null) {
+    return bad(`The field "op" is missing. Set "op" to one of: ${OP_KINDS.join(', ')}.`)
+  }
   if (typeof kind !== 'string' || !(OP_KINDS as readonly string[]).includes(kind)) {
     return bad(`Unknown operation "${shown(kind)}". Use one of: ${OP_KINDS.join(', ')}.`)
   }

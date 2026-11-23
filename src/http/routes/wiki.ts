@@ -232,7 +232,8 @@ export const wikiRoutes: Route[] = [
           ctxOf(r),
           r.params.slug as string,
           compact({
-            title: reqStr(b, 'title'),
+            // A check writes nothing, so it needs no title; readPackage only wants one to be there.
+            title: str(b, 'title') ?? 'Check',
             reason: str(b, 'reason'),
             ops: b.ops,
             collected: b.collected,

@@ -30,7 +30,7 @@ export type ContextItem = {
   address?: string
 }
 type Item = { id: string; block: string; lines?: string[]; about?: Omit<ContextItem, 'section'> }
-type Section = { name: string; items: Item[] }
+type Section = { name: string; title?: string; items: Item[] }
 
 const VIGENT =
   "e.state = 'active' AND e.superseded_by IS NULL AND (e.expires_at IS NULL OR e.expires_at > $2)"
@@ -146,11 +146,19 @@ export async function startContext(
   // so a correction follows its page when it moves).
   const corrections = await ctx.db.query(
     `${SELECT} WHERE e.brain_id = $1 AND ${VIGENT} AND e.type = 'correction'
-       AND (e.applies_to IS NULL OR lower(e.applies_to) = lower($3) OR e.applies_to = $4 OR e.id = ANY($5)
+       AND (e.applies_to IS NULL OR lower(e.applies_to) = lower($3) OR e.applies_to = $4 OR lower(e.applies_to) = lower($8) OR e.id = ANY($5)
             OR e.id IN (SELECT s.entry_id FROM page_sources s WHERE s.page_id = ANY($6) AND s.entry_id IS NOT NULL)
             OR e.refs && $7::text[])
      ORDER BY e.created_at DESC`,
-    [...p, agent, ctx.who.accountId, relevantIds, taskPageIds, await pageRefs(ctx.db, brain.id, taskPageIds)],
+    [
+      ...p,
+      agent,
+      ctx.who.accountId,
+      relevantIds,
+      taskPageIds,
+      await pageRefs(ctx.db, brain.id, taskPageIds),
+      ctx.who.name,
+    ],
   )
   const pinned = await ctx.db.query(
     `${SELECT} WHERE e.brain_id = $1 AND ${VIGENT} AND e.pinned ORDER BY e.updated_at DESC`,
@@ -181,7 +189,11 @@ export async function startContext(
 
   const via = new Map(dependsOn.map((d) => [d.id, `depends-on from ${d.linkedFrom?.address ?? ''}`]))
   const sections: Section[] = [
-    { name: 'corrections', items: corrections.map((r) => block(r, brain.slug)) },
+    {
+      name: 'corrections',
+      title: 'Corrections for you',
+      items: corrections.map((r) => block(r, brain.slug)),
+    },
     { name: 'pinned', items: pinned.map((r) => block(r, brain.slug)) },
     { name: 'recent summaries', items: summaries.map((r) => block(r, brain.slug)) },
     { name: 'pages about your task', items: taskPages.map((r) => pageBlock(r, brain.slug)) },
@@ -223,7 +235,7 @@ export async function startContext(
   const missed = new Map<string, string>() // an item that did not fit, and the first part it was due in
   let mapLeft = 0
   for (const s of sections) {
-    let title = `\n\n## ${s.name[0]?.toUpperCase()}${s.name.slice(1)}`
+    let title = `\n\n## ${s.title ?? `${s.name[0]?.toUpperCase()}${s.name.slice(1)}`}`
     for (const it of s.items) {
       if (seen.has(it.id)) continue
       if (it.lines) {

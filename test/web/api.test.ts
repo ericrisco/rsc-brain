@@ -80,6 +80,15 @@ describe('the API client', () => {
     assert.equal(f.seen[1]?.url, '/v1/search?q=retention+%26+intros')
   })
 
+  it('search keeps an empty "q" (the server requires it); other routes drop empty values', async () => {
+    const f = fake(() => ({ status: 200, body: { items: [] } }))
+    const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+    await api.call('search', { query: { q: '', brains: 'b', in: 'entries' } })
+    await api.call('wikiPages', { path: { slug: 'b' }, query: { q: '' } })
+    assert.equal(f.seen[0]?.url, '/v1/search?q=&brains=b&in=entries')
+    assert.equal(f.seen[1]?.url, '/v1/brains/b/wiki/pages')
+  })
+
   it('a refusal becomes an ApiError with what happened and how to proceed', async () => {
     const f = fake(() => ({ status: 409, body: ERR('changed') }))
     const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })

@@ -124,6 +124,8 @@ export const recallRoutes: Route[] = [
     })),
   ),
   route('GET /v1/search', async (r) => {
+    if (r.query.get('q') === null)
+      throw invalid('"q" is required: what to look for.', 'Add ?q=… with the words to search for.')
     const include = list(r.query.get('include'))
     const bad = include?.find((i) => !(INCLUDES as readonly string[]).includes(i))
     if (bad) throw invalid(`Unknown "include" value "${bad}".`, `Use any of: ${INCLUDES.join(', ')}.`)

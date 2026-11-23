@@ -6,6 +6,7 @@ import type { Row } from '../../db/db.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
 import { type Entry, entryOf, words } from '../entries.ts'
 import { mentionsOf } from './model.ts'
+import { OP_EXAMPLES } from './op-schema.ts'
 import { settingsOf, wikiMap } from './pages.ts'
 
 export const PACK = { default: 60_000, min: 4_000, max: 400_000 }
@@ -23,6 +24,8 @@ export type RelatedPage = {
 export type CompilePack = {
   brain: { slug: string; purpose: string }
   guide: string
+  // One example of each operation brain_propose, brain_check and brain_write take.
+  operations: typeof OP_EXAMPLES
   entries: Entry[]
   remaining: number
   remainingCorrections: number
@@ -138,6 +141,7 @@ export async function compilePack(
   return {
     brain: { slug: brain.slug, purpose: brain.purpose },
     guide: settings.guide,
+    operations: OP_EXAMPLES,
     entries,
     remaining: rows.length - entries.length,
     remainingCorrections: allCorrections.length - corrections.length,

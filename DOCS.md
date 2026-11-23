@@ -443,7 +443,16 @@ works, never save secrets, close with a summary.
   `mem_suggest_topic`, `mem_relate`, `mem_forget`, `mem_session_summary`, `mem_session_end`,
   `mem_search`, `mem_get`, `mem_timeline`, `brain_page`, `brain_neighbors`, `brain_map`,
   `brain_health`, `brain_compile_pack`, `brain_check`, `brain_write`, `brain_propose`, `brain_proposals`,
-  `brain_review`, `brain_decide`, `brain_withdraw`, `brain_create`. A key sees only the tools it may use.
+  `brain_review`, `brain_decide`, `brain_withdraw`, `brain_create`. A key sees only the tools it may use:
+  `brain_write`, `brain_review` and `brain_decide` only when a curator let that key write to the wiki.
+- Every call is checked against the tool's own `inputSchema` before it runs: a missing required field, an
+  unknown field, a wrong type or a value outside its list is an `invalid_request` that names the field. The
+  `ops` of `brain_propose`, `brain_check` and `brain_write` have a schema per operation (told apart by
+  `op`), and `brain_compile_pack` returns one example of each in `operations`. An agent saves entries of the
+  types `decision`, `learning`, `attempt`, `preference`, `fact`, `step`, `summary` and `note`;
+  `correction` is for people.
+- `brain_review` returns each body as a unified diff with only the fields that change; `full: true` (or
+  `?view=full` over HTTP, the web's default) returns the whole pages before and after.
 
 - Each tool runs the same `/v1` route a program would, with the same key: the same checks, limits
   and results.
