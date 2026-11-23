@@ -2,6 +2,7 @@
 // before and after, its reason and sources, what it depends on, and whether the page changed since the
 // proposal was written. The fingerprint pins the version seen: approving needs it (CA6).
 import { createHash } from 'node:crypto'
+import { createPatch } from 'diff'
 import { AppError } from '../../core/errors.ts'
 import type { Db, Row } from '../../db/db.ts'
 import type { Ctx } from '../context.ts'
@@ -288,5 +289,68 @@ export async function buildReview(ctx: Ctx, row: Row, curator: boolean): Promise
     ops: reviewed,
     warnings: warnings.filter((w) => w.op === null),
     sourceEntries: await sourceEntriesOf(ctx.db, brainId, plain, curator),
+  }
+}
+
+// A unified diff of two texts (the hunks only), or '' when they are the same.
+export function bodyDiff(before: string, after: string): string {
+  const patch = createPatch('body', before, after, '', '', { context: 2 })
+  const at = patch.indexOf('\n@@')
+  return at === -1 ? '' : patch.slice(at + 1).trimEnd()
+}
+
+const COMPARED: Array<keyof PageState> = ['type', 'title', 'summary', 'tags', 'status', 'sources', 'links']
+
+// The fields of `after` that differ from `before`: the body as a unified diff, the rest as their new value.
+function changesOf(before: Partial<PageState> | null, after: Partial<PageState>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (typeof after.body === 'string' && after.body !== before?.body)
+    out.body = bodyDiff(before?.body ?? '', after.body)
+  if (after.address !== undefined && after.address !== before?.address) out.address = after.address
+  for (const k of COMPARED) {
+    if (after[k] !== undefined && JSON.stringify(after[k]) !== JSON.stringify(before?.[k])) out[k] = after[k]
+  }
+  return out
+}
+
+// The review as an agent reads it by default: each operation with a diff of its body and only the fields it
+// changes, instead of the page before and after and the base revision in full. `?view=full` (the web's) keeps
+// every body.
+export function compactReview(review: Review & { canDecide?: boolean }): Record<string, unknown> {
+  return {
+    ...review,
+    ops: review.ops.map((o) => {
+      const { body: _body, ...op } = o.op as Op & { body?: string }
+      const compact: Record<string, unknown> = {
+        index: o.index,
+        op: { ...op, ...('body' in o.op ? { bodyChars: (o.op as { body: string }).body.length } : {}) },
+        status: o.status,
+        corrected: o.corrected,
+        before: o.before
+          ? {
+              address: o.before.address,
+              revision: o.before.revision,
+              title: o.before.title,
+              status: o.before.status,
+            }
+          : null,
+        changes: o.after ? changesOf(o.before, o.after) : {},
+        dependsOn: o.dependsOn,
+        stale: null,
+        warnings: o.warnings,
+      }
+      if (o.stale) {
+        compact.stale = {
+          baseRevision: o.stale.base?.revision ?? (o.op as { baseRevision?: number }).baseRevision ?? null,
+          currentRevision: o.stale.current.revision,
+          changedSince: o.stale.base
+            ? changesOf(o.stale.base as unknown as Partial<PageState>, o.stale.current)
+            : null,
+        }
+      }
+      return compact
+    }),
+    howToProceed:
+      'Bodies are shown as unified diffs. Ask again with full: true (view=full over HTTP) for whole pages.',
   }
 }

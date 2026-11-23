@@ -23,8 +23,14 @@ export function journalFile(sessionId: string, openedAt: Date): string {
 // The block of an entry in its note: letters, digits and dashes only, as a vault requires.
 export const anchorOf = (entryId: string) => entryId.replace(/[^A-Za-z0-9-]/g, '-')
 
+// Written before the "## Links" and "## Sources" sections an export adds at the end of each page: they are made
+// from the header and the graph, not part of the body, and an import takes them off. A body that holds the mark
+// gets it written as text (plain), so it is never read as this one.
+export const GENERATED_MARK = '<!-- rsc-brain:generated -->'
+
 // Text written into a note never becomes a link by accident: "[[" is escaped, so it shows as written.
-export const plain = (text: string) => text.replaceAll('[[', '\\[\\[')
+export const plain = (text: string) =>
+  text.replaceAll('[[', '\\[\\[').replaceAll(GENERATED_MARK, GENERATED_MARK.replace('<!--', '&lt;!--'))
 
 // Text people and agents wrote into the journal (review of PR31): never a block anchor of its own (a line that
 // ends "^word" would answer a link to another entry), never something that loads from elsewhere when the note

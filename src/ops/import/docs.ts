@@ -39,6 +39,7 @@ import {
   rewriteLinks,
   sections,
   splitFrontmatter,
+  stripGenerated,
 } from './markdown.ts'
 import type { FileTree, Ignored, TreeFile } from './tree.ts'
 
@@ -231,7 +232,9 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
       leave(f.path, 'binary')
       continue
     }
-    const { fields, body } = splitFrontmatter(text)
+    const split = splitFrontmatter(text)
+    const { fields } = split
+    const body = stripGenerated(fields, split.body)
     if (body.length > WIKI_LIMITS.body) {
       leave(f.path, 'too_large')
       continue

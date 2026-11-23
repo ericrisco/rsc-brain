@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { newSecret } from '../../src/auth/secrets.ts'
-import { normalize, PRIVATE_MARK, redact, redactAll, SECRET_MARK } from '../../src/privacy/redact.ts'
+import {
+  mayHoldSecret,
+  normalize,
+  PRIVATE_MARK,
+  redact,
+  redactAll,
+  SECRET_MARK,
+} from '../../src/privacy/redact.ts'
 
 // Fake credentials with the real shapes (none of them is valid anywhere).
 const SECRETS: Record<string, string> = {
@@ -102,6 +109,53 @@ describe('redaction', () => {
     assert.equal(redact('a <private note="x">hidden</private> b').text, `a ${PRIVATE_MARK} b`)
   })
 
+  it('redacts a password said in a sentence, in English and Spanish', () => {
+    const cases: [string, string][] = [
+      ['la contraseña del servidor es hunter2hunter2', `la contraseña del servidor es ${SECRET_MARK}`],
+      [
+        'La Contrasena de la base de datos es Zx9!kLmNop',
+        `La Contrasena de la base de datos es ${SECRET_MARK}`,
+      ],
+      ['CONTRASEÑA: abc123xyz', `CONTRASEÑA: ${SECRET_MARK}`],
+      ['la clave es qwerty123.', `la clave es ${SECRET_MARK}.`],
+      ['the server password is hunter2hunter2', `the server password is ${SECRET_MARK}`],
+      ['Password is set to P4ssw0rd!x, ok', `Password is set to ${SECRET_MARK}, ok`],
+      ['the passphrase is "correct horse"', 'the passphrase is "correct horse"'],
+      ['passphrase = tr0ub4dor&3', `passphrase = ${SECRET_MARK}`],
+      ['pwd is abcdefghijkl', `pwd is ${SECRET_MARK}`],
+      ['passwd: s3cr3t', `passwd: ${SECRET_MARK}`],
+      ['password = "p@ss"', `password = "${SECRET_MARK}"`],
+      ['{"password": "hunter2"}', `{"password": "${SECRET_MARK}"}`],
+      ['the password is "hunter2hunter2"', `the password is "${SECRET_MARK}"`],
+    ]
+    for (const [input, expected] of cases) assert.equal(redact(input).text, expected, input)
+  })
+
+  it('leaves sentences about passwords alone', () => {
+    for (const text of [
+      'the password policy is strict',
+      'la política de contraseñas es estricta',
+      'la contraseña es obligatoria',
+      'la clave es importante',
+      'the password is required',
+      'the password is well-known',
+      'la clave es 12',
+      'password es corta',
+      'a strong password is long',
+      'clave primaria: id_usuario_2',
+      'la clave foránea es fk_pedido_1',
+      'la clave de búsqueda es q_2024',
+      'password policy: min_len_12',
+    ])
+      assert.deepEqual(redact(text), { text, redactions: 0 }, text)
+  })
+
+  it('a password sentence is found by the cheap SQL test too', () => {
+    assert.match(mayHoldSecret('c'), /contrase/)
+    assert.match(mayHoldSecret('c'), /clave/)
+    assert.match(mayHoldSecret('c'), /passphrase/)
+  })
+
   it('no rule takes long on a hostile 32 000-character text', () => {
     const hostile = [
       'eyJ-'.repeat(8000),
@@ -109,6 +163,8 @@ describe('redaction', () => {
       'sk-'.repeat(10666),
       'x://'.repeat(8000),
       'password'.repeat(4000),
+      'contraseña de la x '.repeat(1700),
+      'password is '.repeat(2700),
       `${'a'.repeat(31990)}:`,
       'Authorization: Bearer '.repeat(1454),
       '-----BEGIN RSA PRIVATE KEY-----'.repeat(1032),

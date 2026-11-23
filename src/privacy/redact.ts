@@ -51,6 +51,16 @@ const RULES: Rule[] = [
     re: /(["']?\b[A-Za-z0-9_.-]{0,40}(?:api[_-]?key|secret[_-]?key|client[_-]?secret|access[_-]?token|auth[_-]?token|refresh[_-]?token|password|passwd|pwd)["']?\s*[:=]\s*)(["']?)[^\s"']{8,512}\2/gi,
     replace: `$1${SECRET_MARK}`,
   },
+  // A password said in a sentence ("la contraseña del servidor es hunter2hunter2", "the password is
+  // hunter2"): the word, at most five words of subject, a connector (is, es, is set to, ":" or "="), then one
+  // value of 6 or more characters (4 when it is quoted) that is not a plain word (it has a digit or a symbol, or it is 12 or more
+  // characters long): "the password policy is strict" stays. English and Spanish, any case, with or
+  // without the accent.
+  {
+    name: 'spoken-password',
+    re: /((?<![\p{L}\p{N}_])(?:password|passwd|pwd|passphrase|contrase[ñn]a|clave)(?![\p{L}\p{N}_])(?!\s+(?:primaria|for[aá]nea|externa|[uú]nica|de\s+b[uú]squeda|policy|policies)(?![\p{L}\p{N}_]))["']?(?:\s+[\p{L}\p{N}_-]{1,30}){0,5}?\s*(?:(?:is set to|is|es|ser[aá])(?![\p{L}\p{N}_])\s*[:=]?|[:=])\s*["']?)(?:(?<=["'])(?=[^\s"']{3,256}[^\s"'.,;:!?)])|(?=[^\s"']{5,256}[^\s"'.,;:!?)]))(?:(?=[^\s"']*[\d!@#$%^&*+=~?_])|(?=[^\s"']{12}))[^\s"']*[^\s"'.,;:!?)]/giu,
+    replace: `$1${SECRET_MARK}`,
+  },
 ]
 
 export type Redacted = { text: string; redactions: number }
@@ -62,11 +72,11 @@ export const RULE_NAMES: readonly string[] = RULES.map((r) => r.name)
 // find the rows worth redacting in a large table without reading each one. It must never miss: every token
 // rule above matches 15 or more characters of [A-Za-z0-9_-] in a row (the shortest, slack, is "xoxb-" and
 // 10 more), except the JWT, which starts with "eyJ"; every other rule has a literal word (private marks and
-// keys, "://", "authorization", or a key word of the assignments). A new rule must keep this true: the
+// keys, "://", "authorization", or a key word of the assignments or of a spoken password: passw, pwd, passphrase, contrase, clave). A new rule must keep this true: the
 // tests run a minimal sample of every rule through it.
 export function mayHoldSecret(column: string): string {
   return `(${column} ~ '[A-Za-z0-9_-]{15}' OR ${column} ~ 'eyJ'
-    OR ${column} ~* '<private|-----begin|://|authorization|key|secret|token|passw|pwd')`
+    OR ${column} ~* '<private|-----begin|://|authorization|key|secret|token|passw|pwd|passphrase|contrase|clave')`
 }
 
 function removePrivate(text: string): { text: string; count: number } {
