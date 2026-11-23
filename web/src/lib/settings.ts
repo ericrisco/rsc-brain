@@ -1,7 +1,7 @@
 // A brain's settings and the administration of people and service accounts (spec B6 «Settings de un
 // cerebro», «Admin»; PR25a): what each row may offer, what a save sends, and how numbers read. Who may
 // do what is the server's (B4); this only decides what the screen offers and how it says why not.
-import { formatNumber } from '../locale.ts'
+import { formatNumber, locale } from '../locale.ts'
 import { localizeMessage, T } from '../text.ts'
 
 // The server's own reading of a repository address (src/domain/repos.ts), so the screen shows what a link
@@ -77,7 +77,9 @@ export function thresholdProblems(v: Record<ThresholdName, string>): Partial<Rec
     const t = v[k].trim()
     const n = /^\d+$/.test(t) ? Number(t) : Number.NaN
     if (!(n >= min && n <= max))
-      out[k] = localizeMessage(`A whole number from ${formatNumber(min)} to ${formatNumber(max)}.`)
+      out[k] = localizeMessage(
+        `A whole number from ${locale.value === 'es' ? formatNumber(min) : min} to ${locale.value === 'es' ? formatNumber(max) : max}.`,
+      )
   }
   return out
 }
@@ -187,5 +189,7 @@ export function refsLabel(live: number, refs: readonly string[]): string {
   const head = `${formatNumber(live)} short ${live === 1 ? 'key' : 'keys'} live`
   if (!refs.length) return localizeMessage(head)
   const shown = refs.slice(0, 5).join(', ')
-  return localizeMessage(refs.length > 5 ? `${head}: ${shown} and ${refs.length - 5} more` : `${head}: ${shown}`)
+  return localizeMessage(
+    refs.length > 5 ? `${head}: ${shown} and ${refs.length - 5} more` : `${head}: ${shown}`,
+  )
 }

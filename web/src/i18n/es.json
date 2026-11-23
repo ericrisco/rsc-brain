@@ -16,20 +16,21 @@
     "Menu": "Menú",
     "Close menu": "Cerrar menú",
     "Account": "Cuenta",
-    "Signed in as": "Iniciado sesión como",
+    "Signed in as": "Sesión iniciada como",
     "Keyboard shortcuts": "Atajos de teclado",
-    "Dark theme": "Oscuro tema",
-    "Light theme": "Tema ligero",
+    "Dark theme": "Tema oscuro",
+    "Light theme": "Tema claro",
     "Theme": "Tema",
     "Sign out": "Cerrar sesión",
-    "Signing out…": "Cerrar sesión...",
+    "Signing out…": "Cerrando sesión…",
     "Couldn't sign out. Check your connection and try again.": "No se pudo cerrar sesión. Comprueba tu conexión y vuelve a intentarlo.",
     "Sections of this brain": "Secciones de este cerebro",
     "Overview": "Descripción general",
-    "Wiki": "wiki",
+    "Wiki": "Wiki",
     "Decisions": "Decisiones",
     "Log": "Registro",
     "Graph": "Grafo",
+    "Hologram look": "Aspecto holográfico",
     "Journal": "Diario",
     "Proposals": "Propuestas",
     "Health": "Salud",
@@ -77,10 +78,10 @@
     "You are offline: this cannot be sent until the connection is back.": "Estás desconectado: esto no se puede enviar hasta que se restablezca la conexión.",
     "Sending is in progress.": "El envío está en curso.",
     "What you typed is kept.": "Lo que escribiste se conserva.",
-    "Sign in": "Firmar en",
+    "Sign in": "Iniciar sesión",
     "Email": "Correo electrónico",
     "Password": "Contraseña",
-    "Signing in…": "Iniciando sesión...",
+    "Signing in…": "Iniciando sesión…",
     "Forgot your password?": "¿Olvidaste tu contraseña?",
     "No account? rsc-brain is by invitation: ask an administrator for one.": "¿Sin cuenta? rsc-brain es por invitación: pídale una a un administrador.",
     "Signed out.": "Salió.",
@@ -302,9 +303,9 @@
     "QR code of the key": "QR código de la clave",
     "Scan it with your authenticator app, or type the key:": "Escanéelo con su aplicación de autenticación o escriba la clave:",
     "Second factor": "Segundo factor",
-    "A 6-digit code from an authenticator app, asked when you sign in.": "Un código de 6 dígitos de una aplicación de autenticación, que se solicita al firmar en.",
-    "On": "On",
-    "Off": "Off",
+    "A 6-digit code from an authenticator app, asked when you sign in.": "Al iniciar sesión, se te pedirá el código de seis dígitos de tu aplicación de autenticación.",
+    "On": "Activado",
+    "Off": "Desactivado",
     "Turn on": "Activar",
     "Turn off": "Apagar",
     "Turn off the second factor": "Desactivar el segundo factor",
@@ -341,7 +342,7 @@
     "Ask it to save its first entry": "Pídale que guarde su primera entrada",
     "Paste this to your agent:": "Pegue esto en su agente:",
     "Import a documentation folder": "Importe una carpeta de documentación",
-    "Bring in a 02-DOCS folder or an Obsidian vault, as a .zip: its pages with their links, and its notes. Only while the brain is empty. This step marks itself when the import is done.": "Trae una carpeta 02-DOCS o una bóveda de Obsidiana, en formato .zip: sus páginas con sus enlaces y sus notas. Sólo mientras el cerebro esté vacío. Este paso se marca cuando finaliza la importación.",
+    "Bring in a 02-DOCS folder or an Obsidian vault, as a .zip: its pages with their links, and its notes. Only while the brain is empty. This step marks itself when the import is done.": "Trae una carpeta 02-DOCS o una bóveda de Obsidian, en formato .zip: sus páginas con sus enlaces y sus notas. Sólo mientras el cerebro esté vacío. Este paso se marca cuando finaliza la importación.",
     "Import a folder": "Importar una carpeta",
     "A curator of this brain can import a documentation folder (Settings › Import), while it is empty.": "Un curador de este cerebro puede importar una carpeta de documentación (Configuración › Importar), mientras esté vacía.",
     "Imported. Its pages are in the wiki and its notes in the journal.": "Iimportada. Sus páginas están en el wiki y sus notas en el diario.",
@@ -427,7 +428,7 @@
     "Someone changed this while you edited it.": "Alguien cambió esto mientras lo editaba.",
     "Their version is below. What you typed is kept: check it and save again to replace theirs.": "Su versión se encuentra a continuación. Lo que usted escribió se conserva: verifíquelo y guárdelo nuevamente para reemplazar el de ellos.",
     "Their version": "Su versión",
-    "This brain is archived, so its settings are read-only. Unarchive it to change them.": "Este cerebro está archivado, por lo que su configuración es de solo lectura. Descomprímalo para cambiarlos.",
+    "This brain is archived, so its settings are read-only. Unarchive it to change them.": "Este cerebro está archivado. Desarchívalo para cambiar sus ajustes.",
     "Members": "Miembros",
     "People and service accounts in this brain. Readers read; contributors also write and propose; curators also approve and manage.": "Personas y cuentas de servicio en este cerebro. Los lectores leen; los contribuyentes también escriben y proponen; los curadores también aprueban y administran.",
     "service account": "cuenta de servicio",
@@ -465,9 +466,9 @@
     "That is not a full repository address: use the full address, e.g. github.com/org/repo.": "Esa no es una dirección de repositorio completa: use la dirección completa, p. github.com/org/repo.",
     "Link repository": "Enlazar repositorio",
     "Linking…": "Enlazar…",
-    "Unlink": "Unenlazar",
+    "Unlink": "Desvincular",
     "Agents in this repository stop finding this brain by it.": "Los agentes en este repositorio dejan de encontrar este cerebro por él.",
-    "Unlink it": "UEnlazarlo",
+    "Unlink it": "Desvincularlo",
     "Compile guide": "Guía de compilación",
     "What agents follow when they turn the journal into wiki proposals.": "Qué siguen los agentes cuando convierten el diario en wiki propuestas.",
     "Usage note": "Unota de uso",
@@ -491,7 +492,7 @@
     "Long after (characters)": "Mucho después (caracteres)",
     "A page longer than this is suggested for a split.": "Se sugiere una página más larga que esta para una división.",
     "Fill this brain from a folder: a 02-DOCS folder (wiki/ and raw/) or an Obsidian vault, as a .zip, or a faithful export of another rsc-brain installation.": "Rellene este cerebro desde una carpeta: una carpeta 02-DOCS (wiki/ y raw/) o una bóveda de Obsidian, como un .zip, o una exportación fiel de otra instalación de rsc-brain.",
-    "Each markdown file of wiki/ (of the vault) becomes a page; links between files become links between pages.": "Cada archivo de rebajas de wiki/ (de la bóveda) se convierte en una página; los enlaces entre archivos se convierten en enlaces entre páginas.",
+    "Each markdown file of wiki/ (of the vault) becomes a page; links between files become links between pages.": "Cada archivo Markdown de wiki/ (o de la bóveda) se convierte en una página. Los enlaces entre archivos pasan a enlazar esas páginas.",
     "Each text file of raw/ becomes a note in the journal; the index, decisions and log are read too.": "Cada archivo de texto raw/ se convierte en una nota en el diario; el índice, las decisiones y el registro también se leen.",
     "Images, files over 1 MB, hidden folders and files named like keys are left out, and the report says so.": "Las imágenes, los archivos de más de 1 MB, las carpetas ocultas y los archivos con nombres como claves se omiten, y el informe lo dice.",
     "Private parts and anything shaped like a secret are removed, as everywhere in rsc-brain.": "Las partes privadas y cualquier cosa con forma de secreto se eliminan, como en todas partes en rsc-brain.",
@@ -524,7 +525,7 @@
     "Save this brain as a zip file. Every export is recorded in the audit, and the curators see it in the activity.": "Guarde este cerebro como un archivo zip. Cada exportación queda registrada en la auditoría y los curadores la ven en la actividad.",
     "Format": "Formato",
     "Readable": "Legible",
-    "Markdown files to read or open as an Obsidian vault: wiki pages with their links, the journal as one note per session, the map, the decisions and the log.": "Archivos Markdown para leer o abrir como bóveda de Obsidiana: páginas wiki con sus enlaces, el diario como una nota por sesión, el mapa, las decisiones y el log.",
+    "Markdown files to read or open as an Obsidian vault: wiki pages with their links, the journal as one note per session, the map, the decisions and the log.": "Archivos Markdown para leer o abrir como bóveda de Obsidian: páginas wiki con sus enlaces, el diario como una nota por sesión, el mapa, las decisiones y el log.",
     "Faithful": "Fiel",
     "Everything, with its history, to import into another rsc-brain installation. People are named by email.": "Todo, con su historia, para importar a otro Instalación de rsc-brain. Las personas se nombran por correo electrónico.",
     "Include forgotten entries": "Incluyen entradas olvidadas",
@@ -534,7 +535,7 @@
     "An archived brain is read-only: nothing new is written, proposed or approved.": "Un cerebro archivado es de solo lectura: no se escribe, propone ni aprueba nada nuevo.",
     "This brain is archived. Reading, search and context keep working.": "Este cerebro está archivado. La lectura, la búsqueda y el contexto siguen funcionando.",
     "Archive this brain": "Archivar este cerebro",
-    "Unarchive this brain": "UArchivar este cerebro",
+    "Unarchive this brain": "Desarchivar este cerebro",
     "What stops: agents and people cannot save entries, propose, approve, edit pages or entries, relate entries or add corrections; its compile guide, usage note, meaning search and thresholds cannot change, and no repository can be linked.": "Qué se detiene: los agentes y las personas no pueden guardar entradas, proponer, aprobar, editar páginas o entradas, relacionar entradas o agregar correcciones; su guía de compilación, nota de uso, búsqueda de significado y umbrales no pueden cambiar, y no se puede vincular ningún repositorio.",
     "What still works: reading, search and the context agents ask for; who is a member and with which role; unlinking a repository. A curator can unarchive it at any time.": "Lo que todavía funciona: lectura, búsqueda y el contexto que solicitan los agentes; quién es miembro y con qué rol; desvincular un repositorio. Un curador puede desarchivarlo en cualquier momento.",
     "This brain is archived: it is read-only until a curator unarchives it (Archive tab).": "Este cerebro está archivado: es de solo lectura hasta que un curador lo desarchiva (pestaña Archivo).",
@@ -741,7 +742,7 @@
     "Your password": "Su contraseña",
     "The 6 digits your app shows now.": "Los 6 dígitos que muestra su aplicación ahora.",
     "Type your password.": "Escriba su contraseña.",
-    "Type the 6 digits your app shows now.": "Escriba los 6 dígitos que muestra su aplicación ahora.",
+    "Type the 6 digits your app shows now.": "Escribe los seis dígitos que muestra tu aplicación.",
     "Restore this copy": "Restaurar esta copia",
     "Restoring… a copy of what is here is made first; this takes a moment.": "Restaurando… primero se hace una copia de lo que está aquí; esto lleva un momento.",
     "Keep things as they are": "Mantener las cosas como están",
@@ -760,7 +761,7 @@
     "The repository did not answer. It is asked again soon, or on the server:": "El repositorio no respondió. Se vuelve a solicitar pronto o en el servidor:",
     "Cannot update: no published version yet": "No se puede actualizar: aún no hay una versión publicada",
     "The check is off on this installation, or has not run yet. On the server:": "La verificación está desactivada en esta instalación o aún no se ha ejecutado. En el servidor:",
-    "Update on the machine: rsc-brain.sh update (it makes a copy first and rolls back if anything fails).": "UActualización en la máquina: actualización rsc-brain.sh (primero hace una copia y retrocede si algo falla).",
+    "Update on the machine: rsc-brain.sh update (it makes a copy first and rolls back if anything fails).": "En la máquina, ejecuta rsc-brain.sh update para actualizar. Primero crea una copia y revierte la actualización si algo falla.",
     "rsc-brain makes a copy of everything first, stops for a few minutes and starts the new version. If anything fails, it goes back to the version you have now with your data as it was.": "rsc-brain hace una copia de todo primero, se detiene durante unos minutos e inicia la nueva versión. Si algo falla, vuelve a la versión que tiene ahora con sus datos tal como estaban.",
     "Type your password to confirm.": "Escriba su contraseña para confirmar.",
     "Asking…": "Preguntando…",
@@ -773,7 +774,7 @@
     "The details of that update could not be read. On the server, run this: it says what to restore.": "Los detalles de esa actualización no se pudieron leer. En el servidor, ejecute esto: dice qué restaurar.",
     "rsc-brain was installed by rsc-factory: update it from there.": "rsc-brain fue instalado por rsc-factory: actualícelo desde allí.",
     "Last update": "Última actualización",
-    "None yet: rsc-brain.sh update records each one here.": "Ninguna todavía: la actualización de rsc-brain.sh registra cada uno aquí.",
+    "None yet: rsc-brain.sh update records each one here.": "Aún no hay actualizaciones. El comando rsc-brain.sh update registra cada una aquí.",
     "Update failed": "La actualización falló",
     "What the service said": "Lo que dijo el servicio",
     "Database size": "Base de datos tamaño",
@@ -937,7 +938,7 @@
     "Their revision as it is: you changed nothing they did not.": "Su revisión tal como está: no cambiaste nada de lo que ellos no hicieron.",
     "None": "Ninguno",
     "Save this result": "Guarda este resultado",
-    "It becomes a new revision on top of theirs. Their revision stays in the history.": "ISe convierte en una nueva revisión además de la de ellos. Su revisión permanece en el historial.",
+    "It becomes a new revision on top of theirs. Their revision stays in the history.": "Se convierte en una nueva revisión además de la de ellos. Su revisión permanece en el historial.",
     "Your text": "Tu texto",
     "Copy your text": "Copia tu texto",
     "Start again from theirs": "Comenzar de nuevo desde el de ellos",
@@ -1005,7 +1006,7 @@
     "Tap a page to open it in the inspector. Drag a page to move it; drag the background to move the picture. Two fingers move and pinch it; Fit brings it back. The list shows the same as text.": "Toque una página para abrirla en el inspector. Arrastra una página para moverla; arrastre el fondo para mover la imagen. Dos dedos se mueven y lo pellizcaron; Fit lo recupera. La lista se muestra igual que el texto.",
     "Zoom in": "Acercar",
     "Zoom out": "Alejar",
-    "Fit": "Fit",
+    "Fit": "Ajustar",
     "Communities": "Comunidades",
     "Communities shown on the graph": "Comunidades mostradas en el gráfico",
     "Select all": "Seleccionar todo",
@@ -1035,7 +1036,7 @@
     "Groups of the wiki": "Grupos de la wiki",
     "Pages of the wiki": "Páginas de la wiki",
     "Links in": "Enlaces en",
-    "Links out": "Enlaces out",
+    "Links out": "Enlaces salientes",
     "Updated": "Actualizado",
     "Actions": "Acciones",
     "Group": "Grupo",
@@ -1152,7 +1153,7 @@
     "Forget entry": "Olvidar entrada",
     "Forgetting…": "Olvidando…",
     "Forgotten. Curators can recover it from Forgotten.": "Olvidado. Los curadores pueden recuperarlo de Forgotten.",
-    "Pin": "Pin",
+    "Pin": "Fijar",
     "Unpin": "Desfijar",
     "Pinned entries go into every agent’s start context.": "Las entradas fijadas van al contexto de inicio de cada agente.",
     "Pinned: agents get it in every start context.": "Fijado: los agentes las obtienen en cada contexto de inicio.",
@@ -1311,7 +1312,7 @@
     "Search all my brains": "Buscar en todos mis cerebros",
     "Show more results": "Mostrar más resultados",
     "Wiki page": "Página Wiki",
-    "Up and down arrows move between results; Enter opens one; Esc goes back.": "ULas flechas hacia arriba y hacia abajo se mueven entre los resultados; Enter abre uno; Esc regresa.",
+    "Up and down arrows move between results; Enter opens one; Esc goes back.": "Las flechas hacia arriba y hacia abajo se mueven entre los resultados; Enter abre uno; Esc regresa.",
     "There is nothing to search yet": "No hay nada que buscar todavía",
     "Search looks through the brains you are in, and you are not in any yet.": "La búsqueda busca en los cerebros en los que estás y todavía no estás en ninguno.",
     "Where": "Dónde",
@@ -1392,7 +1393,7 @@
     "A link to an address where no page lives.": "Un enlace a una dirección donde no hay ninguna página.",
     "Two pages linked as contradicting each other.": "Dos páginas enlazadas como contradictorias entre sí other.",
     "No page links to them, and they link to none.": "No hay páginas que enlacen a ellos, y ellos no enlazan a ninguno.",
-    "Unchanged for a while, though the journal kept writing about them.": "USin cambios por un tiempo, aunque el diario siguió escribiendo sobre ellos.",
+    "Unchanged for a while, though the journal kept writing about them.": "Sin cambios por un tiempo, aunque el diario siguió escribiendo sobre ellos.",
     "A page cites an entry that was forgotten or purged.": "Una página cita una entrada que fue olvidada o eliminada.",
     "Past the length limit of this brain: worth splitting.": "Más allá del límite de longitud de este cerebro: vale la pena dividirlo.",
     "Possibly the same thing twice: worth merging.": "Posiblemente lo mismo dos veces: vale la pena merging.",
@@ -1430,7 +1431,7 @@
     "This address is not a page of the rsc-brain web.": "Esta dirección no es una página de la web de rsc-brain.",
     "Go home": "Ir al inicio",
     "Invalid Date": "Fecha no válida",
-    "Invalid Date UTC": "IFecha no válida UTC",
+    "Invalid Date UTC": "Fecha no válida UTC",
     "Language": "Idioma",
     "English": "Inglés",
     "Spanish": "Español",
@@ -1510,7 +1511,7 @@
     "then": "luego",
     "or": "o",
     "Check your connection and try again.": "Comprueba tu conexión e inténtalo de nuevo.",
-    "Try again.": "Inténtalo de nuevo.",
+    "Try again.": "Vuelve a intentarlo.",
     "rsc-brain could not be reached.": "No se pudo conectar con rsc-brain.",
     "Try again in a moment; if it keeps failing, tell an administrator.": "Vuelve a intentarlo en un momento; si sigue fallando, avisa a una persona administradora.",
     "The server sent an incomplete reply.": "El servidor envió una respuesta incompleta.",
@@ -1531,13 +1532,45 @@
     "This key cannot create brains.": "Esta clave no puede crear cerebros.",
     "Ask the administration for the \"can create brains\" permission, and use your own token.": "Pide a administración el permiso «can create brains» y usa tu propio token.",
     "Collapse": "Contraer",
-    "Expand": "Expandir"
+    "Expand": "Expandir",
+    "Welcome — your account is ready.": "Te damos la bienvenida. Tu cuenta está lista.",
+    "healthy": "sin problemas",
+    "Preparing the export…": "Preparando la exportación…",
+    "Ask an administrator.": "Pídeselo a un administrador.",
+    "Wrote nothing kept": "No se conserva nada de esta persona.",
+    "The last update failed, and rsc-brain could not go back by itself: the data may not be as it was.": "La última actualización falló y rsc-brain no pudo volver a la versión anterior. Los datos pueden haber cambiado.",
+    "The email or the password is not right.": "El correo o la contraseña son incorrectos.",
+    "Check them, or reset your password.": "Revisa el correo y la contraseña o restablece tu contraseña.",
+    "Wait, then try again; or reset your password.": "Espera antes de volver a intentarlo o restablece tu contraseña.",
+    "Wait, then try again.": "Espera y vuelve a intentarlo.",
+    "The code is not right.": "El código es incorrecto.",
+    "Type the 6 digits your current app shows now.": "Escribe los seis dígitos que muestra ahora tu aplicación.",
+    "This account asks for the code of its authenticator app.": "Esta cuenta requiere el código de su aplicación de autenticación.",
+    "Send \"code\" with the 6 digits.": "Introduce el código de seis dígitos.",
+    "The code is not right, or was already used.": "El código es incorrecto o ya se ha usado.",
+    "Wait for the next code and try again.": "Espera al siguiente código y vuelve a intentarlo.",
+    "The second factor of this account cannot be checked: the installation secret changed.": "No se puede comprobar el segundo factor porque ha cambiado el secreto de la instalación.",
+    "Ask the administration to put back the previous RSC_BRAIN_SECRET, or to reset your second factor.": "Pide al administrador que restaure el valor anterior de RSC_BRAIN_SECRET o restablezca tu segundo factor.",
+    "Only the administration makes reset links.": "Solo los administradores pueden crear enlaces de restablecimiento.",
+    "Ask the administration.": "Consulta a un administrador.",
+    "This reset link is not valid: it expired, was already used, or is wrong.": "El enlace de restablecimiento ha caducado, ya se ha utilizado o es incorrecto.",
+    "Ask for a new one.": "Solicita uno nuevo.",
+    "The password is not right.": "La contraseña es incorrecta.",
+    "Type the password you sign in with. Forgot it? Sign out and reset it from the sign-in page.": "Introduce la contraseña que usas para iniciar sesión. Si la has olvidado, cierra sesión y restablécela desde la pantalla de acceso.",
+    "This account has a second factor: the code of the authenticator app is asked too.": "Esta cuenta requiere también el código de su aplicación de autenticación.",
+    "Type the 6 digits your app shows now in \"code\".": "Escribe los seis dígitos que muestra tu aplicación en el campo de código.",
+    "The current password is not right.": "La contraseña actual es incorrecta.",
+    "Type it again. Forgot it? Sign out and reset it from the sign-in page (\"Forgot your password?\").": "Escríbela otra vez. Si la has olvidado, cierra sesión y restablécela desde la pantalla de acceso.",
+    "Choose a longer one; a few unrelated words make a good password.": "Elige una contraseña más larga. Puedes usar varias palabras sin relación entre sí.",
+    "This account has a second factor: send the code of the authenticator app in \"code\" too.": "Esta cuenta requiere que introduzcas también el código de tu aplicación de autenticación.",
+    "There is no second factor being set up.": "No se está configurando ningún segundo factor.",
+    "Start it first.": "Inicia primero la configuración.",
+    "Something went wrong.": "Se ha producido un error.",
+    "Try again; if it keeps failing, give the reference to an administrator.": "Vuelve a intentarlo. Si sigue fallando, comunica la referencia a un administrador."
   },
   "functions": {
     "shell.yourRole": {
-      "args": [
-        "role"
-      ],
+      "args": ["role"],
       "entries": [
         {
           "from": "You are a ⟦a0⟧",
@@ -1546,9 +1579,7 @@
       ]
     },
     "shell.toReview": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ proposal to review",
@@ -1561,9 +1592,7 @@
       ]
     },
     "shell.toReviewShort": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ to review",
@@ -1572,9 +1601,7 @@
       ]
     },
     "signIn.lead": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Sign in to ⟦a0⟧.",
@@ -1583,9 +1610,7 @@
       ]
     },
     "signIn.waitFor": {
-      "args": [
-        "s"
-      ],
+      "args": ["s"],
       "entries": [
         {
           "from": "You can try again in ⟦a0⟧ s.",
@@ -1594,9 +1619,7 @@
       ]
     },
     "setup.keyIdIs": {
-      "args": [
-        "id"
-      ],
+      "args": ["id"],
       "entries": [
         {
           "from": "Key id: ⟦a0⟧",
@@ -1605,9 +1628,7 @@
       ]
     },
     "invite.lead": {
-      "args": [
-        "installation"
-      ],
+      "args": ["installation"],
       "entries": [
         {
           "from": "You are invited to ⟦a0⟧.",
@@ -1616,9 +1637,7 @@
       ]
     },
     "invite.expires": {
-      "args": [
-        "date"
-      ],
+      "args": ["date"],
       "entries": [
         {
           "from": "This invitation works until ⟦a0⟧.",
@@ -1627,10 +1646,7 @@
       ]
     },
     "invite.otherAccount": {
-      "args": [
-        "current",
-        "invited"
-      ],
+      "args": ["current", "invited"],
       "entries": [
         {
           "from": "You are signed in as ⟦a0⟧. Accepting signs ⟦a0⟧ out and continues as ⟦a1⟧.",
@@ -1638,29 +1654,8 @@
         }
       ]
     },
-    "home.welcome": {
-      "args": [
-        "brains"
-      ],
-      "entries": [
-        {
-          "from": "Welcome — you joined ⟦a0_0⟧ as curator.",
-          "to": "Te damos la bienvenida: formas parte de ⟦a0_0⟧ como curador."
-        },
-        {
-          "from": "Welcome — you joined ⟦a0_0⟧ as curator and ⟦a0_1⟧ as reader.",
-          "to": "Te damos la bienvenida: formas parte de ⟦a0_0⟧ como curador y de ⟦a0_1⟧ como lector."
-        },
-        {
-          "from": "Welcome — you joined ⟦a0_0⟧ as curator, ⟦a0_1⟧ as reader and ⟦a0_2⟧ as contributor.",
-          "to": "Te damos la bienvenida: formas parte de ⟦a0_0⟧ como curador, ⟦a0_1⟧ como lector y ⟦a0_2⟧ como colaborador."
-        }
-      ]
-    },
     "home.count": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ brain",
@@ -1673,25 +1668,20 @@
       ]
     },
     "home.open": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Open ⟦a0⟧",
-          "to": "Abrir página ⟦a0⟧"
+          "to": "Abrir ⟦a0⟧"
         }
       ]
     },
     "home.size": {
-      "args": [
-        "pages",
-        "entries"
-      ],
+      "args": ["pages", "entries"],
       "entries": [
         {
           "from": "⟦a0⟧ page · ⟦a0⟧ entry",
-          "to": "⟦a0⟧ · ⟦a0⟧ entrada"
+          "to": "⟦a0⟧ página · ⟦a0⟧ entrada"
         },
         {
           "from": "⟦a0⟧ page · ⟦a1⟧ entries",
@@ -1712,9 +1702,7 @@
       ]
     },
     "home.toReview": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ proposal to review",
@@ -1727,9 +1715,7 @@
       ]
     },
     "home.waiting": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ proposal waiting for a curator",
@@ -1742,9 +1728,7 @@
       ]
     },
     "home.lastActivity": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Last activity ⟦a0⟧",
@@ -1753,20 +1737,16 @@
       ]
     },
     "connect.lead": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Your agent reads and writes the brain ⟦a0⟧ over MCP. Connect it once, then watch the check turn green.",
-          "to": "Su agente lee y escribe el cerebro ⟦a0⟧ sobre MCP. Conéctelo una vez y luego observe cómo el cheque se vuelve verde."
+          "to": "Tu agente lee y escribe en el cerebro ⟦a0⟧ mediante MCP. Conéctalo una vez y espera a que el indicador se ponga verde."
         }
       ]
     },
     "connect.copyNamed": {
-      "args": [
-        "title"
-      ],
+      "args": ["title"],
       "entries": [
         {
           "from": "Copy: ⟦a0⟧",
@@ -1775,9 +1755,7 @@
       ]
     },
     "connect.tokenLead": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "The alternative, for an agent that cannot open your browser: a personal token, read and write, for 90 days, for the brain ⟦a0⟧. It is shown once.",
@@ -1786,9 +1764,7 @@
       ]
     },
     "connect.tokenName": {
-      "args": [
-        "agent"
-      ],
+      "args": ["agent"],
       "entries": [
         {
           "from": "⟦a0⟧ (from Connect your agent)",
@@ -1797,20 +1773,16 @@
       ]
     },
     "connect.tokenUntil": {
-      "args": [
-        "date"
-      ],
+      "args": ["date"],
       "entries": [
         {
           "from": "It works until ⟦a0⟧.",
-          "to": "IFunciona hasta ⟦a0⟧."
+          "to": "Funciona hasta ⟦a0⟧."
         }
       ]
     },
     "connect.reminderPrompt": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Prompt of the server to close a session: \"⟦a0⟧\".",
@@ -1819,9 +1791,7 @@
       ]
     },
     "connect.liveFor": {
-      "args": [
-        "agent"
-      ],
+      "args": ["agent"],
       "entries": [
         {
           "from": "Live check: ⟦a0⟧",
@@ -1830,10 +1800,7 @@
       ]
     },
     "connect.reached": {
-      "args": [
-        "client",
-        "at"
-      ],
+      "args": ["client", "at"],
       "entries": [
         {
           "from": "⟦a0⟧ reached rsc-brain at ⟦a1⟧.",
@@ -1850,9 +1817,7 @@
       ]
     },
     "connect.failed": {
-      "args": [
-        "message"
-      ],
+      "args": ["message"],
       "entries": [
         {
           "from": "Could not check just now: ⟦a0⟧ Trying again.",
@@ -1861,9 +1826,7 @@
       ]
     },
     "connect.tipVariable": {
-      "args": [
-        "env"
-      ],
+      "args": ["env"],
       "entries": [
         {
           "from": "With a token: in the terminal that starts your agent, run echo ${#⟦a0⟧}. It should print a number above 0 (the length of the token, never the token).",
@@ -1872,9 +1835,7 @@
       ]
     },
     "profile.wikiWriteIn": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Can write to the wiki of ⟦a0⟧",
@@ -1883,10 +1844,7 @@
       ]
     },
     "profile.wikiWriteOn": {
-      "args": [
-        "name",
-        "brain"
-      ],
+      "args": ["name", "brain"],
       "entries": [
         {
           "from": "⟦a0⟧ can now write to the wiki of ⟦a1⟧ directly.",
@@ -1895,10 +1853,7 @@
       ]
     },
     "profile.wikiWriteOff": {
-      "args": [
-        "name",
-        "brain"
-      ],
+      "args": ["name", "brain"],
       "entries": [
         {
           "from": "⟦a0⟧ proposes again in ⟦a1⟧.",
@@ -1907,9 +1862,7 @@
       ]
     },
     "profile.days": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ days",
@@ -1918,9 +1871,7 @@
       ]
     },
     "profile.hidden": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "The token ⟦a0⟧ is hidden now. Its last 4 characters stay in the list.",
@@ -1929,9 +1880,7 @@
       ]
     },
     "profile.endsOn": {
-      "args": [
-        "date"
-      ],
+      "args": ["date"],
       "entries": [
         {
           "from": "Ends ⟦a0⟧",
@@ -1940,9 +1889,7 @@
       ]
     },
     "profile.revokeNamed": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Revoke ⟦a0⟧",
@@ -1951,9 +1898,7 @@
       ]
     },
     "profile.revoked": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ is revoked.",
@@ -1962,9 +1907,7 @@
       ]
     },
     "profile.showAll": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Show all ⟦a0⟧",
@@ -1973,9 +1916,7 @@
       ]
     },
     "profile.lastUsed": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Last used ⟦a0⟧",
@@ -1984,9 +1925,7 @@
       ]
     },
     "profile.appEnds": {
-      "args": [
-        "date"
-      ],
+      "args": ["date"],
       "entries": [
         {
           "from": "Ends ⟦a0⟧ unless used",
@@ -1995,9 +1934,7 @@
       ]
     },
     "profile.noticesOn": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "⟦a0⟧: on",
@@ -2006,9 +1943,7 @@
       ]
     },
     "profile.noticesOff": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "⟦a0⟧: off",
@@ -2017,10 +1952,7 @@
       ]
     },
     "profile.changed": {
-      "args": [
-        "tokens",
-        "apps"
-      ],
+      "args": ["tokens", "apps"],
       "entries": [
         {
           "from": "Password changed. Your other sessions are signed out. Your ⟦a0⟧ token and ⟦a0⟧ connected app still work.",
@@ -2045,10 +1977,7 @@
       ]
     },
     "profile.revokedAll": {
-      "args": [
-        "tokens",
-        "apps"
-      ],
+      "args": ["tokens", "apps"],
       "entries": [
         {
           "from": "⟦a0⟧ token and ⟦a0⟧ connected app are revoked.",
@@ -2073,9 +2002,7 @@
       ]
     },
     "profile.endedOn": {
-      "args": [
-        "date"
-      ],
+      "args": ["date"],
       "entries": [
         {
           "from": "Ended ⟦a0⟧",
@@ -2084,9 +2011,7 @@
       ]
     },
     "overview.step2Ask": {
-      "args": [
-        "slug"
-      ],
+      "args": ["slug"],
       "entries": [
         {
           "from": "Save to the brain \"⟦a0⟧\" one thing worth remembering about this project, and keep saving what we learn as we work.",
@@ -2095,9 +2020,7 @@
       ]
     },
     "overview.sessionsMeta": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ session",
@@ -2110,9 +2033,7 @@
       ]
     },
     "overview.waitingMeta": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ waiting",
@@ -2121,9 +2042,7 @@
       ]
     },
     "overview.healthMeta": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ thing to look at",
@@ -2136,9 +2055,7 @@
       ]
     },
     "overview.todayCapped": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "The ⟦a0⟧ most recent of today.",
@@ -2147,9 +2064,7 @@
       ]
     },
     "overview.entriesIn": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ entry",
@@ -2162,9 +2077,7 @@
       ]
     },
     "overview.ops": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ change",
@@ -2177,9 +2090,7 @@
       ]
     },
     "overview.by": {
-      "args": [
-        "agent"
-      ],
+      "args": ["agent"],
       "entries": [
         {
           "from": "from ⟦a0⟧",
@@ -2188,9 +2099,7 @@
       ]
     },
     "overview.health.broken": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ broken link",
@@ -2203,9 +2112,7 @@
       ]
     },
     "overview.health.orphans": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ orphan page",
@@ -2218,9 +2125,7 @@
       ]
     },
     "overview.health.conflicts": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ pair of contradicting pages",
@@ -2233,9 +2138,7 @@
       ]
     },
     "overview.health.stale": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ stale page",
@@ -2248,9 +2151,7 @@
       ]
     },
     "overview.health.unavailableSources": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ source no longer available",
@@ -2263,9 +2164,7 @@
       ]
     },
     "overview.health.long": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ page past the length limit",
@@ -2278,9 +2177,7 @@
       ]
     },
     "overview.health.similarTitles": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ pair of similar titles",
@@ -2293,9 +2190,7 @@
       ]
     },
     "people.roleIn": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Role in ⟦a0⟧",
@@ -2304,9 +2199,7 @@
       ]
     },
     "people.need.bad": {
-      "args": [
-        "v"
-      ],
+      "args": ["v"],
       "entries": [
         {
           "from": "\"⟦a0⟧\" is not an email. Give plain emails such as ana@example.com.",
@@ -2315,28 +2208,24 @@
       ]
     },
     "people.sent": {
-      "args": [
-        "emails"
-      ],
+      "args": ["emails"],
       "entries": [
         {
           "from": "Invitation sent to ⟦a0_0⟧.",
-          "to": "IInvitación enviada a ⟦a0_0⟧."
+          "to": "Invitación enviada a ⟦a0_0⟧."
         },
         {
           "from": "Invitations sent to ⟦a0_0⟧, ⟦a0_1⟧.",
-          "to": "IInvitaciones enviadas a ⟦a0_0⟧, ⟦a0_1⟧."
+          "to": "Invitaciones enviadas a ⟦a0_0⟧, ⟦a0_1⟧."
         },
         {
           "from": "Invitations sent to ⟦a0_0⟧, ⟦a0_1⟧, ⟦a0_2⟧.",
-          "to": "IInvitaciones enviadas a ⟦a0_0⟧, ⟦a0_1⟧, ⟦a0_2⟧."
+          "to": "Invitaciones enviadas a ⟦a0_0⟧, ⟦a0_1⟧, ⟦a0_2⟧."
         }
       ]
     },
     "people.sentOne": {
-      "args": [
-        "email"
-      ],
+      "args": ["email"],
       "entries": [
         {
           "from": "A new link went to ⟦a0⟧.",
@@ -2345,21 +2234,16 @@
       ]
     },
     "people.inviteFor": {
-      "args": [
-        "email"
-      ],
+      "args": ["email"],
       "entries": [
         {
           "from": "Invitation for ⟦a0⟧",
-          "to": "IInvitación para ⟦a0⟧"
+          "to": "Invitación para ⟦a0⟧"
         }
       ]
     },
     "people.resetFor": {
-      "args": [
-        "name",
-        "email"
-      ],
+      "args": ["name", "email"],
       "entries": [
         {
           "from": "Reset link for ⟦a0⟧ (⟦a1⟧)",
@@ -2372,20 +2256,16 @@
       ]
     },
     "people.until": {
-      "args": [
-        "date"
-      ],
+      "args": ["date"],
       "entries": [
         {
           "from": "It works once, until ⟦a0⟧.",
-          "to": "IFunciona una vez, hasta ⟦a0⟧."
+          "to": "Funciona una vez, hasta ⟦a0⟧."
         }
       ]
     },
     "people.mailFailed": {
-      "args": [
-        "why"
-      ],
+      "args": ["why"],
       "entries": [
         {
           "from": "The email did not go: ⟦a0⟧",
@@ -2394,9 +2274,7 @@
       ]
     },
     "people.shownSoFar": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "The newest ⟦a0⟧ invitations.",
@@ -2405,9 +2283,7 @@
       ]
     },
     "people.shownAll": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "All ⟦a0⟧ invitations.",
@@ -2416,10 +2292,7 @@
       ]
     },
     "people.asRole": {
-      "args": [
-        "brain",
-        "role"
-      ],
+      "args": ["brain", "role"],
       "entries": [
         {
           "from": "⟦a0⟧ as ⟦a1⟧",
@@ -2428,9 +2301,7 @@
       ]
     },
     "people.invitedBy": {
-      "args": [
-        "who"
-      ],
+      "args": ["who"],
       "entries": [
         {
           "from": "Invited by ⟦a0⟧",
@@ -2439,10 +2310,7 @@
       ]
     },
     "people.invitedUntil": {
-      "args": [
-        "who",
-        "until"
-      ],
+      "args": ["who", "until"],
       "entries": [
         {
           "from": "Invited by ⟦a0⟧ · works until ⟦a1⟧",
@@ -2451,10 +2319,7 @@
       ]
     },
     "people.invitedExpired": {
-      "args": [
-        "who",
-        "on"
-      ],
+      "args": ["who", "on"],
       "entries": [
         {
           "from": "Invited by ⟦a0⟧ · expired on ⟦a1⟧",
@@ -2463,9 +2328,7 @@
       ]
     },
     "people.resendFor": {
-      "args": [
-        "email"
-      ],
+      "args": ["email"],
       "entries": [
         {
           "from": "New link for ⟦a0⟧",
@@ -2474,9 +2337,7 @@
       ]
     },
     "people.withdrawFor": {
-      "args": [
-        "email"
-      ],
+      "args": ["email"],
       "entries": [
         {
           "from": "Withdraw invitation for ⟦a0⟧",
@@ -2485,9 +2346,7 @@
       ]
     },
     "people.linkReady": {
-      "args": [
-        "who"
-      ],
+      "args": ["who"],
       "entries": [
         {
           "from": "Link for ⟦a0_0⟧ is ready: copy it now, it is shown only once.",
@@ -2504,9 +2363,7 @@
       ]
     },
     "people.withdrawLead": {
-      "args": [
-        "email"
-      ],
+      "args": ["email"],
       "entries": [
         {
           "from": "The link sent to ⟦a0⟧ stops working. You can invite them again later.",
@@ -2515,9 +2372,7 @@
       ]
     },
     "people.inBrains": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "in ⟦a0⟧ brain",
@@ -2530,9 +2385,7 @@
       ]
     },
     "people.seen": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "last seen ⟦a0⟧",
@@ -2541,9 +2394,7 @@
       ]
     },
     "people.resetOf": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Make a reset link for ⟦a0⟧",
@@ -2552,9 +2403,7 @@
       ]
     },
     "settings.lead": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "How ⟦a0⟧ works: who is in it, what agents find it by and read first.",
@@ -2563,9 +2412,7 @@
       ]
     },
     "settings.cannot": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Only curators of ⟦a0⟧ change its settings.",
@@ -2574,10 +2421,7 @@
       ]
     },
     "settings.cannotHow": {
-      "args": [
-        "brain",
-        "curators"
-      ],
+      "args": ["brain", "curators"],
       "entries": [
         {
           "from": "Ask a curator of ⟦a0⟧ (⟦a1⟧) for the curator role.",
@@ -2590,9 +2434,7 @@
       ]
     },
     "settings.roleOf": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Role of ⟦a0⟧",
@@ -2601,10 +2443,7 @@
       ]
     },
     "settings.nowRole": {
-      "args": [
-        "name",
-        "role"
-      ],
+      "args": ["name", "role"],
       "entries": [
         {
           "from": "⟦a0⟧ is now a ⟦a1⟧.",
@@ -2613,9 +2452,7 @@
       ]
     },
     "settings.remove": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Remove ⟦a0⟧",
@@ -2624,9 +2461,7 @@
       ]
     },
     "settings.saveRoleOf": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Save role of ⟦a0⟧",
@@ -2635,10 +2470,7 @@
       ]
     },
     "settings.already": {
-      "args": [
-        "name",
-        "role"
-      ],
+      "args": ["name", "role"],
       "entries": [
         {
           "from": "⟦a0⟧ is already a ⟦a1⟧ — change their role in the list.",
@@ -2647,9 +2479,7 @@
       ]
     },
     "settings.leave": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Leave ⟦a0⟧",
@@ -2658,9 +2488,7 @@
       ]
     },
     "settings.leaveNow": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Leave ⟦a0⟧ now",
@@ -2669,10 +2497,7 @@
       ]
     },
     "settings.removeFrom": {
-      "args": [
-        "name",
-        "brain"
-      ],
+      "args": ["name", "brain"],
       "entries": [
         {
           "from": "Remove ⟦a0⟧ from ⟦a1⟧",
@@ -2681,10 +2506,7 @@
       ]
     },
     "settings.removeLead": {
-      "args": [
-        "name",
-        "brain"
-      ],
+      "args": ["name", "brain"],
       "entries": [
         {
           "from": "⟦a0⟧ can no longer open ⟦a1⟧; their keys stop reaching it. What they wrote stays, under their name.",
@@ -2693,9 +2515,7 @@
       ]
     },
     "settings.removeSelfLead": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "You will no longer be able to open ⟦a0⟧.",
@@ -2704,10 +2524,7 @@
       ]
     },
     "settings.removed": {
-      "args": [
-        "name",
-        "brain"
-      ],
+      "args": ["name", "brain"],
       "entries": [
         {
           "from": "⟦a0⟧ is no longer in ⟦a1⟧.",
@@ -2716,10 +2533,7 @@
       ]
     },
     "settings.demoteSelfLead": {
-      "args": [
-        "brain",
-        "role"
-      ],
+      "args": ["brain", "role"],
       "entries": [
         {
           "from": "You become a ⟦a1⟧ of ⟦a0⟧ and can no longer change its settings or approve proposals.",
@@ -2728,10 +2542,7 @@
       ]
     },
     "settings.added": {
-      "args": [
-        "name",
-        "role"
-      ],
+      "args": ["name", "role"],
       "entries": [
         {
           "from": "⟦a0⟧ joined as ⟦a1⟧.",
@@ -2740,9 +2551,7 @@
       ]
     },
     "settings.matches": {
-      "args": [
-        "key"
-      ],
+      "args": ["key"],
       "entries": [
         {
           "from": "Matches ⟦a0⟧, by any of its remotes (https or ssh).",
@@ -2751,9 +2560,7 @@
       ]
     },
     "settings.linked": {
-      "args": [
-        "key"
-      ],
+      "args": ["key"],
       "entries": [
         {
           "from": "Linked ⟦a0⟧.",
@@ -2762,9 +2569,7 @@
       ]
     },
     "settings.linkedOn": {
-      "args": [
-        "date"
-      ],
+      "args": ["date"],
       "entries": [
         {
           "from": "linked ⟦a0⟧",
@@ -2773,32 +2578,25 @@
       ]
     },
     "settings.unlink": {
-      "args": [
-        "key"
-      ],
+      "args": ["key"],
       "entries": [
         {
           "from": "Unlink ⟦a0⟧",
-          "to": "Unenlazado ⟦a0⟧"
+          "to": "Desvincular ⟦a0⟧"
         }
       ]
     },
     "settings.unlinked": {
-      "args": [
-        "key"
-      ],
+      "args": ["key"],
       "entries": [
         {
           "from": "Unlinked ⟦a0⟧.",
-          "to": "Unenlazado ⟦a0⟧."
+          "to": "Se ha desvinculado ⟦a0⟧."
         }
       ]
     },
     "settings.chars": {
-      "args": [
-        "n",
-        "max"
-      ],
+      "args": ["n", "max"],
       "entries": [
         {
           "from": "⟦a0⟧ of ⟦a0⟧ characters",
@@ -2811,9 +2609,7 @@
       ]
     },
     "settings.tooLong": {
-      "args": [
-        "max"
-      ],
+      "args": ["max"],
       "entries": [
         {
           "from": "At most ⟦a0⟧ characters.",
@@ -2822,9 +2618,7 @@
       ]
     },
     "settings.import.tooBig": {
-      "args": [
-        "size"
-      ],
+      "args": ["size"],
       "entries": [
         {
           "from": "This zip is ⟦a0⟧; the web takes up to 50 MB. Import a smaller folder, or ask an administrator to import it from the command line.",
@@ -2833,10 +2627,7 @@
       ]
     },
     "settings.import.sending": {
-      "args": [
-        "sent",
-        "total"
-      ],
+      "args": ["sent", "total"],
       "entries": [
         {
           "from": "Uploading… ⟦a0⟧ of ⟦a0⟧.",
@@ -2849,10 +2640,7 @@
       ]
     },
     "settings.import.people": {
-      "args": [
-        "matched",
-        "authors"
-      ],
+      "args": ["matched", "authors"],
       "entries": [
         {
           "from": "⟦a0⟧ person found by email; ⟦a0⟧ came in as an author.",
@@ -2877,9 +2665,7 @@
       ]
     },
     "settings.import.ignored": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Left out (⟦a0⟧)",
@@ -2888,9 +2674,7 @@
       ]
     },
     "settings.import.unresolved": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Links that lead nowhere (⟦a0⟧)",
@@ -2899,9 +2683,7 @@
       ]
     },
     "settings.import.renamed": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Names made into addresses (⟦a0⟧)",
@@ -2910,9 +2692,7 @@
       ]
     },
     "settings.import.more": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "And ⟦a0⟧ more, not listed here.",
@@ -2921,9 +2701,7 @@
       ]
     },
     "settings.import.from": {
-      "args": [
-        "page"
-      ],
+      "args": ["page"],
       "entries": [
         {
           "from": "from ⟦a0⟧",
@@ -2932,9 +2710,7 @@
       ]
     },
     "settings.import.recoded": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Read as Windows-1252 (⟦a0⟧)",
@@ -2943,9 +2719,7 @@
       ]
     },
     "settings.exportWorking": {
-      "args": [
-        "received"
-      ],
+      "args": ["received"],
       "entries": [
         {
           "from": "Preparing the export… ⟦a0⟧ received.",
@@ -2954,10 +2728,7 @@
       ]
     },
     "settings.exportSaved": {
-      "args": [
-        "name",
-        "size"
-      ],
+      "args": ["name", "size"],
       "entries": [
         {
           "from": "Saved ⟦a0⟧ (⟦a1⟧).",
@@ -2966,9 +2737,7 @@
       ]
     },
     "settings.archiveTitle": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Archive ⟦a0⟧?",
@@ -2977,9 +2746,7 @@
       ]
     },
     "settings.archiveConfirm": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Archive ⟦a0⟧",
@@ -2988,9 +2755,7 @@
       ]
     },
     "settings.archived": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "⟦a0⟧ is archived.",
@@ -2999,9 +2764,7 @@
       ]
     },
     "settings.active": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "⟦a0⟧ is active again.",
@@ -3010,9 +2773,7 @@
       ]
     },
     "settings.deleteTitle": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Delete ⟦a0⟧?",
@@ -3021,9 +2782,7 @@
       ]
     },
     "settings.typeToConfirm": {
-      "args": [
-        "slug"
-      ],
+      "args": ["slug"],
       "entries": [
         {
           "from": "Type ⟦a0⟧ to confirm",
@@ -3032,9 +2791,7 @@
       ]
     },
     "settings.deleteConfirm": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Delete ⟦a0⟧ for good",
@@ -3043,9 +2800,7 @@
       ]
     },
     "settings.deleteNeed": {
-      "args": [
-        "slug"
-      ],
+      "args": ["slug"],
       "entries": [
         {
           "from": "Type ⟦a0⟧ exactly to delete it.",
@@ -3054,9 +2809,7 @@
       ]
     },
     "settings.deleted": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "⟦a0⟧ was deleted.",
@@ -3065,9 +2818,7 @@
       ]
     },
     "admin.cannotHow": {
-      "args": [
-        "admins"
-      ],
+      "args": ["admins"],
       "entries": [
         {
           "from": "Ask an administrator (⟦a0_0⟧).",
@@ -3084,9 +2835,7 @@
       ]
     },
     "admin.makeAdmin": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Make administrator: ⟦a0⟧",
@@ -3095,9 +2844,7 @@
       ]
     },
     "admin.unAdmin": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Remove administrator rights from ⟦a0⟧",
@@ -3106,9 +2853,7 @@
       ]
     },
     "admin.nowAdmin": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ is now an administrator.",
@@ -3117,9 +2862,7 @@
       ]
     },
     "admin.noLongerAdmin": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ is no longer an administrator.",
@@ -3128,9 +2871,7 @@
       ]
     },
     "admin.allowCreate": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Let create brains: ⟦a0⟧",
@@ -3139,9 +2880,7 @@
       ]
     },
     "admin.stopCreate": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Stop creating brains: ⟦a0⟧",
@@ -3150,9 +2889,7 @@
       ]
     },
     "admin.canCreateNow": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ can create brains.",
@@ -3161,9 +2898,7 @@
       ]
     },
     "admin.cannotCreateNow": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ can no longer create brains.",
@@ -3172,9 +2907,7 @@
       ]
     },
     "admin.deactivate": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Deactivate ⟦a0⟧",
@@ -3183,9 +2916,7 @@
       ]
     },
     "admin.deactivateTitle": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Deactivate ⟦a0⟧?",
@@ -3194,9 +2925,7 @@
       ]
     },
     "admin.deactivateLead": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ is signed out everywhere and cannot sign in. Their tokens, connected apps and keys stop working now.",
@@ -3205,9 +2934,7 @@
       ]
     },
     "admin.deactivateKeeps": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "What ⟦a0⟧ wrote stays, under their name. You can reactivate them later; their old keys stay revoked.",
@@ -3216,9 +2943,7 @@
       ]
     },
     "admin.deactivated_": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ is deactivated.",
@@ -3227,9 +2952,7 @@
       ]
     },
     "admin.orphans": {
-      "args": [
-        "slugs"
-      ],
+      "args": ["slugs"],
       "entries": [
         {
           "from": "⟦a0_0⟧ has no active curator now: name one in its settings.",
@@ -3246,9 +2969,7 @@
       ]
     },
     "admin.deactivateServiceLead": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧'s main keys stop working now, and so do the short keys they made: the program using them stops.",
@@ -3257,9 +2978,7 @@
       ]
     },
     "admin.deactivateServiceKeeps": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "What ⟦a0⟧ wrote stays, under its name. You can reactivate it later; its old keys stay revoked: make a new main key then.",
@@ -3268,24 +2987,20 @@
       ]
     },
     "admin.showMore": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Show ⟦a0⟧ more (⟦a0⟧ left)",
-          "to": "Mostrar ⟦a0⟧ más (⟦a0⟧ izquierda)"
+          "to": "Mostrar ⟦a0⟧ más (quedan ⟦a0⟧)"
         },
         {
           "from": "Show 20 more (⟦a0⟧ left)",
-          "to": "Mostrar 20 más (⟦a0⟧ izquierda)"
+          "to": "Mostrar 20 más (quedan ⟦a0⟧)"
         }
       ]
     },
     "admin.makeAdminTitle": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Make ⟦a0⟧ an administrator?",
@@ -3294,9 +3009,7 @@
       ]
     },
     "admin.makeAdminLead": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ will manage everyone's accounts, invitations, service accounts and the installation's settings, and can delete brains.",
@@ -3305,9 +3018,7 @@
       ]
     },
     "admin.unAdminTitle": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Remove ⟦a0⟧'s administrator rights?",
@@ -3316,9 +3027,7 @@
       ]
     },
     "admin.unAdminLead": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ keeps their brains and roles, and no longer manages the installation.",
@@ -3327,9 +3036,7 @@
       ]
     },
     "admin.used": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "last used ⟦a0⟧",
@@ -3338,9 +3045,7 @@
       ]
     },
     "admin.reactivate": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Reactivate ⟦a0⟧",
@@ -3349,9 +3054,7 @@
       ]
     },
     "admin.reactivated": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ is active again.",
@@ -3360,9 +3063,7 @@
       ]
     },
     "admin.authorBrains": {
-      "args": [
-        "names"
-      ],
+      "args": ["names"],
       "entries": [
         {
           "from": "Wrote in ⟦a0_0⟧",
@@ -3379,9 +3080,7 @@
       ]
     },
     "admin.authorImported": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "imported ⟦a0⟧",
@@ -3390,9 +3089,7 @@
       ]
     },
     "admin.anonymise": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Anonymise ⟦a0⟧",
@@ -3401,9 +3098,7 @@
       ]
     },
     "admin.anonymiseTitle": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Anonymise ⟦a0⟧?",
@@ -3412,9 +3107,7 @@
       ]
     },
     "admin.anonymiseLead": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Everything ⟦a0⟧ wrote stays, signed as «Former author» from now on. The old name cannot be brought back.",
@@ -3423,9 +3116,7 @@
       ]
     },
     "admin.anonymised": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "⟦a0⟧ now signs as Former author.",
@@ -3434,9 +3125,7 @@
       ]
     },
     "admin.serviceRole": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Role in ⟦a0⟧",
@@ -3445,9 +3134,7 @@
       ]
     },
     "admin.keyOf": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Main key of ⟦a0⟧",
@@ -3456,9 +3143,7 @@
       ]
     },
     "admin.hidden": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "The key of ⟦a0⟧ is hidden. Its last four characters stay in the list.",
@@ -3467,9 +3152,7 @@
       ]
     },
     "admin.newKey": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "New main key for ⟦a0⟧",
@@ -3478,31 +3161,25 @@
       ]
     },
     "admin.revoke": {
-      "args": [
-        "last4"
-      ],
+      "args": ["last4"],
       "entries": [
         {
           "from": "Revoke …⟦a0⟧",
-          "to": "Revoke…⟦a0⟧"
+          "to": "Revocar …⟦a0⟧"
         }
       ]
     },
     "admin.revokeConfirm": {
-      "args": [
-        "last4"
-      ],
+      "args": ["last4"],
       "entries": [
         {
           "from": "Revoke …⟦a0⟧ and its short keys",
-          "to": "Revoke…⟦a0⟧ y sus claves cortas"
+          "to": "Revocar …⟦a0⟧ y sus claves cortas"
         }
       ]
     },
     "admin.revoked": {
-      "args": [
-        "last4"
-      ],
+      "args": ["last4"],
       "entries": [
         {
           "from": "Key …⟦a0⟧ revoked.",
@@ -3511,10 +3188,7 @@
       ]
     },
     "admin.keyLine": {
-      "args": [
-        "created",
-        "used"
-      ],
+      "args": ["created", "used"],
       "entries": [
         {
           "from": "made ⟦a0⟧ · last used ⟦a1⟧",
@@ -3527,9 +3201,7 @@
       ]
     },
     "admin.testSent": {
-      "args": [
-        "to"
-      ],
+      "args": ["to"],
       "entries": [
         {
           "from": "Sent to ⟦a0⟧. Check that inbox (and its spam folder).",
@@ -3538,9 +3210,7 @@
       ]
     },
     "admin.testFailedWhy": {
-      "args": [
-        "why"
-      ],
+      "args": ["why"],
       "entries": [
         {
           "from": "It did not go: ⟦a0⟧.",
@@ -3549,11 +3219,7 @@
       ]
     },
     "admin.failureLine": {
-      "args": [
-        "kind",
-        "to",
-        "when"
-      ],
+      "args": ["kind", "to", "when"],
       "entries": [
         {
           "from": "⟦a0⟧ to ⟦a1⟧ · ⟦a2⟧",
@@ -3562,9 +3228,7 @@
       ]
     },
     "admin.skippedCount": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ mail was not sent because mail was not set up then.",
@@ -3577,10 +3241,7 @@
       ]
     },
     "admin.meaningOn": {
-      "args": [
-        "label",
-        "model"
-      ],
+      "args": ["label", "model"],
       "entries": [
         {
           "from": "On with ⟦a0⟧ (⟦a1⟧).",
@@ -3593,9 +3254,7 @@
       ]
     },
     "admin.meaningAccepted": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Warning accepted ⟦a0⟧.",
@@ -3604,9 +3263,7 @@
       ]
     },
     "admin.isOn": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "Meaning search is on with ⟦a0⟧.",
@@ -3615,9 +3272,7 @@
       ]
     },
     "admin.keyIs": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "Key: ⟦a0⟧",
@@ -3626,10 +3281,7 @@
       ]
     },
     "admin.keyFrom": {
-      "args": [
-        "source",
-        "last4"
-      ],
+      "args": ["source", "last4"],
       "entries": [
         {
           "from": "Set here, ends in …⟦a1⟧",
@@ -3646,21 +3298,20 @@
       ]
     },
     "admin.addressLine": {
-      "args": [
-        "source",
-        "url"
-      ],
+      "args": ["source", "url"],
       "entries": [
         {
           "from": "Address: ⟦a1⟧ (from the server’s ⟦a0⟧)",
           "to": "Dirección del servidor: ⟦a1⟧ (desde el ⟦a0⟧)"
+        },
+        {
+          "from": "Address: ⟦a1⟧",
+          "to": "Dirección: ⟦a1⟧"
         }
       ]
     },
     "admin.apiKey": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "⟦a0⟧ API key",
@@ -3669,9 +3320,7 @@
       ]
     },
     "admin.offAfterChange": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "Meaning search is off: ⟦a0⟧ changed, so text would go somewhere new. Accept the warning again to turn it on.",
@@ -3680,9 +3329,7 @@
       ]
     },
     "admin.keySaved": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "The key of ⟦a0⟧ is set.",
@@ -3691,9 +3338,7 @@
       ]
     },
     "admin.removeKeyTitle": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "Remove the key of ⟦a0⟧?",
@@ -3702,9 +3347,7 @@
       ]
     },
     "admin.keyRemoved": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "The key of ⟦a0⟧ is removed.",
@@ -3713,9 +3356,7 @@
       ]
     },
     "admin.address": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "⟦a0⟧ address",
@@ -3724,9 +3365,7 @@
       ]
     },
     "admin.addressSaved": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "The address of ⟦a0⟧ is set.",
@@ -3735,9 +3374,7 @@
       ]
     },
     "admin.removeAddressTitle": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "Remove the address of ⟦a0⟧?",
@@ -3746,9 +3383,7 @@
       ]
     },
     "admin.addressRemoved": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "The address of ⟦a0⟧ is removed.",
@@ -3757,9 +3392,7 @@
       ]
     },
     "admin.providerNeeds": {
-      "args": [
-        "needs"
-      ],
+      "args": ["needs"],
       "entries": [
         {
           "from": "set its ⟦a0⟧ first",
@@ -3768,9 +3401,7 @@
       ]
     },
     "admin.accept": {
-      "args": [
-        "label"
-      ],
+      "args": ["label"],
       "entries": [
         {
           "from": "I understand that the text of entries and pages will be sent to ⟦a0⟧, and that what is sent cannot be taken back.",
@@ -3779,11 +3410,7 @@
       ]
     },
     "admin.rateHint": {
-      "args": [
-        "def",
-        "min",
-        "max"
-      ],
+      "args": ["def", "min", "max"],
       "entries": [
         {
           "from": "Default ⟦a0⟧. From ⟦a0⟧ to ⟦a2⟧: below that the web itself stops working.",
@@ -3808,10 +3435,7 @@
       ]
     },
     "admin.lowerLead": {
-      "args": [
-        "from",
-        "to"
-      ],
+      "args": ["from", "to"],
       "entries": [
         {
           "from": "Every key (people’s tokens, connected apps, service accounts and the web) may then make ⟦a0⟧ requests a minute instead of ⟦a0⟧. Agents that work faster are refused until the minute passes.",
@@ -3824,9 +3448,7 @@
       ]
     },
     "admin.zone": {
-      "args": [
-        "z"
-      ],
+      "args": ["z"],
       "entries": [
         {
           "from": "Days and times are in your time zone (⟦a0⟧).",
@@ -3835,10 +3457,7 @@
       ]
     },
     "admin.showing": {
-      "args": [
-        "n",
-        "more"
-      ],
+      "args": ["n", "more"],
       "entries": [
         {
           "from": "⟦a0⟧ line; more below.",
@@ -3847,13 +3466,19 @@
         {
           "from": "⟦a0⟧ lines; more below.",
           "to": "⟦a0⟧ líneas; más abajo."
+        },
+        {
+          "from": "⟦a0⟧ line.",
+          "to": "⟦a0⟧ línea."
+        },
+        {
+          "from": "⟦a0⟧ lines.",
+          "to": "⟦a0⟧ líneas."
         }
       ]
     },
     "admin.dbOk": {
-      "args": [
-        "m"
-      ],
+      "args": ["m"],
       "entries": [
         {
           "from": "Answers · last migration ⟦a0⟧",
@@ -3862,10 +3487,7 @@
       ]
     },
     "admin.streamsOpen": {
-      "args": [
-        "open",
-        "max"
-      ],
+      "args": ["open", "max"],
       "entries": [
         {
           "from": "⟦a0⟧ of ⟦a1⟧ open",
@@ -3874,10 +3496,7 @@
       ]
     },
     "admin.mailState": {
-      "args": [
-        "configured",
-        "failedAt"
-      ],
+      "args": ["configured", "failedAt"],
       "entries": [
         {
           "from": "Set up · last failure ⟦a1⟧",
@@ -3886,11 +3505,7 @@
       ]
     },
     "admin.scheduleText": {
-      "args": [
-        "at",
-        "tz",
-        "keep"
-      ],
+      "args": ["at", "tz", "keep"],
       "entries": [
         {
           "from": "Every day at ⟦a0⟧ (⟦a1⟧), keeping the newest ⟦a2⟧ daily copies. Copies made by hand or before an update or a restore are kept until you remove them on the machine.",
@@ -3899,9 +3514,7 @@
       ]
     },
     "admin.copyMade": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Copy made: ⟦a0⟧.",
@@ -3910,9 +3523,7 @@
       ]
     },
     "admin.copiesCount": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ copy, newest first",
@@ -3925,9 +3536,7 @@
       ]
     },
     "admin.noCopiesHow": {
-      "args": [
-        "at"
-      ],
+      "args": ["at"],
       "entries": [
         {
           "from": "The daily copy runs at ⟦a0⟧; or make one now.",
@@ -3936,9 +3545,7 @@
       ]
     },
     "admin.keyIdOf": {
-      "args": [
-        "id"
-      ],
+      "args": ["id"],
       "entries": [
         {
           "from": "key ⟦a0⟧",
@@ -3947,9 +3554,7 @@
       ]
     },
     "admin.downloadName": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Download the copy of ⟦a0⟧",
@@ -3958,9 +3563,7 @@
       ]
     },
     "admin.restoreName": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Restore the copy of ⟦a0⟧",
@@ -3969,9 +3572,7 @@
       ]
     },
     "admin.showAllCopies": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Show all ⟦a0⟧ copies",
@@ -3980,9 +3581,7 @@
       ]
     },
     "admin.band": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "The last copy failed (⟦a0⟧). No good copy has been made since.",
@@ -3991,9 +3590,7 @@
       ]
     },
     "admin.restoreTitle": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Restore the copy of ⟦a0⟧?",
@@ -4002,9 +3599,7 @@
       ]
     },
     "admin.restoreReplace": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Everything here is replaced by this copy of ⟦a0⟧.",
@@ -4013,10 +3608,7 @@
       ]
     },
     "admin.restoreLost": {
-      "args": [
-        "when",
-        "ago"
-      ],
+      "args": ["when", "ago"],
       "entries": [
         {
           "from": "What was written after it is lost: the last write here was ⟦a0⟧ (⟦a1⟧).",
@@ -4025,9 +3617,7 @@
       ]
     },
     "admin.restoreConfirmHint": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Type “⟦a0⟧” to confirm.",
@@ -4036,9 +3626,7 @@
       ]
     },
     "admin.releaseRunning": {
-      "args": [
-        "v"
-      ],
+      "args": ["v"],
       "entries": [
         {
           "from": "Version ⟦a0⟧ is running.",
@@ -4047,10 +3635,7 @@
       ]
     },
     "admin.releaseNewer": {
-      "args": [
-        "v",
-        "y"
-      ],
+      "args": ["v", "y"],
       "entries": [
         {
           "from": "Version ⟦a0⟧ is running. Version ⟦a1⟧ is available.",
@@ -4059,9 +3644,7 @@
       ]
     },
     "admin.releaseNewest": {
-      "args": [
-        "v"
-      ],
+      "args": ["v"],
       "entries": [
         {
           "from": "Version ⟦a0⟧ is running. This is the newest.",
@@ -4070,10 +3653,7 @@
       ]
     },
     "admin.releaseAhead": {
-      "args": [
-        "v",
-        "y"
-      ],
+      "args": ["v", "y"],
       "entries": [
         {
           "from": "Version ⟦a0⟧ is running. This installation is ahead of the newest published version (⟦a1⟧).",
@@ -4082,9 +3662,7 @@
       ]
     },
     "admin.releaseChecked": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Checked ⟦a0⟧.",
@@ -4093,9 +3671,7 @@
       ]
     },
     "admin.releaseTried": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "Tried ⟦a0⟧.",
@@ -4104,9 +3680,7 @@
       ]
     },
     "admin.releaseNotChecked": {
-      "args": [
-        "v"
-      ],
+      "args": ["v"],
       "entries": [
         {
           "from": "Version ⟦a0⟧ is running. Not checked for a new version yet.",
@@ -4115,9 +3689,7 @@
       ]
     },
     "admin.releaseNotes": {
-      "args": [
-        "v"
-      ],
+      "args": ["v"],
       "entries": [
         {
           "from": "What changes in ⟦a0⟧",
@@ -4126,32 +3698,25 @@
       ]
     },
     "admin.updateTo": {
-      "args": [
-        "y"
-      ],
+      "args": ["y"],
       "entries": [
         {
           "from": "Update to ⟦a0⟧",
-          "to": "UActualización a ⟦a0⟧"
+          "to": "Actualización a ⟦a0⟧"
         }
       ]
     },
     "admin.updateRunning": {
-      "args": [
-        "y"
-      ],
+      "args": ["y"],
       "entries": [
         {
           "from": "Updating to ⟦a0⟧. rsc-brain is unavailable while it restarts; this page keeps checking.",
-          "to": "UActualización a ⟦a0⟧. rsc-brain no está disponible mientras se reinicia; esta página sigue revisando."
+          "to": "Actualización a ⟦a0⟧. rsc-brain no está disponible mientras se reinicia; esta página sigue revisando."
         }
       ]
     },
     "admin.updateFailedAt": {
-      "args": [
-        "y",
-        "when"
-      ],
+      "args": ["y", "when"],
       "entries": [
         {
           "from": "The update to ⟦a0⟧ failed at ⟦a1⟧.",
@@ -4160,9 +3725,7 @@
       ]
     },
     "admin.updateRetryFrom": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "You can try again ⟦a0⟧.",
@@ -4171,9 +3734,7 @@
       ]
     },
     "admin.updateCannot": {
-      "args": [
-        "why"
-      ],
+      "args": ["why"],
       "entries": [
         {
           "from": "Cannot update: ⟦a0⟧",
@@ -4182,9 +3743,7 @@
       ]
     },
     "admin.updateUnsafe": {
-      "args": [
-        "to"
-      ],
+      "args": ["to"],
       "entries": [
         {
           "from": "The last update to ⟦a0⟧ failed, and rsc-brain could not go back by itself: the data may not be as it was.",
@@ -4193,10 +3752,7 @@
       ]
     },
     "admin.maintenanceOn": {
-      "args": [
-        "until",
-        "reason"
-      ],
+      "args": ["until", "reason"],
       "entries": [
         {
           "from": "On (⟦a1⟧) until ⟦a0⟧: writes are refused.",
@@ -4205,9 +3761,7 @@
       ]
     },
     "wiki.pages": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ page",
@@ -4220,9 +3774,7 @@
       ]
     },
     "wiki.showAll": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Show all ⟦a0⟧",
@@ -4231,9 +3783,7 @@
       ]
     },
     "wiki.movedFrom": {
-      "args": [
-        "old"
-      ],
+      "args": ["old"],
       "entries": [
         {
           "from": "You followed an old address (⟦a0⟧); the page lives here now.",
@@ -4242,9 +3792,7 @@
       ]
     },
     "wiki.revision": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Revision ⟦a0⟧",
@@ -4253,9 +3801,7 @@
       ]
     },
     "wiki.updated": {
-      "args": [
-        "d"
-      ],
+      "args": ["d"],
       "entries": [
         {
           "from": "updated ⟦a0⟧",
@@ -4264,9 +3810,7 @@
       ]
     },
     "wiki.correctionFor": {
-      "args": [
-        "agent"
-      ],
+      "args": ["agent"],
       "entries": [
         {
           "from": "for ⟦a0⟧",
@@ -4275,10 +3819,7 @@
       ]
     },
     "wiki.entryFrom": {
-      "args": [
-        "type",
-        "d"
-      ],
+      "args": ["type", "d"],
       "entries": [
         {
           "from": "⟦a0⟧ · saved ⟦a1⟧",
@@ -4287,9 +3828,7 @@
       ]
     },
     "wiki.older": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ more read older than 90 days.",
@@ -4302,9 +3841,7 @@
       ]
     },
     "wiki.viaClient": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "with ⟦a0⟧",
@@ -4313,9 +3850,7 @@
       ]
     },
     "wiki.readTimes": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ times",
@@ -4324,9 +3859,7 @@
       ]
     },
     "wiki.lastRead": {
-      "args": [
-        "d"
-      ],
+      "args": ["d"],
       "entries": [
         {
           "from": "last ⟦a0⟧",
@@ -4335,9 +3868,7 @@
       ]
     },
     "wiki.allHistory": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "All ⟦a0⟧ revision and their differences",
@@ -4350,9 +3881,7 @@
       ]
     },
     "wiki.noPageTitle": {
-      "args": [
-        "address"
-      ],
+      "args": ["address"],
       "entries": [
         {
           "from": "No page at ⟦a0⟧",
@@ -4361,9 +3890,7 @@
       ]
     },
     "wiki.historyTitle": {
-      "args": [
-        "title"
-      ],
+      "args": ["title"],
       "entries": [
         {
           "from": "History of ⟦a0⟧",
@@ -4372,11 +3899,7 @@
       ]
     },
     "wiki.revisionBy": {
-      "args": [
-        "n",
-        "kind",
-        "who"
-      ],
+      "args": ["n", "kind", "who"],
       "entries": [
         {
           "from": "Revision ⟦a0⟧ · ⟦a1⟧ by ⟦a2⟧",
@@ -4389,10 +3912,7 @@
       ]
     },
     "wiki.changes": {
-      "args": [
-        "a",
-        "b"
-      ],
+      "args": ["a", "b"],
       "entries": [
         {
           "from": "Changes from revision ⟦a0⟧ to ⟦a1⟧",
@@ -4401,9 +3921,7 @@
       ]
     },
     "wiki.why": {
-      "args": [
-        "reason"
-      ],
+      "args": ["reason"],
       "entries": [
         {
           "from": "Why: ⟦a0⟧",
@@ -4412,9 +3930,7 @@
       ]
     },
     "wiki.restore": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Restore revision ⟦a0⟧",
@@ -4423,9 +3939,7 @@
       ]
     },
     "wiki.restoreTitle": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Restore revision ⟦a0⟧?",
@@ -4434,10 +3948,7 @@
       ]
     },
     "wiki.restored": {
-      "args": [
-        "n",
-        "m"
-      ],
+      "args": ["n", "m"],
       "entries": [
         {
           "from": "Restored revision ⟦a0⟧ as revision ⟦a1⟧.",
@@ -4446,9 +3957,7 @@
       ]
     },
     "wiki.editTitle": {
-      "args": [
-        "title"
-      ],
+      "args": ["title"],
       "entries": [
         {
           "from": "Edit ⟦a0⟧",
@@ -4457,9 +3966,7 @@
       ]
     },
     "wiki.saved": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Saved as revision ⟦a0⟧.",
@@ -4468,12 +3975,7 @@
       ]
     },
     "wiki.notSaved": {
-      "args": [
-        "step",
-        "why",
-        "n",
-        "moveToo"
-      ],
+      "args": ["step", "why", "n", "moveToo"],
       "entries": [
         {
           "from": "The ⟦a0⟧ was not saved: ⟦a1⟧. The address was not changed either. Your other changes are saved as revision ⟦a2⟧.",
@@ -4486,10 +3988,7 @@
       ]
     },
     "wiki.conflictTitle": {
-      "args": [
-        "who",
-        "n"
-      ],
+      "args": ["who", "n"],
       "entries": [
         {
           "from": "⟦a0⟧ saved revision ⟦a1⟧ while you edited",
@@ -4498,9 +3997,7 @@
       ]
     },
     "wiki.conflictLead": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "It is at revision ⟦a0⟧ now. Nothing of yours was saved, and your text is still here.",
@@ -4509,9 +4006,7 @@
       ]
     },
     "wiki.theirChanges": {
-      "args": [
-        "who"
-      ],
+      "args": ["who"],
       "entries": [
         {
           "from": "What ⟦a0⟧ changed",
@@ -4520,9 +4015,7 @@
       ]
     },
     "wiki.theirVersion": {
-      "args": [
-        "who"
-      ],
+      "args": ["who"],
       "entries": [
         {
           "from": "⟦a0⟧’s",
@@ -4531,9 +4024,7 @@
       ]
     },
     "wiki.chooseFirst": {
-      "args": [
-        "parts"
-      ],
+      "args": ["parts"],
       "entries": [
         {
           "from": "Choose what to keep of: ⟦a0⟧.",
@@ -4542,10 +4033,7 @@
       ]
     },
     "wiki.linkAdded": {
-      "args": [
-        "kind",
-        "to"
-      ],
+      "args": ["kind", "to"],
       "entries": [
         {
           "from": "Linked: ⟦a0⟧ ⟦a1⟧.",
@@ -4554,10 +4042,7 @@
       ]
     },
     "wiki.linkRemoved": {
-      "args": [
-        "kind",
-        "to"
-      ],
+      "args": ["kind", "to"],
       "entries": [
         {
           "from": "Removed the link: ⟦a0⟧ ⟦a1⟧.",
@@ -4566,9 +4051,7 @@
       ]
     },
     "wiki.moved": {
-      "args": [
-        "a"
-      ],
+      "args": ["a"],
       "entries": [
         {
           "from": "The page lives at ⟦a0⟧ now; its old address leads here.",
@@ -4577,9 +4060,7 @@
       ]
     },
     "wiki.decisions": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ decision",
@@ -4592,9 +4073,7 @@
       ]
     },
     "wiki.decided": {
-      "args": [
-        "d"
-      ],
+      "args": ["d"],
       "entries": [
         {
           "from": "decided ⟦a0⟧",
@@ -4603,14 +4082,11 @@
       ]
     },
     "wiki.byKey": {
-      "args": [
-        "who",
-        "key"
-      ],
+      "args": ["who", "key"],
       "entries": [
         {
           "from": "by ⟦a0⟧, with the key ⟦a1⟧",
-          "to": "by ⟦a0⟧, con la clave ⟦a1⟧"
+          "to": "por ⟦a0⟧, con la clave ⟦a1⟧"
         },
         {
           "from": "by someone, with the key ⟦a1⟧",
@@ -4619,9 +4095,7 @@
       ]
     },
     "wiki.lines": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ change",
@@ -4634,9 +4108,7 @@
       ]
     },
     "wiki.by": {
-      "args": [
-        "who"
-      ],
+      "args": ["who"],
       "entries": [
         {
           "from": "by ⟦a0⟧",
@@ -4645,10 +4117,7 @@
       ]
     },
     "graph.count": {
-      "args": [
-        "shown",
-        "total"
-      ],
+      "args": ["shown", "total"],
       "entries": [
         {
           "from": "⟦a0⟧ of ⟦a1⟧ page",
@@ -4657,14 +4126,19 @@
         {
           "from": "⟦a0⟧ of ⟦a1⟧ pages",
           "to": "⟦a0⟧ de ⟦a1⟧ páginas"
+        },
+        {
+          "from": "⟦a1⟧ page",
+          "to": "⟦a1⟧ página"
+        },
+        {
+          "from": "⟦a1⟧ pages",
+          "to": "⟦a1⟧ páginas"
         }
       ]
     },
     "graph.groupsCount": {
-      "args": [
-        "pages",
-        "groups"
-      ],
+      "args": ["pages", "groups"],
       "entries": [
         {
           "from": "⟦a0⟧ page in ⟦a1⟧ groups",
@@ -4673,13 +4147,19 @@
         {
           "from": "⟦a0⟧ pages in ⟦a1⟧ groups",
           "to": "⟦a0⟧ páginas en ⟦a1⟧ grupos"
+        },
+        {
+          "from": "⟦a0⟧ page in ⟦a1⟧ group",
+          "to": "⟦a0⟧ página en ⟦a1⟧ grupo"
+        },
+        {
+          "from": "⟦a0⟧ pages in ⟦a1⟧ group",
+          "to": "⟦a0⟧ páginas en ⟦a1⟧ grupo"
         }
       ]
     },
     "graph.huge": {
-      "args": [
-        "total"
-      ],
+      "args": ["total"],
       "entries": [
         {
           "from": "This wiki has ⟦a0⟧ page, so it is drawn by groups: the first part of each address. Open a group to see its pages.",
@@ -4692,10 +4172,7 @@
       ]
     },
     "graph.nested": {
-      "args": [
-        "prefix",
-        "total"
-      ],
+      "args": ["prefix", "total"],
       "entries": [
         {
           "from": "Group ⟦a0⟧ has ⟦a1⟧ page, so it opens by groups again: the next part of each address.",
@@ -4708,9 +4185,7 @@
       ]
     },
     "graph.inGroup": {
-      "args": [
-        "prefix"
-      ],
+      "args": ["prefix"],
       "entries": [
         {
           "from": "Group ⟦a0⟧",
@@ -4719,13 +4194,11 @@
       ]
     },
     "graph.tooBigLead": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "It has ⟦a0⟧ page and no deeper part of the address to split them by. The list has every one of them, filtered to this group.",
-          "to": "ITiene una página ⟦a0⟧ y no hay una parte más profunda de la dirección para dividirlos. La lista los tiene todos, filtrados a este grupo."
+          "to": "Tiene una página ⟦a0⟧ y no hay una parte más profunda de la dirección para dividirlos. La lista los tiene todos, filtrados a este grupo."
         },
         {
           "from": "It has ⟦a0⟧ pages and no deeper part of the address to split them by. The list has every one of them, filtered to this group.",
@@ -4734,9 +4207,7 @@
       ]
     },
     "graph.canvasLabel": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Graph of ⟦a0⟧ item",
@@ -4749,9 +4220,7 @@
       ]
     },
     "graph.stripAbout": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "⟦a0⟧ · what your agents know",
@@ -4760,10 +4229,7 @@
       ]
     },
     "graph.stripMeta": {
-      "args": [
-        "pages",
-        "links"
-      ],
+      "args": ["pages", "links"],
       "entries": [
         {
           "from": "⟦a0⟧ pages · ⟦a1⟧ links",
@@ -4772,24 +4238,20 @@
       ]
     },
     "graph.onPage": {
-      "args": [
-        "title",
-        "type",
-        "status",
-        "links"
-      ],
+      "args": ["title", "type", "status", "links"],
       "entries": [
         {
           "from": "⟦a0⟧. ⟦a1⟧, ⟦a2⟧. ⟦a3⟧ links here. Enter to inspect.",
           "to": "⟦a0⟧. ⟦a1⟧, ⟦a2⟧. ⟦a3⟧ enlaces aquí. Ingrese para inspeccionar."
+        },
+        {
+          "from": "⟦a0⟧. ⟦a1⟧, ⟦a2⟧. ⟦a3⟧ link here. Enter to inspect.",
+          "to": "⟦a0⟧. ⟦a1⟧, ⟦a2⟧. ⟦a3⟧ enlace aquí. Pulsa Intro para inspeccionar."
         }
       ]
     },
     "graph.onGroup": {
-      "args": [
-        "prefix",
-        "count"
-      ],
+      "args": ["prefix", "count"],
       "entries": [
         {
           "from": "Group ⟦a0⟧, ⟦a1⟧ page. Enter to inspect.",
@@ -4802,9 +4264,7 @@
       ]
     },
     "graph.focusOn": {
-      "args": [
-        "title"
-      ],
+      "args": ["title"],
       "entries": [
         {
           "from": "Focus on ⟦a0⟧",
@@ -4813,9 +4273,7 @@
       ]
     },
     "graph.groupPages": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ page",
@@ -4828,9 +4286,7 @@
       ]
     },
     "graph.linksCount": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ link",
@@ -4843,9 +4299,7 @@
       ]
     },
     "graph.inspectName": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Inspect ⟦a0⟧",
@@ -4854,9 +4308,7 @@
       ]
     },
     "graph.focusName": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Focus: 1 hop, ⟦a0⟧",
@@ -4865,9 +4317,7 @@
       ]
     },
     "graph.openGroupName": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Open group ⟦a0⟧",
@@ -4876,9 +4326,7 @@
       ]
     },
     "graph.focusTable": {
-      "args": [
-        "title"
-      ],
+      "args": ["title"],
       "entries": [
         {
           "from": "⟦a0⟧ and its neighbours",
@@ -4887,10 +4335,7 @@
       ]
     },
     "graph.sortBy": {
-      "args": [
-        "col",
-        "dir"
-      ],
+      "args": ["col", "dir"],
       "entries": [
         {
           "from": "Sort by ⟦a0⟧, ⟦a1⟧",
@@ -4899,11 +4344,7 @@
       ]
     },
     "graph.range": {
-      "args": [
-        "from",
-        "to",
-        "total"
-      ],
+      "args": ["from", "to", "total"],
       "entries": [
         {
           "from": "⟦a0⟧–⟦a0⟧ of ⟦a0⟧ page",
@@ -4948,9 +4389,7 @@
       ]
     },
     "graph.hop": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ hop",
@@ -4963,9 +4402,7 @@
       ]
     },
     "graph.otherPages": {
-      "args": [
-        "prefix"
-      ],
+      "args": ["prefix"],
       "entries": [
         {
           "from": "Other pages in ⟦a0⟧",
@@ -4974,10 +4411,7 @@
       ]
     },
     "graph.otherPagesCount": {
-      "args": [
-        "prefix",
-        "n"
-      ],
+      "args": ["prefix", "n"],
       "entries": [
         {
           "from": "Other pages in ⟦a0⟧ (⟦a1⟧)",
@@ -4990,10 +4424,7 @@
       ]
     },
     "graph.otherPagesNote": {
-      "args": [
-        "prefix",
-        "n"
-      ],
+      "args": ["prefix", "n"],
       "entries": [
         {
           "from": "⟦a1⟧ pages in ⟦a0⟧ with no deeper part of the address, gathered here.",
@@ -5014,11 +4445,7 @@
       ]
     },
     "graph.focusPlace": {
-      "args": [
-        "title",
-        "hops",
-        "pages"
-      ],
+      "args": ["title", "hops", "pages"],
       "entries": [
         {
           "from": "Focus: ⟦a0⟧ · ⟦a1⟧ hop · ⟦a1⟧ page",
@@ -5034,15 +4461,15 @@
         },
         {
           "from": "Focus: ⟦a0⟧ · ⟦a1⟧ hops · ⟦a1⟧ pages",
-          "to": "Focus: ⟦a0⟧ · ⟦a1⟧ saltos · ⟦a1⟧ páginas"
+          "to": "Enfoque: ⟦a0⟧ · ⟦a1⟧ saltos · ⟦a1⟧ páginas"
         },
         {
           "from": "Focus: ⟦a0⟧ · ⟦a1⟧ hops · ⟦a2⟧ pages",
-          "to": "Focus: ⟦a0⟧ · ⟦a1⟧ saltos · ⟦a2⟧ páginas"
+          "to": "Enfoque: ⟦a0⟧ · ⟦a1⟧ saltos · ⟦a2⟧ páginas"
         },
         {
           "from": "Focus: ⟦a0⟧ · ⟦a2⟧ hop · ⟦a2⟧ page",
-          "to": "Focus: ⟦a0⟧ · ⟦a2⟧ salto · ⟦a2⟧ página"
+          "to": "Enfoque: ⟦a0⟧ · ⟦a2⟧ salto · ⟦a2⟧ página"
         },
         {
           "from": "Focus: ⟦a0⟧ · 1 hop · ⟦a2⟧ pages",
@@ -5055,9 +4482,7 @@
       ]
     },
     "graph.filtersSummary": {
-      "args": [
-        "chips"
-      ],
+      "args": ["chips"],
       "entries": [
         {
           "from": "Filters · ⟦a0_0⟧",
@@ -5074,10 +4499,7 @@
       ]
     },
     "graph.chip": {
-      "args": [
-        "name",
-        "value"
-      ],
+      "args": ["name", "value"],
       "entries": [
         {
           "from": "⟦a0⟧: ⟦a1⟧",
@@ -5086,9 +4508,7 @@
       ]
     },
     "graph.via": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "via ⟦a0⟧",
@@ -5097,9 +4517,7 @@
       ]
     },
     "graph.viaHidden": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "via ⟦a0⟧ (hidden by filter)",
@@ -5108,9 +4526,7 @@
       ]
     },
     "graph.rowActions": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "Actions for ⟦a0⟧",
@@ -5119,9 +4535,7 @@
       ]
     },
     "journal.aboutTitle": {
-      "args": [
-        "address"
-      ],
+      "args": ["address"],
       "entries": [
         {
           "from": "Entries about ⟦a0⟧",
@@ -5130,9 +4544,7 @@
       ]
     },
     "journal.aboutLead": {
-      "args": [
-        "since"
-      ],
+      "args": ["since"],
       "entries": [
         {
           "from": "Written since ⟦a0⟧, when the page last changed. Newest last.",
@@ -5141,9 +4553,7 @@
       ]
     },
     "journal.sessionsCount": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ session",
@@ -5156,9 +4566,7 @@
       ]
     },
     "journal.unnamedWork": {
-      "args": [
-        "client"
-      ],
+      "args": ["client"],
       "entries": [
         {
           "from": "Unnamed work · ⟦a0⟧",
@@ -5167,9 +4575,7 @@
       ]
     },
     "journal.webEdits": {
-      "args": [
-        "person"
-      ],
+      "args": ["person"],
       "entries": [
         {
           "from": "Web edits · ⟦a0⟧",
@@ -5178,9 +4584,7 @@
       ]
     },
     "journal.entriesIn": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ entry",
@@ -5193,9 +4597,7 @@
       ]
     },
     "journal.newer": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ new session — show it",
@@ -5208,9 +4610,7 @@
       ]
     },
     "journal.opened": {
-      "args": [
-        "d"
-      ],
+      "args": ["d"],
       "entries": [
         {
           "from": "opened ⟦a0⟧",
@@ -5219,10 +4619,7 @@
       ]
     },
     "journal.revisionLine": {
-      "args": [
-        "n",
-        "d"
-      ],
+      "args": ["n", "d"],
       "entries": [
         {
           "from": "⟦a0⟧, last changed ⟦a1⟧",
@@ -5231,9 +4628,7 @@
       ]
     },
     "journal.repeated": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Saved ⟦a0⟧ times (repeats are counted, not copied)",
@@ -5242,9 +4637,7 @@
       ]
     },
     "journal.reviewAfter": {
-      "args": [
-        "d"
-      ],
+      "args": ["d"],
       "entries": [
         {
           "from": "To review after ⟦a0⟧",
@@ -5253,9 +4646,7 @@
       ]
     },
     "journal.expires": {
-      "args": [
-        "d"
-      ],
+      "args": ["d"],
       "entries": [
         {
           "from": "Leaves the agents’ context after ⟦a0⟧",
@@ -5264,9 +4655,7 @@
       ]
     },
     "journal.expired": {
-      "args": [
-        "d"
-      ],
+      "args": ["d"],
       "entries": [
         {
           "from": "Expired on ⟦a0⟧: no longer in the agents’ context",
@@ -5275,9 +4664,7 @@
       ]
     },
     "journal.forgottenIn": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ forgotten",
@@ -5286,9 +4673,7 @@
       ]
     },
     "journal.forgottenSee": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ forgotten — see Forgotten",
@@ -5297,11 +4682,7 @@
       ]
     },
     "journal.stateForgotten": {
-      "args": [
-        "who",
-        "d",
-        "why"
-      ],
+      "args": ["who", "d", "why"],
       "entries": [
         {
           "from": "Forgotten by ⟦a0⟧ on ⟦a1⟧: ⟦a2⟧",
@@ -5310,11 +4691,7 @@
       ]
     },
     "journal.revisionBy": {
-      "args": [
-        "n",
-        "who",
-        "d"
-      ],
+      "args": ["n", "who", "d"],
       "entries": [
         {
           "from": "Revision ⟦a0⟧ · ⟦a1⟧ · ⟦a2⟧",
@@ -5323,10 +4700,7 @@
       ]
     },
     "journal.noActions": {
-      "args": [
-        "brain",
-        "curators"
-      ],
+      "args": ["brain", "curators"],
       "entries": [
         {
           "from": "You can read this journal. To change entries, ask a curator of ⟦a0⟧ (⟦a1⟧) for the contributor role.",
@@ -5339,9 +4713,7 @@
       ]
     },
     "journal.saved": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Saved as revision ⟦a0⟧.",
@@ -5350,9 +4722,7 @@
       ]
     },
     "journal.changedLead": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "It is at revision ⟦a0⟧ now. Nothing of yours was saved, and your text is still here.",
@@ -5361,9 +4731,7 @@
       ]
     },
     "journal.otherPicked": {
-      "args": [
-        "t"
-      ],
+      "args": ["t"],
       "entries": [
         {
           "from": "Picked: ⟦a0⟧",
@@ -5372,10 +4740,7 @@
       ]
     },
     "journal.readerCannot": {
-      "args": [
-        "brain",
-        "curators"
-      ],
+      "args": ["brain", "curators"],
       "entries": [
         {
           "from": "Corrections are written by contributors and curators. Ask a curator of ⟦a0⟧ (⟦a1⟧) for the contributor role.",
@@ -5388,9 +4753,7 @@
       ]
     },
     "journal.conflictsCount": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ conflict",
@@ -5403,9 +4766,7 @@
       ]
     },
     "journal.waitingPerson": {
-      "args": [
-        "what"
-      ],
+      "args": ["what"],
       "entries": [
         {
           "from": "An agent asked: ⟦a0⟧. A person decides.",
@@ -5414,10 +4775,7 @@
       ]
     },
     "journal.notYoursToDecide": {
-      "args": [
-        "brain",
-        "curators"
-      ],
+      "args": ["brain", "curators"],
       "entries": [
         {
           "from": "Only the authors of these entries or a curator of ⟦a0⟧ (⟦a1⟧) decide this one.",
@@ -5430,10 +4788,7 @@
       ]
     },
     "journal.decideSupersede": {
-      "args": [
-        "a",
-        "b"
-      ],
+      "args": ["a", "b"],
       "entries": [
         {
           "from": "“⟦a0⟧” stays. “⟦a1⟧” is marked superseded: it leaves the agents’ context and the default search. This cannot be undone from the web.",
@@ -5442,10 +4797,7 @@
       ]
     },
     "journal.readOnlyConflicts": {
-      "args": [
-        "brain",
-        "curators"
-      ],
+      "args": ["brain", "curators"],
       "entries": [
         {
           "from": "You can read the conflicts. To decide them, ask a curator of ⟦a0⟧ (⟦a1⟧) for the contributor role.",
@@ -5458,9 +4810,7 @@
       ]
     },
     "journal.forgottenCount": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ forgotten entry",
@@ -5473,10 +4823,7 @@
       ]
     },
     "journal.forgottenBy": {
-      "args": [
-        "who",
-        "d"
-      ],
+      "args": ["who", "d"],
       "entries": [
         {
           "from": "Forgotten by ⟦a0⟧ on ⟦a1⟧",
@@ -5485,10 +4832,7 @@
       ]
     },
     "journal.curatorsOnly": {
-      "args": [
-        "brain",
-        "curators"
-      ],
+      "args": ["brain", "curators"],
       "entries": [
         {
           "from": "Only curators see forgotten entries. Ask a curator of ⟦a0⟧ (⟦a1⟧) if one should come back.",
@@ -5501,9 +4845,7 @@
       ]
     },
     "journal.toReviewCount": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ entry to review",
@@ -5516,9 +4858,7 @@
       ]
     },
     "journal.reviewDue": {
-      "args": [
-        "d"
-      ],
+      "args": ["d"],
       "entries": [
         {
           "from": "review was due ⟦a0⟧",
@@ -5527,9 +4867,7 @@
       ]
     },
     "proposals.count": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ proposal",
@@ -5542,9 +4880,7 @@
       ]
     },
     "proposals.list": {
-      "args": [
-        "status"
-      ],
+      "args": ["status"],
       "entries": [
         {
           "from": "⟦a0⟧ proposals",
@@ -5553,9 +4889,7 @@
       ]
     },
     "proposals.changes": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ change",
@@ -5568,9 +4902,7 @@
       ]
     },
     "proposals.from": {
-      "args": [
-        "who"
-      ],
+      "args": ["who"],
       "entries": [
         {
           "from": "from ⟦a0⟧",
@@ -5578,30 +4910,8 @@
         }
       ]
     },
-    "proposals.byline": {
-      "args": [
-        "agent",
-        "author"
-      ],
-      "entries": [
-        {
-          "from": "⟦a0⟧ of ⟦a1⟧",
-          "to": "⟦a0⟧ de ⟦a1⟧"
-        },
-        {
-          "from": "⟦a0⟧ of ",
-          "to": "⟦a0⟧ de"
-        },
-        {
-          "from": "⟦a0⟧ of null",
-          "to": "⟦a0⟧ de nulo"
-        }
-      ]
-    },
     "proposals.sent": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "sent ⟦a0⟧",
@@ -5610,11 +4920,7 @@
       ]
     },
     "proposals.decidedBy": {
-      "args": [
-        "status",
-        "who",
-        "when"
-      ],
+      "args": ["status", "who", "when"],
       "entries": [
         {
           "from": "⟦a0⟧ by ⟦a1⟧ ⟦a2⟧",
@@ -5623,10 +4929,7 @@
       ]
     },
     "proposals.readOnly": {
-      "args": [
-        "brain",
-        "curators"
-      ],
+      "args": ["brain", "curators"],
       "entries": [
         {
           "from": "You can read the proposals. To approve or return them, ask a curator of ⟦a0⟧ (⟦a1⟧) for the curator role.",
@@ -5639,9 +4942,7 @@
       ]
     },
     "proposals.collected": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "It also gathers ⟦a0⟧ journal entry without changes.",
@@ -5654,9 +4955,7 @@
       ]
     },
     "proposals.lastError": {
-      "args": [
-        "e"
-      ],
+      "args": ["e"],
       "entries": [
         {
           "from": "The last approval could not apply: ⟦a0⟧",
@@ -5665,9 +4964,7 @@
       ]
     },
     "proposals.changeN": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Change ⟦a0⟧",
@@ -5676,9 +4973,7 @@
       ]
     },
     "proposals.choose": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Approve change ⟦a0⟧",
@@ -5687,9 +4982,7 @@
       ]
     },
     "proposals.bornBy": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "The page comes with change ⟦a0⟧.",
@@ -5698,10 +4991,7 @@
       ]
     },
     "proposals.staleLead": {
-      "args": [
-        "base",
-        "current"
-      ],
+      "args": ["base", "current"],
       "entries": [
         {
           "from": "This change was written on revision ⟦a0⟧; the page is at revision ⟦a0⟧ now. Approving it replaces what it changes with its version.",
@@ -5714,10 +5004,7 @@
       ]
     },
     "proposals.sinceWritten": {
-      "args": [
-        "base",
-        "current"
-      ],
+      "args": ["base", "current"],
       "entries": [
         {
           "from": "Changed since it was written (revision ⟦a0⟧ → ⟦a0⟧)",
@@ -5730,9 +5017,7 @@
       ]
     },
     "proposals.proposedFromBase": {
-      "args": [
-        "base"
-      ],
+      "args": ["base"],
       "entries": [
         {
           "from": "What the proposal changes (from revision ⟦a0⟧)",
@@ -5741,9 +5026,7 @@
       ]
     },
     "proposals.editTitle": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Edit change ⟦a0⟧",
@@ -5752,9 +5035,7 @@
       ]
     },
     "proposals.op.create": {
-      "args": [
-        "a"
-      ],
+      "args": ["a"],
       "entries": [
         {
           "from": "New page ⟦a0⟧",
@@ -5763,9 +5044,7 @@
       ]
     },
     "proposals.op.edit": {
-      "args": [
-        "a"
-      ],
+      "args": ["a"],
       "entries": [
         {
           "from": "Edit ⟦a0⟧",
@@ -5774,10 +5053,7 @@
       ]
     },
     "proposals.op.move": {
-      "args": [
-        "a",
-        "to"
-      ],
+      "args": ["a", "to"],
       "entries": [
         {
           "from": "Move ⟦a0⟧ to ⟦a1⟧",
@@ -5786,11 +5062,7 @@
       ]
     },
     "proposals.op.link": {
-      "args": [
-        "a",
-        "to",
-        "kind"
-      ],
+      "args": ["a", "to", "kind"],
       "entries": [
         {
           "from": "Link ⟦a0⟧ to ⟦a1⟧ (⟦a2⟧)",
@@ -5799,11 +5071,7 @@
       ]
     },
     "proposals.op.unlink": {
-      "args": [
-        "a",
-        "to",
-        "kind"
-      ],
+      "args": ["a", "to", "kind"],
       "entries": [
         {
           "from": "Remove the link ⟦a0⟧ to ⟦a1⟧ (⟦a2⟧)",
@@ -5812,10 +5080,7 @@
       ]
     },
     "proposals.op.status": {
-      "args": [
-        "a",
-        "status"
-      ],
+      "args": ["a", "status"],
       "entries": [
         {
           "from": "Mark ⟦a0⟧ ⟦a1⟧",
@@ -5824,10 +5089,7 @@
       ]
     },
     "proposals.op.merge": {
-      "args": [
-        "a",
-        "from"
-      ],
+      "args": ["a", "from"],
       "entries": [
         {
           "from": "Merge ⟦a1⟧ into ⟦a0⟧",
@@ -5836,10 +5098,7 @@
       ]
     },
     "proposals.op.revert": {
-      "args": [
-        "a",
-        "rev"
-      ],
+      "args": ["a", "rev"],
       "entries": [
         {
           "from": "Restore ⟦a0⟧ to revision ⟦a1⟧",
@@ -5848,10 +5107,7 @@
       ]
     },
     "proposals.needs": {
-      "args": [
-        "i",
-        "deps"
-      ],
+      "args": ["i", "deps"],
       "entries": [
         {
           "from": "change ⟦a0⟧ needs change ⟦a1_0⟧",
@@ -5868,9 +5124,7 @@
       ]
     },
     "proposals.staleBlocks": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Change ⟦a0⟧ was written on an older version of its page: edit it or confirm you checked it first.",
@@ -5879,10 +5133,7 @@
       ]
     },
     "proposals.chosen": {
-      "args": [
-        "n",
-        "of"
-      ],
+      "args": ["n", "of"],
       "entries": [
         {
           "from": "⟦a0⟧ of ⟦a0⟧ chosen",
@@ -5895,9 +5146,7 @@
       ]
     },
     "proposals.changesList": {
-      "args": [
-        "ns"
-      ],
+      "args": ["ns"],
       "entries": [
         {
           "from": "change ⟦a0_0⟧",
@@ -5914,10 +5163,7 @@
       ]
     },
     "proposals.alsoChose": {
-      "args": [
-        "list",
-        "i"
-      ],
+      "args": ["list", "i"],
       "entries": [
         {
           "from": "Also chose ⟦a0⟧, which change ⟦a1⟧ needs.",
@@ -5926,10 +5172,7 @@
       ]
     },
     "proposals.alsoLeftOut": {
-      "args": [
-        "list",
-        "i"
-      ],
+      "args": ["list", "i"],
       "entries": [
         {
           "from": "Also left out ⟦a0⟧, which needs change ⟦a1⟧.",
@@ -5938,9 +5181,7 @@
       ]
     },
     "proposals.approveAllIgnoring": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Approve all ⟦a0⟧ (ignore my selection)",
@@ -5949,9 +5190,7 @@
       ]
     },
     "proposals.notSent": {
-      "args": [
-        "c"
-      ],
+      "args": ["c"],
       "entries": [
         {
           "from": "Your comment was not sent: “⟦a0⟧”",
@@ -5960,10 +5199,7 @@
       ]
     },
     "proposals.editOldAt": {
-      "args": [
-        "was",
-        "now"
-      ],
+      "args": ["was", "now"],
       "entries": [
         {
           "from": "Your edit was written on revision ⟦a0⟧; the page is at revision ⟦a1⟧ now — check it.",
@@ -5972,11 +5208,7 @@
       ]
     },
     "proposals.decidedAlready": {
-      "args": [
-        "how",
-        "who",
-        "when"
-      ],
+      "args": ["how", "who", "when"],
       "entries": [
         {
           "from": "⟦a0⟧ by ⟦a1⟧ on ⟦a2⟧. Nothing was applied.",
@@ -5985,9 +5217,7 @@
       ]
     },
     "proposals.changed": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ page changed",
@@ -6000,9 +5230,7 @@
       ]
     },
     "proposals.decidedMeanwhile": {
-      "args": [
-        "msg"
-      ],
+      "args": ["msg"],
       "entries": [
         {
           "from": "⟦a0⟧ Nothing was applied; your comment is kept.",
@@ -6011,10 +5239,7 @@
       ]
     },
     "proposals.liveNotice": {
-      "args": [
-        "how",
-        "who"
-      ],
+      "args": ["how", "who"],
       "entries": [
         {
           "from": "⟦a0⟧ by ⟦a1⟧ just now. This proposal is read-only now.",
@@ -6023,9 +5248,7 @@
       ]
     },
     "search.none": {
-      "args": [
-        "q"
-      ],
+      "args": ["q"],
       "entries": [
         {
           "from": "Nothing found for \"⟦a0⟧\".",
@@ -6034,9 +5257,7 @@
       ]
     },
     "search.noneHere": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "It may be in another brain: this search looked only in ⟦a0⟧.",
@@ -6045,10 +5266,7 @@
       ]
     },
     "search.results": {
-      "args": [
-        "n",
-        "more"
-      ],
+      "args": ["n", "more"],
       "entries": [
         {
           "from": "⟦a0⟧ result so far",
@@ -6057,13 +5275,19 @@
         {
           "from": "⟦a0⟧ results so far",
           "to": "⟦a0⟧ resultados hasta ahora"
+        },
+        {
+          "from": "⟦a0⟧ result",
+          "to": "⟦a0⟧ resultado"
+        },
+        {
+          "from": "⟦a0⟧ results",
+          "to": "⟦a0⟧ resultados"
         }
       ]
     },
     "search.in": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "in ⟦a0⟧",
@@ -6072,9 +5296,7 @@
       ]
     },
     "search.scopeBrain": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "This brain (⟦a0⟧)",
@@ -6083,9 +5305,7 @@
       ]
     },
     "search.filtersOn": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Filters (⟦a0⟧)",
@@ -6094,9 +5314,7 @@
       ]
     },
     "activity.opened": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "opened ⟦a0⟧",
@@ -6105,9 +5323,7 @@
       ]
     },
     "activity.resumeWith": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Resume (⟦a0⟧ new)",
@@ -6116,20 +5332,20 @@
       ]
     },
     "activity.newWaiting": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ new event waits. The list stays still until you resume.",
           "to": "⟦a0⟧ nuevo evento espera. La lista permanece inmóvil hasta que reanudes."
+        },
+        {
+          "from": "⟦a0⟧ new events wait. The list stays still until you resume.",
+          "to": "Hay ⟦a0⟧ eventos nuevos. La lista se actualizará cuando reanudes la actividad."
         }
       ]
     },
     "activity.showMore": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Show ⟦a0⟧ more",
@@ -6138,9 +5354,7 @@
       ]
     },
     "activity.tooMuch": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Only the newest ⟦a0⟧ events stay in this list. The journal keeps everything.",
@@ -6149,9 +5363,7 @@
       ]
     },
     "activity.by": {
-      "args": [
-        "client"
-      ],
+      "args": ["client"],
       "entries": [
         {
           "from": "with ⟦a0⟧",
@@ -6160,9 +5372,7 @@
       ]
     },
     "activity.ref_": {
-      "args": [
-        "ref"
-      ],
+      "args": ["ref"],
       "entries": [
         {
           "from": "ref ⟦a0⟧",
@@ -6171,9 +5381,7 @@
       ]
     },
     "activity.wiki.status": {
-      "args": [
-        "s"
-      ],
+      "args": ["s"],
       "entries": [
         {
           "from": "marked ⟦a0⟧ the page",
@@ -6182,9 +5390,7 @@
       ]
     },
     "activity.wiki.back": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "went back to revision ⟦a0⟧ of the page",
@@ -6193,9 +5399,7 @@
       ]
     },
     "activity.forWhom": {
-      "args": [
-        "name"
-      ],
+      "args": ["name"],
       "entries": [
         {
           "from": "for ⟦a0⟧",
@@ -6204,9 +5408,7 @@
       ]
     },
     "activity.times": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ times",
@@ -6215,9 +5417,7 @@
       ]
     },
     "activity.quietSince": {
-      "args": [
-        "hhmm"
-      ],
+      "args": ["hhmm"],
       "entries": [
         {
           "from": "Quiet since ⟦a0⟧ UTC",
@@ -6226,9 +5426,7 @@
       ]
     },
     "health.found": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ thing to fix",
@@ -6241,9 +5439,7 @@
       ]
     },
     "health.brokenText": {
-      "args": [
-        "to"
-      ],
+      "args": ["to"],
       "entries": [
         {
           "from": "links to ⟦a0⟧, which does not exist",
@@ -6252,9 +5448,7 @@
       ]
     },
     "health.staleText": {
-      "args": [
-        "when"
-      ],
+      "args": ["when"],
       "entries": [
         {
           "from": "last changed ⟦a0⟧;",
@@ -6263,9 +5457,7 @@
       ]
     },
     "health.staleMore": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "⟦a0⟧ newer entry about it",
@@ -6278,9 +5470,7 @@
       ]
     },
     "health.sourceText": {
-      "args": [
-        "state"
-      ],
+      "args": ["state"],
       "entries": [
         {
           "from": "cites an entry that was ⟦a0⟧",
@@ -6289,9 +5479,7 @@
       ]
     },
     "health.longText": {
-      "args": [
-        "chars"
-      ],
+      "args": ["chars"],
       "entries": [
         {
           "from": "⟦a0⟧ characters",
@@ -6300,22 +5488,16 @@
       ]
     },
     "health.askText": {
-      "args": [
-        "brain",
-        "what"
-      ],
+      "args": ["brain", "what"],
       "entries": [
         {
           "from": "Use brain_health and brain_propose to fix ⟦a1⟧ in the brain \"⟦a0⟧\". Propose the changes; a curator approves them.",
-          "to": "Uuse Brain_Health y Brain_propose arreglar ⟦a1⟧ en el cerebro \"⟦a0⟧\". Proponer los cambios; un curador los aprueba."
+          "to": "Usa brain_health y brain_propose para corregir ⟦a1⟧ en el cerebro «⟦a0⟧». Propón los cambios para que los apruebe un curador."
         }
       ]
     },
     "health.hint.broken": {
-      "args": [
-        "from",
-        "to"
-      ],
+      "args": ["from", "to"],
       "entries": [
         {
           "from": "⟦a0⟧ → ⟦a0⟧ (missing page)",
@@ -6328,10 +5510,7 @@
       ]
     },
     "health.hint.conflicts": {
-      "args": [
-        "a",
-        "b"
-      ],
+      "args": ["a", "b"],
       "entries": [
         {
           "from": "⟦a0⟧ ↔ ⟦a1⟧ (contradict each other)",
@@ -6340,9 +5519,7 @@
       ]
     },
     "health.hint.orphans": {
-      "args": [
-        "a"
-      ],
+      "args": ["a"],
       "entries": [
         {
           "from": "⟦a0⟧ (no links in or out)",
@@ -6351,10 +5528,7 @@
       ]
     },
     "health.hint.stale": {
-      "args": [
-        "a",
-        "n"
-      ],
+      "args": ["a", "n"],
       "entries": [
         {
           "from": "⟦a0⟧ (⟦a1⟧ newer entry)",
@@ -6367,10 +5541,7 @@
       ]
     },
     "health.hint.unavailableSources": {
-      "args": [
-        "a",
-        "state"
-      ],
+      "args": ["a", "state"],
       "entries": [
         {
           "from": "⟦a0⟧ (cites an entry that was ⟦a1⟧)",
@@ -6379,10 +5550,7 @@
       ]
     },
     "health.hint.long": {
-      "args": [
-        "a",
-        "chars"
-      ],
+      "args": ["a", "chars"],
       "entries": [
         {
           "from": "⟦a0⟧ (⟦a1⟧ characters)",
@@ -6391,10 +5559,7 @@
       ]
     },
     "health.hint.similarTitles": {
-      "args": [
-        "a",
-        "b"
-      ],
+      "args": ["a", "b"],
       "entries": [
         {
           "from": "⟦a0⟧ ≈ ⟦a1⟧ (almost the same title)",
@@ -6403,9 +5568,7 @@
       ]
     },
     "health.tellCuratorWho": {
-      "args": [
-        "names"
-      ],
+      "args": ["names"],
       "entries": [
         {
           "from": "Fixing the wiki is for curators (⟦a0⟧). Tell one of them what you see.",
@@ -6414,9 +5577,7 @@
       ]
     },
     "health.allProblems": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "the ⟦a0⟧ problem",
@@ -6429,9 +5590,7 @@
       ]
     },
     "health.maintenance": {
-      "args": [
-        "last"
-      ],
+      "args": ["last"],
       "entries": [
         {
           "from": "The last cleanup was ⟦a0⟧. Agents that start work here are asked for one; you can ask one now.",
@@ -6440,20 +5599,16 @@
       ]
     },
     "health.maintenanceAsk": {
-      "args": [
-        "brain"
-      ],
+      "args": ["brain"],
       "entries": [
         {
           "from": "Use brain_health to see what needs care in the wiki of the brain \"⟦a0⟧\", fix what you can, and send it as one change marked as maintenance: brain_propose (or brain_write, if your key may write) with \"maintenance\": true.",
-          "to": "Uusa Brain_health para ver qué necesita cuidado en la wiki del cerebro \"⟦a0⟧\", arregla lo que puedas y envíalo como un cambio marcado como mantenimiento: Brain_propose (o Brain_write, si tu clave puede escribir) con \"maintenance\": true."
+          "to": "Usa brain_health para revisar la wiki del cerebro «⟦a0⟧». Corrige lo que puedas y envíalo como un solo cambio de mantenimiento con brain_propose (o brain_write si tu clave permite escribir) y \"maintenance\": true."
         }
       ]
     },
     "health.showAll": {
-      "args": [
-        "n"
-      ],
+      "args": ["n"],
       "entries": [
         {
           "from": "Show all ⟦a0⟧",
@@ -6579,6 +5734,36 @@
         {
           "from": "Used ⟦a0⟧",
           "to": "Se usó ⟦a0⟧"
+        },
+        {
+          "from": "Too many failed attempts in a row. Try again in ⟦a0⟧ seconds (at ⟦a1⟧ UTC).",
+          "to": "Demasiados intentos fallidos. Vuelve a intentarlo en ⟦a0⟧ segundos (a las ⟦a1⟧ UTC)."
+        },
+        {
+          "from": "A password has ⟦a0⟧ to ⟦a1⟧ characters.",
+          "to": "La contraseña debe tener entre ⟦a0⟧ y ⟦a1⟧ caracteres."
+        },
+        {
+          "from": "Something went wrong on the server (reference ⟦a0⟧).",
+          "to": "El servidor ha devuelto un error (referencia ⟦a0⟧)."
+        }
+      ]
+    },
+    "wiki.statusChanged": {
+      "args": ["status"],
+      "entries": [
+        {
+          "from": "The page is ⟦a0⟧ now.",
+          "to": "Nuevo estado de la página: ⟦a0⟧."
+        }
+      ]
+    },
+    "proposals.noneIn": {
+      "args": ["status"],
+      "entries": [
+        {
+          "from": "No ⟦a0⟧ proposals.",
+          "to": "Ninguna propuesta con el estado «⟦a0⟧»."
         }
       ]
     }

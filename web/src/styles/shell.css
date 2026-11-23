@@ -9,7 +9,6 @@ body {
 }
 
 .frame {
-  --rail-w-open: clamp(232px, 20vw, 264px);
   --rail-w: var(--sidebar-folded);
   --rail-col: var(--rail-w);
   height: 100dvh;
@@ -21,7 +20,7 @@ body {
 }
 
 .frame[data-rail="open"] {
-  --rail-w: var(--rail-w-open);
+  --rail-w: var(--sidebar-width);
 }
 
 .stage {

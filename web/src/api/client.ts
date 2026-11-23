@@ -13,8 +13,8 @@ export class ApiError extends Error {
   readonly retryAfter: number | undefined
   // The current version after a conflict (an edit on a page that moved on), when the server sends it.
   readonly current: unknown
-  // Everything wrong with a change checked as a whole, each with its operation.
-  private readonly rawMessage: string
+  // Field selection uses the original server message independently of the display language.
+  readonly rawMessage: string
   private readonly rawHowToProceed: string
   private readonly rawProblems: Array<{ op: number | null; message: string }>
   // The operations the problems are about (an old base names its operation without a message).

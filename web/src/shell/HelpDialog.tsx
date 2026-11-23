@@ -33,7 +33,7 @@ export function HelpDialog({
               <td>
                 {s.id.startsWith('go-') ? (
                   <>
-                    <kbd>{s.keys[0]}</kbd> {T.help.then} <kbd>{s.keys[1]}</kbd>
+                    <kbd>{s.keys[0]}</kbd> {T.help.nextKey} <kbd>{s.keys[1]}</kbd>
                   </>
                 ) : (
                   s.keys.map((k, i) => (

@@ -1,5 +1,5 @@
 // The rail at the left of every signed-in screen: the logo, the brain switcher, the sections of the brain, and
-// at the foot what waits for review, People, help, the account and the button that folds it. Open it is 232–264px
+// at the foot what waits for review, People, help, the account and the button that folds it. Open it is 228px
 // with the names (the first time, and until the person folds it); folded it is 56px of icons whose names stay
 // in the page, hidden to the eye and shown as a tooltip on hover or focus (Esc hides it). The search is in the
 // top bar. On a phone it is the bar across the top, with the search as an icon, and the sections fold into a

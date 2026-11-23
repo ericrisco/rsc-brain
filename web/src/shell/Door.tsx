@@ -4,11 +4,11 @@
 import type { ComponentChildren } from 'preact'
 import { T } from '../text.ts'
 import { Brand } from '../ui/Brand.tsx'
+import { LanguagePicker } from '../ui/LanguagePicker.tsx'
 import { OfflineStrip } from '../ui/states.tsx'
 import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
 import { helpOpen } from './keys.ts'
-import { LanguagePicker } from '../ui/LanguagePicker.tsx'
 
 export function Door({
   children,

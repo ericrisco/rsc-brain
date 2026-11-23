@@ -77,7 +77,7 @@ function Ask({
       const a = err as ApiError
       setPassword('')
       if (a.code === 'reauth_failed') {
-        const onCode = totp && /code/i.test(a.message)
+        const onCode = totp && /code/i.test(a.rawMessage)
         setProblems({ [onCode ? 'code' : 'password']: `${a.message} ${a.howToProceed}` })
         document.getElementById(onCode ? 'update-code' : 'update-password')?.focus()
       } else {

@@ -13,16 +13,25 @@ function storedLocale(): Locale | null {
   }
 }
 
+export function preferredLocale(languages: readonly string[]): Locale {
+  for (const language of languages) {
+    const base = language.toLowerCase().split('-')[0]
+    if (base === 'en' || base === 'es') return base
+  }
+  return 'en'
+}
+
 function browserLocale(): Locale {
-  const languages = typeof navigator === 'undefined' ? [] : navigator.languages?.length ? navigator.languages : [navigator.language]
-  return languages.some((language) => language.toLowerCase().startsWith('es')) ? 'es' : 'en'
+  if (typeof navigator === 'undefined') return 'en'
+  return preferredLocale(navigator.languages?.length ? navigator.languages : [navigator.language])
 }
 
 export const locale = signal<Locale>(storedLocale() ?? browserLocale())
 
-export function formatNumber(value: number): string {
+export function formatNumber(value: number, options: Intl.NumberFormatOptions = {}): string {
   return value.toLocaleString(locale.value === 'es' ? 'es-ES' : 'en-US', {
     useGrouping: locale.value === 'es' ? 'always' : 'auto',
+    ...options,
   })
 }
 

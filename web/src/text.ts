@@ -5,7 +5,7 @@ const fmt = (n: number) => n.toLocaleString('en-US')
 const plural = (n: number, one: string, many = `${one}s`) => `${fmt(n)} ${n === 1 ? one : many}`
 
 type TranslationGroup = { args: string[]; entries: { from: string; to: string }[] }
-const staticSpanish = spanish.strings as Record<string, string>
+const staticSpanish = new Map<string, string>(Object.entries(spanish.strings))
 const dynamicSpanish = spanish.functions as Record<string, TranslationGroup>
 const compiledPatterns = new Map<string, { from: string; to: string; regex: RegExp }[]>()
 
@@ -40,27 +40,39 @@ function patternsFor(path: string): { from: string; to: string; regex: RegExp }[
   return compiled
 }
 
-function localizedEnum(value: string, name: string): string {
-  if (name === 'role') {
-    return ({ reader: 'lector', contributor: 'colaborador', curator: 'curador' } as Record<string, string>)[value] ?? value
-  }
-  return ['status', 'state', 'kind', 'how', 'dir', 'direction'].includes(name) ? (staticSpanish[value] ?? value) : value
+function localizedEnum(value: string, name: string | undefined): string {
+  return name && ['role', 'status', 'state', 'kind', 'how', 'dir', 'direction'].includes(name)
+    ? (staticSpanish.get(value) ?? value)
+    : value
 }
 
 function translateDynamic(path: string, output: string, args: unknown[]): string {
-  const direct = staticSpanish[output]
-  if (direct) return direct
   const group = dynamicSpanish[path]
-  if (!group) return output
+  if (!group) return staticSpanish.get(output) ?? output
+  // Match the branch using the original arguments before trying to parse any rendered text.
+  // A name can itself contain a separator such as " from " or look like an interface label.
+  for (const entry of group.entries) {
+    const source = entry.from.replace(/⟦a(\d+)⟧/g, (_, index: string) => String(args[Number(index)]))
+    if (source === output) {
+      return entry.to.replace(/⟦a(\d+)⟧/g, (_, index: string) => {
+        const arg = args[Number(index)]
+        return typeof arg === 'number'
+          ? formatNumber(arg)
+          : localizedEnum(String(arg), group.args[Number(index)])
+      })
+    }
+  }
+  const direct = staticSpanish.get(output)
+  if (direct) return direct
   for (const entry of patternsFor(path)) {
     const match = entry.regex.exec(output)
-    if (!match?.groups) continue
+    if (!match) continue
     return entry.to.replace(/⟦a(\d+)(?:_(\d+))?⟧/g, (_, index: string, member?: string) => {
       const argIndex = Number(index)
       let captured = match.groups?.[`a${argIndex}${member === undefined ? '' : `_${member}`}`] ?? ''
       const arg = args[argIndex]
       if (typeof arg === 'number') captured = formatNumber(arg)
-      else if (typeof arg === 'string' && group.args[argIndex]) captured = localizedEnum(captured, group.args[argIndex]!)
+      else if (typeof arg === 'string') captured = localizedEnum(captured, group.args[argIndex])
       return captured
     })
   }
@@ -70,34 +82,47 @@ function translateDynamic(path: string, output: string, args: unknown[]): string
 function translateArrayItem(part: unknown, args: unknown[]): unknown {
   if (typeof part !== 'string') return part
   for (const arg of args) {
-    if (typeof arg === 'number' && part === arg.toLocaleString('en-US')) return arg.toLocaleString('es-ES')
+    if (typeof arg === 'number' && part === arg.toLocaleString('en-US')) return formatNumber(arg)
   }
-  return staticSpanish[part] ?? part
+  return staticSpanish.get(part) ?? part
 }
 
 export function localizeMessage(message: string): string {
   if (locale.value !== 'es') return message
-  const direct = staticSpanish[message]
+  const direct = staticSpanish.get(message)
   if (direct) return direct
   for (const entry of patternsFor('$ui')) {
     const match = entry.regex.exec(message)
-    if (!match?.groups) continue
+    if (!match) continue
     return entry.to.replace(/⟦a(\d+)(?:_(\d+))?⟧/g, (_, index: string, member?: string) => {
       const captured = match.groups?.[`a${index}${member === undefined ? '' : `_${member}`}`] ?? ''
-      return staticSpanish[captured] ?? captured
+      // Only these templates interpolate messages or a server-defined status. All other
+      // captures are literal names, addresses, versions or identifiers supplied by the caller.
+      if (
+        entry.from.startsWith('The last copy failed:') ||
+        entry.from.startsWith('A copy was kept whole,') ||
+        (entry.from.startsWith('Proposal ') && index === '1')
+      )
+        return staticSpanish.get(captured) ?? captured
+      return captured
     })
   }
   return message
 }
 
 function localized<T>(value: T, path = ''): T {
-  if (typeof value === 'string') return (locale.value === 'es' ? (staticSpanish[value] ?? value) : value) as T
+  if (typeof value === 'string')
+    return (locale.value === 'es' ? (staticSpanish.get(value) ?? value) : value) as T
   if (typeof value === 'function') {
     const original = value as (...args: unknown[]) => unknown
     return ((...args: unknown[]) => {
       if (locale.value !== 'es') return original(...args)
+      const formatter = spanishFormatters.get(value) as ((...values: unknown[]) => string) | undefined
+      if (formatter) return formatter(...args)
       if (path === 'date' || path === 'dateTime') {
         const date = new Date(String(args[0]))
+        if (Number.isNaN(date.getTime()))
+          return path === 'dateTime' ? 'Fecha no válida UTC' : 'Fecha no válida'
         const options: Intl.DateTimeFormatOptions =
           path === 'date'
             ? { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }
@@ -2549,7 +2574,7 @@ const english = {
     key: 'Keys',
     does: 'What it does',
     control: 'Same as',
-    then: 'then',
+    nextKey: 'then',
     or: 'or',
   },
 
@@ -2571,5 +2596,19 @@ const english = {
     new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) +
     ' UTC',
 } as const
+
+const welcome: typeof english.home.welcome = (brains) => {
+  if (!brains.length) return 'Te damos la bienvenida. Tu cuenta está lista.'
+  const names = brains.map(({ name, role }) => `${name} como ${localizedEnum(role, 'role')}`)
+  return `Te damos la bienvenida. Formas parte de ${new Intl.ListFormat('es').format(names)}.`
+}
+const byline: typeof english.proposals.byline = (agent, author) =>
+  agent && agent !== author ? `${agent} de ${author}` : author
+
+// The welcome lists structured memberships. The byline may consist solely of a person's name.
+const spanishFormatters = new Map<unknown, typeof welcome | typeof byline>([
+  [english.home.welcome, welcome],
+  [english.proposals.byline, byline],
+])
 
 export const T = localized(english) as typeof english

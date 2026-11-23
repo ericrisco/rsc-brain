@@ -793,6 +793,13 @@ pre.command .word {
   flex: 1 1 auto;
 }
 
+.language-picker {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
 .door .language-picker--door {
   flex: none;
   align-self: center;

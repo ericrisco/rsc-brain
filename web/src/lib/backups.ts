@@ -62,7 +62,7 @@ export function sizeLabel(bytes: number): string {
     v /= 1024
     i++
   }
-  return `${formatNumber(Number(v.toFixed(1)))} ${units[i]}`
+  return `${formatNumber(v, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${units[i]}`
 }
 
 type Ok = { at: string; file: string } | null
@@ -82,7 +82,9 @@ export function restoreBlocked(
 ): string | null {
   if (!o.online) return localizeMessage('You are offline: restoring needs the server.')
   if (item.needsOldKey)
-    return localizeMessage('Made with an older key: restore it on the machine with that key (rsc-brain restore --key-file).')
+    return localizeMessage(
+      'Made with an older key: restore it on the machine with that key (rsc-brain restore --key-file).',
+    )
   if (o.running) return localizeMessage('A copy is being made: restore when it ends.')
   return null
 }

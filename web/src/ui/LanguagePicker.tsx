@@ -3,8 +3,8 @@ import { T } from '../text.ts'
 
 export function LanguagePicker({ variant }: { variant: 'menu' | 'door' }) {
   return (
-    <div class={`language-picker language-picker--${variant}`} role="group" aria-label={T.shell.language}>
-      <span class={variant === 'door' ? 'sr-only' : 'language-picker-title'}>{T.shell.language}</span>
+    <fieldset class={`language-picker language-picker--${variant}`}>
+      <legend class={variant === 'door' ? 'sr-only' : 'language-picker-title'}>{T.shell.language}</legend>
       <div class="language-picker-options">
         <button type="button" aria-pressed={locale.value === 'en'} onClick={() => setLocale('en')}>
           {T.shell.english}
@@ -13,6 +13,6 @@ export function LanguagePicker({ variant }: { variant: 'menu' | 'door' }) {
           {T.shell.spanish}
         </button>
       </div>
-    </div>
+    </fieldset>
   )
 }

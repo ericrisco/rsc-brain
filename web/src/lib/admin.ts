@@ -2,9 +2,10 @@
 // Backups & system, Branding; PR25b), out of the screens so it is tested on its own. Who may do what is the
 // server's (B4); this decides what a save sends, what a field says before anything is sent, and how the
 // audit's filters become the same rows on screen and in the download.
-import { SAFE_URL } from './activity.ts'
+
 import { formatNumber, locale } from '../locale.ts'
 import { localizeMessage } from '../text.ts'
+import { SAFE_URL } from './activity.ts'
 
 export type InstallationRead = {
   name: string
@@ -55,7 +56,9 @@ const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]'])
 export function factoryProblem(text: string): string | null {
   const raw = text.trim()
   if (!raw) return null
-  const how = localizeMessage('Use an https address, such as https://factory.example.com (http only on this machine).')
+  const how = localizeMessage(
+    'Use an https address, such as https://factory.example.com (http only on this machine).',
+  )
   let u: URL
   try {
     u = new URL(raw)

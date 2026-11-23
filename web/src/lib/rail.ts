@@ -1,4 +1,4 @@
-// The rail at the left of every signed-in screen: open with the names of its sections (232–264px) the first time,
+// The rail at the left of every signed-in screen: open with the names of its sections (228px) the first time,
 // folded to its icons (56px) when the person folds it; the choice is remembered in this browser only, like the
 // mode. The frame reads the signal as data-rail, which sets its width.
 import { signal } from '@preact/signals'
