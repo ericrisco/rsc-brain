@@ -446,6 +446,23 @@ describe('wiki proposals and reading', { skip: skipPg }, () => {
     assert.ok(!JSON.stringify(await w.db.query('SELECT agent FROM proposals')).includes(GITHUB))
   })
 
+  it('e2e finding 3c: with no agent named, the proposal says which key sent it; the web names none', async () => {
+    const t = await w.token(ana.id)
+    const viaKey = await propose(t, { title: 'By key', ops: [create('agent/by-key')] })
+    assert.equal(viaKey.status, 201)
+    assert.equal((viaKey.body.proposal as { agent: string | null }).agent, 'test')
+    // An agent that names itself keeps its own name.
+    const named = await propose(t, { title: 'Named', agent: 'Claude Code', ops: [create('agent/named')] })
+    assert.equal((named.body.proposal as { agent: string | null }).agent, 'Claude Code')
+    const session = await w.web(ana.id)
+    const viaWeb = await w.callWeb(session, 'POST', '/v1/brains/yt/proposals', {
+      title: 'By hand',
+      ops: [create('agent/by-hand')],
+    })
+    assert.equal(viaWeb.status, 201)
+    assert.equal((viaWeb.body.proposal as { agent: string | null }).agent, null)
+  })
+
   it('review: broken text, odd values, deep nesting and odd cursors are 400, never 500', async () => {
     const raw = (body: string) => w.call(factory.key, 'POST', '/v1/brains/yt/proposals', body)
     const op = (extra: string) =>

@@ -44,7 +44,9 @@ test.describe('settings of a brain', () => {
       Members: ['Members'],
       Agents: ['Repositories', 'Usage note', 'Compile guide', 'Meaning search'],
       'Health thresholds': ['Health thresholds'],
-      Archive: ['Export', 'Archive', 'Delete this brain'],
+      // Export sits beside Import, where people look for it (e2e finding 7).
+      'Import and export': ['Export'],
+      Archive: ['Archive', 'Delete this brain'],
     }
     for (const [name, regions] of Object.entries(parts)) {
       await tab(page, name).click()

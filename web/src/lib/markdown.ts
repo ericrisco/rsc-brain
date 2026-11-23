@@ -27,6 +27,13 @@ const leaves = (href: string) => /^(https?:|mailto:)/i.test(href)
 export const pageHref = (slug: string, address: string) =>
   `/b/${encodeURIComponent(slug)}/pages/${address.split('/').map(encodeURIComponent).join('/')}`
 
+// A title up to its first ": " (the whole title when it has none, or when nothing would be left).
+export function headOfTitle(title: string): string {
+  const at = title.indexOf(': ')
+  const head = at > 0 ? title.slice(0, at).trim() : ''
+  return head || title
+}
+
 const NOTE: Record<Exclude<MentionState, 'ok'>, string> = {
   broken: 'no page yet',
   stale: 'stale',
@@ -68,9 +75,13 @@ function build(): Parser {
     const state = env.states.get(address) ?? 'ok'
     const cls = state === 'ok' ? 'wikilink' : `wikilink ${state}`
     const note = state === 'ok' ? '' : `<span class="link-note"> (${NOTE[state]})</span>`
-    // The page's title reads better than its address; the address shows on hover.
-    const shown = text || env.titles.get(address) || address
-    return `<a href="${esc(pageHref(env.slug, address))}" class="${cls}" title="${esc(address)}">${esc(shown)}${note}</a>`
+    // The page's title reads better than its address, but only its head: a paper's title runs on after a colon
+    // ("AWQ: Activation-aware Weight Quantization …") and would swallow the sentence. The full title (or else
+    // the address) shows on hover. An alias the author wrote always wins.
+    const full = env.titles.get(address)
+    const shown = text || (full ? headOfTitle(full) : address)
+    const hover = !text && full && shown !== full ? full : address
+    return `<a href="${esc(pageHref(env.slug, address))}" class="${cls}" title="${esc(hover)}">${esc(shown)}${note}</a>`
   }
 
   // A link whose address was refused keeps its words and loses its link.

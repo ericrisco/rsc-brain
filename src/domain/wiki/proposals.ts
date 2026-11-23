@@ -13,6 +13,7 @@ import { installation } from '../installation.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
 import { type Checked, checkChange } from './coherence.ts'
 import { mentionsOf, nearlySame, type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
+import { keyName } from './writers.ts'
 
 export const OLD_AFTER_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -411,9 +412,15 @@ export async function submitProposal(
   slug: string,
   input: ProposalInput,
 ): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] } & Checked> {
-  const { title, reason, collected, agent, ops, problems } = readPackage(ctx, input)
+  const { title, reason, collected, agent: named, ops, problems } = readPackage(ctx, input)
   const out = await ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
+    // An agent that names no one is known by the token or connected app it sent the proposal with, which a person
+    // named (the web names none; a service is already its own author).
+    let agent = named
+    if (!agent && (ctx.who.credential.kind === 'token' || ctx.who.credential.kind === 'app')) {
+      agent = redact(await keyName(db, ctx)).text.slice(0, WIKI_LIMITS.agent) || null
+    }
     const { brain, role } = await inBrain(c, { slug }, 'share')
     await allow(c, 'wiki.propose', { role, brainStatus: brain.status }, brain.id)
     const good = ops.filter((o): o is Op => o !== null)

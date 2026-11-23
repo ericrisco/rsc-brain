@@ -102,13 +102,81 @@ export function Words({ segments, as = 'p' }: { segments: Segment[]; as?: 'p' | 
 }
 
 // The body, line by line: a line mostly rewritten shows old and new whole; a few words changed, those.
-export const BodyDiff = ({ a, b }: { a: string; b: string }) => <BodyLines lines={bodyDiff(a, b)} />
+export const BodyDiff = ({ a, b, fold = false }: { a: string; b: string; fold?: boolean }) => (
+  <BodyLines lines={bodyDiff(a, b)} fold={fold} />
+)
+
+// With `fold`, a long run of unchanged lines shows as one button, keeping a little context either side of a change.
+const CONTEXT = 2
+
+type Piece = { lines: DiffLine[] } | { folded: DiffLine[]; at: number }
+function piecesOf(lines: DiffLine[], fold: boolean): Piece[] {
+  if (!fold || !lines.some((l) => l.kind !== 'same')) return [{ lines }]
+  const out: Piece[] = []
+  let i = 0
+  while (i < lines.length) {
+    if ((lines[i] as DiffLine).kind !== 'same') {
+      const start = i
+      while (i < lines.length && (lines[i] as DiffLine).kind !== 'same') i++
+      out.push({ lines: lines.slice(start, i) })
+      continue
+    }
+    const start = i
+    while (i < lines.length && (lines[i] as DiffLine).kind === 'same') i++
+    const run = lines.slice(start, i)
+    const head = start === 0 ? 0 : CONTEXT
+    const tail = i === lines.length ? 0 : CONTEXT
+    if (run.length <= head + tail + 1) {
+      out.push({ lines: run })
+      continue
+    }
+    if (head) out.push({ lines: run.slice(0, head) })
+    out.push({ folded: run.slice(head, run.length - tail), at: start + head })
+    if (tail) out.push({ lines: run.slice(run.length - tail) })
+  }
+  return out
+}
 
 // Differences worked out already (a conflict works them out once, with the merge).
-export function BodyLines({ lines }: { lines: DiffLine[] }) {
-  const w = T.wiki
+export function BodyLines({ lines, fold = false }: { lines: DiffLine[]; fold?: boolean }) {
+  const [open, setOpen] = useState<ReadonlySet<number>>(new Set())
+  const pieces = piecesOf(lines, fold)
   return (
     <div class="diff body-diff">
+      {pieces.map((p, k) =>
+        'lines' in p ? (
+          <DiffRows key={k} lines={p.lines} />
+        ) : open.has(p.at) ? (
+          <div key={k} class="diff-folded">
+            <DiffRows lines={p.folded} />
+            <Button
+              kind="quiet"
+              class="diff-fold"
+              onClick={() =>
+                setOpen((o) => {
+                  const n = new Set(o)
+                  n.delete(p.at)
+                  return n
+                })
+              }
+            >
+              {T.proposals.hideUnchanged}
+            </Button>
+          </div>
+        ) : (
+          <Button key={k} kind="quiet" class="diff-fold" onClick={() => setOpen((o) => new Set(o).add(p.at))}>
+            {T.proposals.unchangedLines(p.folded.length)}
+          </Button>
+        ),
+      )}
+    </div>
+  )
+}
+
+function DiffRows({ lines }: { lines: DiffLine[] }) {
+  const w = T.wiki
+  return (
+    <>
       {lines.map((l, i) =>
         l.kind === 'changed' ? (
           <p key={i} class="diff-line changed">
@@ -134,7 +202,7 @@ export function BodyLines({ lines }: { lines: DiffLine[] }) {
           </p>
         ),
       )}
-    </div>
+    </>
   )
 }
 

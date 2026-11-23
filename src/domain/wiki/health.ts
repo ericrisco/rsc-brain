@@ -17,6 +17,8 @@ export type Health = {
   orphans: Ref[]
   broken: { from: string; fromTitle: string; to: string }[]
   conflicts: { a: string; aTitle: string; b: string; bTitle: string }[]
+  // Contradictions a curator marked as a known debate: not problems, listed so they can be seen and unmarked.
+  debates: { a: string; aTitle: string; b: string; bTitle: string }[]
   stale: (Ref & { updatedAt: string; newEntries: number })[]
   unavailableSources: { address: string; title: string; entryId: string; state: 'forgotten' | 'purged' }[]
   long: (Ref & { chars: number })[]
@@ -48,17 +50,25 @@ export const problemCounts = (h: Health): Record<ListName, number> =>
   Object.fromEntries(LISTS.map((k) => [k, h[k].length])) as Record<ListName, number>
 
 // The last cleanup of a brain (an approved maintenance proposal or a maintenance write), and whether one waits.
-async function cleanups(db: Db, brainId: string): Promise<{ lastAt: Date | null; pending: boolean }> {
-  const r = await db.one<{ at: Date | null; pending: boolean }>(
+// An import is a baseline: a brain just filled from a folder or an export has not been neglected, so the 24 hours
+// of a cleanup count from the import when no cleanup came after it. `lastAt` stays the last cleanup itself.
+type Cleanups = { lastAt: Date | null; baseline: Date | null; pending: boolean }
+async function cleanups(db: Db, brainId: string): Promise<Cleanups> {
+  const r = await db.one<{ at: Date | null; imported: Date | null; pending: boolean }>(
     `SELECT (SELECT max(at) FROM wiki_log WHERE brain_id = $1 AND maintenance) AS at,
+            (SELECT imported_at FROM brains WHERE id = $1) AS imported,
             EXISTS (SELECT 1 FROM proposals WHERE brain_id = $1 AND maintenance AND status = 'pending') AS pending`,
     [brainId],
   )
-  return { lastAt: r?.at ?? null, pending: Boolean(r?.pending) }
+  return { lastAt: r?.at ?? null, baseline: r?.imported ?? null, pending: Boolean(r?.pending) }
 }
 
-const dueAt = (c: { lastAt: Date | null; pending: boolean }, now: Date) =>
-  !c.pending && (c.lastAt === null || now.getTime() - c.lastAt.getTime() > CLEANUP_AFTER_MS)
+const dueAt = (c: Cleanups, now: Date) => {
+  const last = [c.lastAt, c.baseline]
+    .filter((d): d is Date => d !== null)
+    .sort((x, y) => y.getTime() - x.getTime())[0]
+  return !c.pending && (last === undefined || now.getTime() - last.getTime() > CLEANUP_AFTER_MS)
+}
 
 export const LIVE = "p.status IN ('current', 'stale')"
 
@@ -87,6 +97,12 @@ async function healthOf(ctx: Ctx, brainId: string): Promise<Health> {
   const brain = { id: brainId }
   const db = ctx.db
   const s = await settingsOf(db, brain.id)
+  const pairOf = (r: Record<string, unknown>) => ({
+    a: String(r.a),
+    aTitle: String(r.a_title),
+    b: String(r.b),
+    bTitle: String(r.b_title),
+  })
   const ref = (r: Record<string, unknown>): Ref => ({ address: String(r.address), title: String(r.title) })
 
   const orphans = await db.query(
@@ -107,7 +123,10 @@ async function healthOf(ctx: Ctx, brainId: string): Promise<Health> {
     `SELECT DISTINCT CASE WHEN p.address < q.address THEN p.address ELSE q.address END AS a,
                      CASE WHEN p.address < q.address THEN p.title ELSE q.title END AS a_title,
                      CASE WHEN p.address < q.address THEN q.address ELSE p.address END AS b,
-                     CASE WHEN p.address < q.address THEN q.title ELSE p.title END AS b_title FROM page_links l
+                     CASE WHEN p.address < q.address THEN q.title ELSE p.title END AS b_title,
+                     EXISTS (SELECT 1 FROM wiki_debates d WHERE d.brain_id = l.brain_id
+                               AND d.page_a = least(p.id, q.id) AND d.page_b = greatest(p.id, q.id)) AS known
+                FROM page_links l
        JOIN pages p ON p.id = l.from_page JOIN pages q ON q.id = l.to_page
       WHERE l.brain_id = $1 AND l.kind = 'contradicts'
         AND p.status IN ('current', 'stale') AND q.status IN ('current', 'stale')
@@ -157,12 +176,8 @@ async function healthOf(ctx: Ctx, brainId: string): Promise<Health> {
   const h: Health = {
     orphans: orphans.map(ref),
     broken: broken.map((r) => ({ from: String(r.from), fromTitle: String(r.from_title), to: String(r.to) })),
-    conflicts: conflicts.map((r) => ({
-      a: String(r.a),
-      aTitle: String(r.a_title),
-      b: String(r.b),
-      bTitle: String(r.b_title),
-    })),
+    conflicts: conflicts.filter((r) => !r.known).map(pairOf),
+    debates: conflicts.filter((r) => r.known).map(pairOf),
     stale: stale.map((r) => ({
       ...ref(r),
       updatedAt: (r.updated_at as Date).toISOString(),
@@ -204,7 +219,8 @@ export type Cleanup = {
 // who may change the wiki; otherwise null. The health is worked out only when the rest says it could be due.
 export async function cleanupDue(ctx: Ctx, brain: Brain, role: Role): Promise<Cleanup | null> {
   if (!can(actorOf(ctx.who), 'wiki.propose', { role, brainStatus: brain.status }).ok) return null
-  if (!dueAt(await cleanups(ctx.db, brain.id), ctx.clock())) return null
+  const cleaned = await cleanups(ctx.db, brain.id)
+  if (!dueAt(cleaned, ctx.clock())) return null
   const h = await healthOf(ctx, brain.id)
   if (!h.maintenance.suggested) return null
   const counts = problemCounts(h)
@@ -222,8 +238,8 @@ export async function cleanupDue(ctx: Ctx, brain: Brain, role: Role): Promise<Cl
     counts,
     health,
     suggestion: `The wiki of "${brain.slug}" has ${problems} problem${problems === 1 ? '' : 's'} (${listed}) and ${
-      maintenance.lastAt ? 'no cleanup in the last 24 hours' : 'has never been cleaned'
-    }. Before your task, or after it, clean what you can: link orphan pages where they belong, fix or remove broken links, settle contradictions, update stale pages from the journal, split long pages, merge pages about the same thing. Send it as one change marked as maintenance: brain_propose (or brain_write, if your key may write) with "maintenance": true.`,
+      maintenance.lastAt || cleaned.baseline ? 'no cleanup in the last 24 hours' : 'has never been cleaned'
+    }. Before your task, or after it, clean what you can: link orphan pages where they belong, fix or remove broken links, settle contradictions (a deliberate debate between two pages is not one; a curator marks it as known), update stale pages from the journal, split long pages, merge pages about the same thing. Send it as one change marked as maintenance: brain_propose (or brain_write, if your key may write) with "maintenance": true.`,
   }
 }
 

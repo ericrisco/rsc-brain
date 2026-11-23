@@ -2,8 +2,10 @@
 // own: authorship in words, what a person may do with an entry (the server's can() rules, so the web
 // never offers what the API refuses nor hides what it allows), what a correction is about, relations in
 // words and as requests, the filters of Sessions, and draft keys.
+
 import { T } from '../text.ts'
 import { clientLabel } from './brains.ts'
+import { plainText } from './markdown.ts'
 
 type Named = { id: string; name: string }
 
@@ -144,13 +146,38 @@ export function sessionLabel(s: {
   client?: string | null
   author?: { name: string } | null
   who?: string
+  // A session with no purpose is titled by the first line of its summary, when it has one.
+  summary?: string | null
 }): string {
   if (s.day) {
     if (s.client === 'web') return T.journal.webEdits(s.author?.name ?? s.who ?? '')
     return T.journal.unnamedWork(clientLabel(s.client) ?? T.journal.anAgent)
   }
-  return s.purpose.trim() || T.journal.noPurpose
+  const purpose = s.purpose.trim()
+  if (purpose) return purpose
+  const head = firstLine(s.summary ?? '')
+  return head || T.journal.noPurpose
 }
+
+const TITLE_MAX = 90
+// The first line of a summary as a title: its words without marks, cut to fit a heading.
+function firstLine(summary: string): string {
+  const line = summary
+    .split('\n')
+    .map((l) => plainText(l))
+    .find((l) => l.length > 0)
+  if (!line) return ''
+  return line.length <= TITLE_MAX ? line : `${line.slice(0, TITLE_MAX - 1).trimEnd()}…`
+}
+
+// A session the web or a key opened by writing, with no one to close it with a summary: it is ongoing, and no
+// summary is waited for. (The idle sweep closes it later.)
+type Status = { status: string; day: string | null }
+export const isImplicit = (s: Status) => s.status === 'open' && s.day !== null
+export const statusWord = (s: Status, words: Record<string, string>) =>
+  isImplicit(s) ? T.journal.ongoing : (words[s.status] ?? s.status)
+export const withoutSummaryNote = (s: Status & { status: string }, stillOpen: string, closed: string) =>
+  isImplicit(s) ? T.journal.ongoingNote : s.status === 'open' ? stillOpen : closed
 
 export const SESSION_FILTERS = [
   'status',

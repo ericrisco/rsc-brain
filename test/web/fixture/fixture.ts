@@ -182,6 +182,8 @@ type Scen = {
   // The profile (PR24): personal tokens and connected apps by account, email notices by "account:brain",
   // and a second factor being set up.
   tokens: FxToken[]
+  // The contradictions a curator marked as a known debate, as "slug|a|b".
+  debates: Set<string>
   apps: FxApp[]
   notify: Map<string, boolean>
   totpPending: Set<string>
@@ -533,6 +535,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     wikis: new Map(),
     journals: new Map(),
     inboxes: new Map(),
+    debates: new Set<string>(),
     tokens: [
       {
         account: 'acc_eric',
@@ -1313,6 +1316,25 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           },
         },
       }
+    },
+  },
+  // A curator, in the web, marks a contradiction as a known debate (or unmarks it).
+  'PUT /v1/brains/{slug}/wiki/debates': {
+    run: ({ s, who, params, body, web }) => {
+      if (!who) return UNAUTHORIZED
+      if (!web) return CSRF
+      if (brainsOf(s, who).find((b) => b.slug === params.slug)?.role !== 'curator')
+        return err(
+          403,
+          'forbidden',
+          'This needs the curator role in the brain.',
+          'Ask a curator of the brain.',
+        )
+      const b = (body ?? {}) as { a?: string; b?: string; known?: boolean }
+      const key = `${params.slug}|${b.a}|${b.b}`
+      if (b.known) s.debates.add(key)
+      else s.debates.delete(key)
+      return { status: 200, body: { a: b.a, b: b.b, known: Boolean(b.known) } }
     },
   },
   'DELETE /v1/brains/{slug}/wiki/writers/{keyId}': {
@@ -2458,7 +2480,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
     run: (c) => {
       const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
       if (!b) return NO_BRAIN
-      return { status: 200, body: healthOf(b.slug, c.s.states.get('health')) }
+      return { status: 200, body: healthOf(b.slug, c.s.states.get('health'), c.s.debates) }
     },
   },
   'GET /v1/search': {
@@ -2581,8 +2603,9 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
 
 // The health of a wiki (B2): the first brain (and Support, where Ana reads) has something in each common
 // section; "much-data" a long list. Every page comes with its title.
-function healthOf(slug: string, st: State | undefined) {
+function healthOf(slug: string, st: State | undefined, debates: ReadonlySet<string> = new Set()) {
   const none = {
+    debates: [] as Array<{ a: string; aTitle: string; b: string; bTitle: string }>,
     orphans: [] as Array<{ address: string; title: string }>,
     broken: [] as Array<{ from: string; fromTitle: string; to: string }>,
     conflicts: [] as Array<{ a: string; aTitle: string; b: string; bTitle: string }>,
@@ -2647,6 +2670,9 @@ function healthOf(slug: string, st: State | undefined) {
     ],
     maintenance: { suggested: true, lastAt: null, pending: false, approvalsSince: 21, every: 20 },
   }
+  const known = (x: { a: string; b: string }) => debates.has(`${slug}|${x.a}|${x.b}`)
+  h.debates = h.conflicts.filter(known)
+  h.conflicts = h.conflicts.filter((x) => !known(x))
   if (st === 'much-data')
     h.orphans = Array.from({ length: 60 }, (_, i) => ({
       address: `misc/page-${String(i + 1).padStart(2, '0')}`,
@@ -2696,6 +2722,7 @@ const PRIVATE = new Set([
   'GET /v1/me/tokens',
   'DELETE /v1/me/tokens/{id}',
   'PUT /v1/brains/{slug}/wiki/writers/{keyId}',
+  'PUT /v1/brains/{slug}/wiki/debates',
   'DELETE /v1/brains/{slug}/wiki/writers/{keyId}',
   'GET /v1/me/apps',
   'DELETE /v1/me/apps/{id}',

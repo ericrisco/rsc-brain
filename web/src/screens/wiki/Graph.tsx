@@ -7,7 +7,7 @@
 // a group is that big); the list stays whole, by pages.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useFresh } from '../../api/fresh.ts'
-import { COLOURS, type Communities, communitiesOf } from '../../graph/communities.ts'
+import { COLOURS, type Communities, communitiesOf, shortName } from '../../graph/communities.ts'
 import {
   countKey,
   type Direction,
@@ -15,6 +15,7 @@ import {
   focusView,
   hit,
   hubs,
+  type Item,
   keepInView,
   keyOf,
   linksOf,
@@ -768,9 +769,10 @@ function palette(): Palette {
     accent: v('--accent'),
     ground: v('--ground'),
     edge: v('--edge'),
-    // Every page in one neutral grey, whatever its community: the communities are told apart by where they
-    // sit, their names and the panel. The pages without links in a lighter grey.
-    com: Array.from({ length: COLOURS }, () => v('--graph-node')),
+    // One hue per community (tokens.css, each mode its own set); the small ones share the neutral grey and the
+    // pages without links a lighter one.
+    com: Array.from({ length: COLOURS }, (_, k) => v(`--graph-c${k}`)),
+    font: css.getPropertyValue('--font-sans').trim() || 'sans-serif',
     other: v('--graph-node'),
     lone: v('--graph-lone'),
     ring: Number.parseFloat(v('--graph-ring')) || 2.5,
@@ -814,6 +816,22 @@ function sceneOf(model: Model, colour: Uint8Array): Scene {
     degree: model.degree,
     edges: model.edges,
     colour,
+    ...namesOf(model),
+  }
+}
+
+// The names the picture may write: the most linked items first (those with a link at least), at most 400.
+function namesOf(model: Model): { labelOf: Uint32Array; labelText: string[] } {
+  const order: number[] = []
+  for (let i = 0; i < model.items.length; i++) if ((model.degree[i] as number) > 0) order.push(i)
+  order.sort((a, b) => (model.degree[b] as number) - (model.degree[a] as number) || a - b)
+  const top = order.slice(0, 400)
+  return {
+    labelOf: Uint32Array.from(top),
+    labelText: top.map((i) => {
+      const it = model.items[i] as Item
+      return shortName(it.kind === 'page' ? it.title : (it.prefix.split('/').at(-1) ?? it.prefix))
+    }),
   }
 }
 
@@ -1006,7 +1024,10 @@ function GraphCanvas({
       frameMs.current = frameMs.current ? 0.8 * frameMs.current + 0.2 * d.ms : d.ms
       c.dataset.frameMs = frameMs.current.toFixed(3)
     }
-    if (d.counts) c.dataset.counts = `${d.counts.lit},${d.counts.dim},${d.counts.lines}`
+    if (d.counts) {
+      c.dataset.counts = `${d.counts.lit},${d.counts.dim},${d.counts.lines}`
+      c.dataset.named = `${d.counts.named ?? 0}`
+    }
     if (d.active) c.dataset.active = `${d.active[0]},${d.active[1]}`
     else delete c.dataset.active
     if (d.selected) c.dataset.selected = `${d.selected[0]},${d.selected[1]}`

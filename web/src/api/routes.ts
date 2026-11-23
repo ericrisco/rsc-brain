@@ -39,6 +39,7 @@ export const ROUTE_TABLE = {
   tokens: { route: 'GET /v1/me/tokens' },
   revokeToken: { route: 'DELETE /v1/me/tokens/{id}' },
   // A key that writes to a brain's wiki directly (v0.6): given and taken back by its curators.
+  markDebate: { route: 'PUT /v1/brains/{slug}/wiki/debates' },
   giveWikiWrite: { route: 'PUT /v1/brains/{slug}/wiki/writers/{keyId}' },
   takeWikiWrite: { route: 'DELETE /v1/brains/{slug}/wiki/writers/{keyId}' },
   apps: { route: 'GET /v1/me/apps' },

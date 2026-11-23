@@ -64,6 +64,13 @@ export function filterDecisions<D extends DecisionLike>(
   )
 }
 
+// A page that has a typed link (related, contradicts, …) shows once, under its kind: its plain mention of the
+// same page is left out of the list.
+export function withoutRedundantMentions<L extends { kind: string; address: string }>(links: L[]): L[] {
+  const typed = new Set(links.filter((l) => l.kind !== 'mentions').map((l) => l.address))
+  return links.filter((l) => l.kind !== 'mentions' || !typed.has(l.address))
+}
+
 export function groupLinks<L extends { kind: string }>(links: L[]): { kind: string; items: L[] }[] {
   const by = new Map<string, L[]>()
   for (const l of links) by.set(l.kind, [...(by.get(l.kind) ?? []), l])

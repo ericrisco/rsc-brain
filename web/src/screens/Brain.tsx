@@ -9,7 +9,7 @@ import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
 import { clientLabel, todayCapped } from '../lib/brains.ts'
-import { sessionLabel } from '../lib/journal.ts'
+import { sessionLabel, statusWord, withoutSummaryNote } from '../lib/journal.ts'
 import { useLive } from '../live/follow.ts'
 import { online } from '../session.ts'
 import { connectHref } from '../shell/dialogs.ts'
@@ -191,7 +191,9 @@ function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
               <p class="meta">
                 {[clientLabel(s.client), s.who, o.entriesIn(s.entries)].filter(Boolean).join(' · ')}
                 {' · '}
-                <span class={s.status === 'open' ? 'live' : undefined}>{o.status[s.status] ?? s.status}</span>
+                <span class={s.status === 'open' && !s.day ? 'live' : undefined}>
+                  {statusWord(s, o.status)}
+                </span>
                 {s.ref ? (
                   <>
                     {' · '}
@@ -202,7 +204,7 @@ function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
               {s.summary ? (
                 <p class="summary">{s.summary}</p>
               ) : (
-                <p class="muted">{s.status === 'open' ? o.stillOpen : o.noSummary}</p>
+                <p class="muted">{withoutSummaryNote(s, o.stillOpen, o.noSummary)}</p>
               )}
             </li>
           ))}

@@ -51,7 +51,7 @@ test.describe('importing a documentation folder', () => {
     await expect(page).toHaveURL(/\/b\/onboarding\/settings\/import$/)
     const p = part(page)
     await expect(p).toContainText('Only into an empty brain')
-    await expect(page.getByRole('link', { name: 'Import', exact: true })).toHaveAttribute(
+    await expect(page.getByRole('link', { name: 'Import and export', exact: true })).toHaveAttribute(
       'aria-current',
       'page',
     )

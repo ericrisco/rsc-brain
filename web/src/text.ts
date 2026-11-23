@@ -119,7 +119,7 @@ export const T = {
 
   setup: {
     title: 'Set up rsc-brain',
-    lead: 'Three things, then the installation key to keep: what this installation is called, where people open it, and your administrator account.',
+    lead: 'Two steps, then the installation key to keep: name the installation and say where people open it, then make your administrator account.',
     stepInstallation: 'This installation',
     stepAccount: 'Your administrator account',
     name: 'Name of this installation',
@@ -679,7 +679,7 @@ export const T = {
       members: 'Members',
       agents: 'Agents',
       health: 'Health thresholds',
-      import: 'Import',
+      import: 'Import and export',
       archive: 'Archive',
     },
     removeShort: 'Remove',
@@ -1035,7 +1035,7 @@ export const T = {
     } as Record<string, string>,
     // Meaning search.
     meaningLead:
-      'Search by meaning finds pages and entries about the same thing in other words. It sends their text to a provider.',
+      'Search by meaning finds pages and entries about the same thing in other words, and in other languages. It sends their text to a provider.',
     meaningOff: 'Off: searches use words only.',
     meaningOn: (label: string, model: string | null) => `On with ${label}${model ? ` (${model})` : ''}.`,
     meaningAccepted: (when: string) => `Warning accepted ${when}.`,
@@ -1797,6 +1797,8 @@ export const T = {
     webEdits: (person: string) => (person ? `Web edits · ${person}` : 'Web edits'),
     anAgent: 'an agent',
     noPurpose: 'Session with no purpose given',
+    ongoing: 'Ongoing',
+    ongoingNote: 'Written without opening a session, so no summary is expected.',
     entriesIn: (n: number) => plural(n, 'entry', 'entries'),
     stillOpen: 'Still open: the summary comes when it closes.',
     noSummary: 'Closed without a summary.',
@@ -2172,6 +2174,9 @@ export const T = {
     willBeLead: 'Lines marked removed are newer changes that approving replaces.',
     newPageTag: 'New page',
     wholeText: 'Show the whole text',
+    previewBody: 'Read the page as it will look',
+    unchangedLines: (n: number) => (n === 1 ? 'Show 1 unchanged line' : `Show ${n} unchanged lines`),
+    hideUnchanged: 'Hide the unchanged lines',
     // After.
     approvedNow: 'Approved. These pages changed:',
     partlyNow: 'Approved in part; the rest went back with your comment. These pages changed:',
@@ -2211,7 +2216,9 @@ export const T = {
     more: 'Show more results',
     kind: { entry: 'Journal entry', page: 'Wiki page' } as Record<string, string>,
     in: (brain: string) => `in ${brain}`,
-    hint: 'Up and down arrows move between results; Enter opens one; Esc goes back.',
+    hint: 'Results appear as you type. Up and down arrows move between results; Enter opens one; Esc goes back.',
+    meaningOffHint:
+      'Meaning search is off, so this search matches the words you typed. With it on, a search also finds pages in other languages.',
     nothingTitle: 'There is nothing to search yet',
     nothingLead: 'Search looks through the brains you are in, and you are not in any yet.',
     scope: 'Where',
@@ -2392,6 +2399,15 @@ export const T = {
         ? `Fixing the wiki is for curators (${names}). Tell one of them what you see.`
         : 'Fixing the wiki is for curators. Tell one of them what you see.',
     compare: 'Compare',
+    knownDebate: 'Mark as a known debate',
+    knownDebateWhy:
+      'Two pages that disagree on purpose are not a problem: it leaves this list and agents are not asked to settle it.',
+    debatesTitle: 'Known debates',
+    debatesLead: 'Contradictions a curator marked as deliberate. They do not count as problems.',
+    debateText: 'These two pages disagree on purpose.',
+    bringBack: 'Treat as a contradiction again',
+    debateMarked: 'Marked as a known debate.',
+    debateUnmarked: 'Back in the contradictions.',
     compareTitle: 'Compare two pages',
     openPage: 'Open the page',
     askWhat: {

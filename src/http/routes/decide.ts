@@ -4,6 +4,7 @@
 // not change.
 
 import { invalid } from '../../core/errors.ts'
+import { setDebate } from '../../domain/wiki/debates.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
 import {
   directChange,
@@ -123,6 +124,19 @@ export const decideRoutes: Route[] = [
   route('POST /v1/brains/:slug/wiki/maintenance-asked', async (r) => ({
     body: await maintenanceAsked(ctxOf(r), r.params.slug as string),
   })),
+  // A contradiction between two pages on purpose: a curator, in the web, marks it as a known debate (or unmarks it).
+  route('PUT /v1/brains/:slug/wiki/debates', async (r) => {
+    const b = obj(r.body)
+    if (typeof b.known !== 'boolean')
+      throw invalid('"known" is true or false.', 'Send "known": true to mark the debate, false to unmark it.')
+    return {
+      body: await setDebate(ctxOf(r), r.params.slug as string, {
+        a: reqStr(b, 'a', 200),
+        b: reqStr(b, 'b', 200),
+        known: b.known,
+      }),
+    }
+  }),
   route('POST /v1/brains/:slug/wiki/purge', async (r) => {
     const b = obj(r.body)
     const one = int(b, 'revision', { min: 1, max: 1_000_000 })

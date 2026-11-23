@@ -299,6 +299,18 @@ describe("Brain's tokens over the shared ones (tokens.css)", () => {
       )
     })
 
+    it(`the ten community hues stand out from the graph's well and from each other, in ${mode}`, () => {
+      const vars = chosen(brain, mode)
+      const seen = new Set<string>()
+      for (let k = 0; k < 10; k++) {
+        const name = `--graph-c${k}`
+        assert.ok(contrast(vars, name, '--raised') >= 3, `${name} on --raised in ${mode}`)
+        const v = (vars.get(name) as string).toLowerCase()
+        assert.ok(!seen.has(v), `${name} repeats a hue`)
+        seen.add(v)
+      }
+    })
+
     it(`the graph's pages and what is picked stand out from its well, in ${mode}`, () => {
       const vars = chosen(brain, mode)
       for (const n of ['--graph-node', '--accent']) {

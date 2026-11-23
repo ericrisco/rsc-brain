@@ -4,11 +4,13 @@
 // the brain and each address; or the screen says «Nothing to fix». A reader cannot propose: they are told
 // which curators to tell. The checks run on the server each time the screen opens (no AI).
 import { useEffect, useRef, useState } from 'preact/hooks'
+import type { ApiError } from '../api/client.ts'
 import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
 import {
   askAgent,
+  debateItems,
   HEALTH_SECTIONS,
   type Health,
   type HealthItem,
@@ -103,13 +105,16 @@ function Section({
   ask,
   can,
   onCompare,
+  debate,
 }: {
   slug: string
-  id: SectionId
+  id: SectionId | 'debates'
   items: HealthItem[]
   ask: string
   can: boolean
   onCompare: (pair: [string, string], from: HTMLElement) => void
+  // A curator marks a contradiction as a known debate (or brings it back): the label and what it does.
+  debate?: { label: string; run: (pair: [string, string]) => void } | null
 }) {
   const h = T.health
   const [all, setAll] = useState(false)
@@ -126,11 +131,11 @@ function Section({
     <section class="health-section" aria-labelledby={`health-${id}`}>
       <div class="section-head">
         <h2 id={`health-${id}`} class="section-title">
-          {h.sections[id]}
+          {id === 'debates' ? h.debatesTitle : h.sections[id]}
         </h2>
         <span class="count">{items.length}</span>
       </div>
-      <p class="muted">{h.explain[id]}</p>
+      <p class="muted">{id === 'debates' ? h.debatesLead : h.explain[id]}</p>
       <ul class="list compact health-items" ref={list}>
         {shown.map((it) => (
           <li key={it.key} class="health-item">
@@ -162,6 +167,16 @@ function Section({
                 {h.compare}
               </button>
             ) : null}
+            {debate && it.pair ? (
+              <button
+                type="button"
+                class="button quiet health-compare"
+                disabled={!online.value}
+                onClick={() => debate.run(it.pair as [string, string])}
+              >
+                {debate.label}
+              </button>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -179,8 +194,9 @@ function Section({
             {all ? h.showLess : h.showAll(items.length)}
           </button>
         ) : null}
-        <Act slug={slug} can={can} text={ask} label={h.ask} />
+        {id === 'debates' ? null : <Act slug={slug} can={can} text={ask} label={h.ask} />}
       </div>
+      {id === 'conflicts' && debate ? <p class="muted small">{h.knownDebateWhy}</p> : null}
     </section>
   )
 }
@@ -190,11 +206,23 @@ export function HealthScreen({ slug }: { slug: string }) {
   const r = healthResource(slug)
   useFresh(r)
   const [pair, setPair] = useState<[string, string] | null>(null)
+  const [said, setSaid] = useState('')
   const back = useRef<HTMLElement | null>(null)
   if (!brain) return gate
   const h = T.health
   // Asking an agent means a proposal (brain_propose): contributors and curators of an active brain.
   const can = brain.status !== 'archived' && (brain.role === 'curator' || brain.role === 'contributor')
+  // A curator of an active brain says whether a contradiction is a debate on purpose (a person's call, in the web).
+  const judge = brain.role === 'curator' && brain.status !== 'archived'
+  const mark = async (p: [string, string], known: boolean) => {
+    try {
+      await api.call('markDebate', { path: { slug }, body: { a: p[0], b: p[1], known } })
+      setSaid(known ? h.debateMarked : h.debateUnmarked)
+      await r.reload()
+    } catch (e) {
+      r.error.value = e as ApiError
+    }
+  }
   const data = r.data.value
   const total = data ? totalProblems(data) : 0
   const state = viewState({
@@ -202,9 +230,10 @@ export function HealthScreen({ slug }: { slug: string }) {
     data,
     error: r.error.value,
     online: online.value,
-    isEmpty: (d) => totalProblems(d) === 0,
+    isEmpty: (d) => totalProblems(d) === 0 && !(d.debates ?? []).length,
   })
   const items = data ? healthItems(slug, data) : null
+  const debates = data ? debateItems(slug, data) : []
   return (
     <>
       <div class="title-row start">
@@ -251,12 +280,34 @@ export function HealthScreen({ slug }: { slug: string }) {
               items={items[s.id]}
               ask={askAgent(slug, s.id, data)}
               can={can}
+              debate={
+                s.id === 'conflicts' && judge
+                  ? { label: h.knownDebate, run: (p) => void mark(p, true) }
+                  : null
+              }
               onCompare={(p, from) => {
                 back.current = from
                 setPair(p)
               }}
             />
           ))}
+          {debates.length ? (
+            <Section
+              slug={slug}
+              id="debates"
+              items={debates}
+              ask=""
+              can={can}
+              debate={judge ? { label: h.bringBack, run: (p) => void mark(p, false) } : null}
+              onCompare={(p, from) => {
+                back.current = from
+                setPair(p)
+              }}
+            />
+          ) : null}
+          <p class="sr-only" role="status">
+            {said}
+          </p>
           <Compare
             slug={slug}
             pair={pair}

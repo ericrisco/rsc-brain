@@ -38,6 +38,8 @@ type Hit = {
 }
 
 type Filters = Pick<SearchForm, 'what' | 'type' | 'from'>
+// How long the field rests before the search runs by itself, in ms.
+const TYPING_PAUSE = 150
 const NONE: Filters = { what: '', type: '', from: '' }
 
 const hrefOf = (h: Hit) =>
@@ -56,6 +58,8 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
   const [asked, setAsked] = useState('')
   const [hits, setHits] = useState<Hit[] | null>(null)
   const [next, setNext] = useState<number | null>(null)
+  // What the last answer says of meaning search: absent when it is off (the words alone were searched).
+  const [meaning, setMeaning] = useState<string | null>(null)
   const [error, setError] = useState<ApiError | null>(null)
   const [pending, setPending] = useState(false)
   const opener = useRef<HTMLElement | null>(null)
@@ -72,8 +76,10 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
   const clear = () => {
     seq.current += 1
     shown.current = null
+    sent.current = ''
     setHits(null)
     setNext(null)
+    setMeaning(null)
     setAsked('')
     setError(null)
     setPending(false)
@@ -97,12 +103,15 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
       back.focus()
   }, [open, here])
 
+  // The words last sent, however they were sent: typing a pause after Enter does not send them twice.
+  const sent = useRef('')
   const ask = async (form: SearchForm, offset = 0) => {
     const mine = ++seq.current
+    if (!offset) sent.current = form.q
     setPending(true)
     setError(null)
     try {
-      const r = await api.call<{ items: Hit[]; next: number | null }>('search', {
+      const r = await api.call<{ items: Hit[]; next: number | null; meaning?: string }>('search', {
         query: searchParams(form, offset),
       })
       if (mine !== seq.current) return
@@ -111,6 +120,7 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
         setHits([...(hits ?? []), ...r.items])
       } else setHits(r.items)
       shown.current = form
+      setMeaning(r.meaning ?? null)
       setNext(r.next)
       setAsked(form.q)
     } catch (e) {
@@ -126,6 +136,18 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
     if (!text) return
     void ask({ q: text, scope, brain: here, ...filters })
   }
+
+  // Search as you type: a short pause after the last key runs the words in the field (Enter runs them at once).
+  useEffect(() => {
+    if (!open || !online.value) return
+    const text = q.trim()
+    if (!text) return
+    // Checked when the pause ends: Enter pressed meanwhile has sent these words already.
+    const timer = setTimeout(() => {
+      if (sent.current !== text) run()
+    }, TYPING_PAUSE)
+    return () => clearTimeout(timer)
+  }, [q])
 
   // More results of the search on screen.
   const more = () => {
@@ -298,9 +320,9 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
             {error ? <ErrorState error={error} onRetry={() => run()} /> : null}
             {hits && !error ? (
               <section aria-live="polite" aria-label={s.results(hits.length, next !== null)}>
-                {hits.length ? (
-                  <p class="meta">{s.results(hits.length, next !== null)}</p>
-                ) : (
+                {hits.length ? <p class="meta">{s.results(hits.length, next !== null)}</p> : null}
+                {meaning === null ? <p class="hint meaning-hint">{s.meaningOffHint}</p> : null}
+                {hits.length ? null : (
                   <div class="state" data-state="filtered-empty">
                     <h3>{s.none(asked)}</h3>
                     <p class="how">{s.noneHow}</p>

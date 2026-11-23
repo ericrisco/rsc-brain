@@ -8,8 +8,8 @@
 // shown and what was typed stays; other fields are never touched); archiving by mistake (asked first,
 // with what stops). Who may do what is the server's (B4); this screen only offers it to whoever may.
 //
-// Four tabs, one job each, each its own address: Members, Agents (what agents find and read: repositories,
-// guide, usage note, meaning search), Health, Archive (export, archive, delete). On a phone each fits in
+// Five tabs, one job each, each its own address: Members, Agents (what agents find and read: repositories,
+// guide, usage note, meaning search), Health, Import and export, Archive (archive, delete). On a phone each fits in
 // about two screens.
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
@@ -1525,10 +1525,14 @@ export function BrainSettings({ slug, tab }: { slug: string; tab: SettingsTab })
           </>
         ) : null}
         {tab === 'health' ? <Health slug={brain.slug} archived={archived} account={who.account.id} /> : null}
-        {tab === 'import' ? <Import brain={info} /> : null}
+        {tab === 'import' ? (
+          <>
+            <Import brain={info} />
+            <Export brain={info} />
+          </>
+        ) : null}
         {tab === 'archive' ? (
           <>
-            <Export brain={info} />
             <Archive brain={info} />
             {who.account.isAdmin ? <Delete brain={info} /> : null}
           </>

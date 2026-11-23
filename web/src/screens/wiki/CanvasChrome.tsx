@@ -131,6 +131,7 @@ export function CommunitiesPanel({
                   checked={!hidden.has(r.key)}
                   onChange={(e) => set(r.key, (e.currentTarget as HTMLInputElement).checked)}
                 />
+                <span class={`com-dot com-dot-${r.colour}`} aria-hidden="true" />
                 <span class="com-name">{r.name}</span>
                 <span class="com-count">{r.count.toLocaleString('en')}</span>
               </label>

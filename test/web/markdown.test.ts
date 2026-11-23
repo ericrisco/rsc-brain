@@ -84,6 +84,31 @@ describe('a page body', () => {
     )
   })
 
+  it('a mention shows its page title up to the first colon, the whole title on hover; an alias wins', () => {
+    const titled = [
+      {
+        kind: 'mentions',
+        address: 'papers/awq',
+        state: 'ok',
+        title: 'AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration',
+      },
+      { kind: 'mentions', address: 'papers/plain', state: 'ok', title: 'A plain title' },
+      { kind: 'mentions', address: 'papers/lead', state: 'ok', title: ': odd' },
+    ] as const
+    const html = renderMarkdown('[[papers/awq]] [[papers/plain]] [[papers/lead]] [[papers/awq|my alias]]', {
+      slug: 'growth',
+      links: [...titled],
+    })
+    assert.match(html, />AWQ<\/a>/)
+    assert.match(
+      html,
+      /title="AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration"/,
+    )
+    assert.match(html, /title="papers\/plain">A plain title</)
+    assert.match(html, />: odd</)
+    assert.match(html, />my alias</)
+  })
+
   it('a mention of a page that does not exist looks different and says so in words', () => {
     const html = md('Soon: [[drafts/not-yet]].')
     assert.match(html, /class="wikilink broken"/)

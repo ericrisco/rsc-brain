@@ -90,6 +90,7 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
   t('page_sources', 'page_id entry_id url title', 'page_id entry_id url'),
   t('memberships', 'brain_id account_id role created_at notify_proposals', 'brain_id account_id'),
   t('wiki_writers', 'brain_id key_id granted_by granted_at', 'brain_id key_id'),
+  t('wiki_debates', 'brain_id page_a page_b acknowledged_by acknowledged_at', 'brain_id page_a page_b'),
   t(
     'invitations',
     `id email token_hash grants is_admin can_create_brains invited_by created_at expires_at used_at revoked_at

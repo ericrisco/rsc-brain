@@ -1,4 +1,5 @@
-// CA14 (spec web redesign, «El grafo»): a flat ground with no dots; the pages in neutral tones; the page
+// CA14 (spec web redesign, «El grafo»): a flat ground with no dots; the pages coloured by community (e2e
+// finding 1: a grey tangle told nothing) with the most linked named; the page
 // picked (and its links) in the accent, the rest dimmed; in high contrast the pick also has a thicker ring.
 // The picture is read from a screenshot of the canvas, pixel by pixel, in the page.
 import type { Page } from '@playwright/test'
@@ -81,7 +82,7 @@ async function hues(page: Page, accentHue: number) {
 const ACCENT_HUE = 192
 
 for (const mode of ['light', 'dark', 'contrast'] as const)
-  test(`CA14 in ${mode}: flat ground without dots, neutral pages, the pick and its links in the accent`, async ({
+  test(`CA14 in ${mode}: flat ground without dots, coloured communities, the pick and its links in the accent`, async ({
     page,
     context,
     baseURL,
@@ -96,8 +97,9 @@ for (const mode of ['light', 'dark', 'contrast'] as const)
     })
     expect(ground.image).toBe('none')
     const atRest = await hues(page, ACCENT_HUE)
-    // At rest nothing on the canvas carries a hue: the pages are neutral.
-    expect(atRest.coloured / atRest.total).toBeLessThan(0.0005)
+    // At rest the pages carry the hues of their communities, and the most linked are named.
+    expect(atRest.coloured / atRest.total).toBeGreaterThan(0.0005)
+    expect(Number(await page.locator('canvas.graph-canvas').getAttribute('data-named'))).toBeGreaterThan(3)
     const canvas = page.locator('canvas.graph-canvas')
     await canvas.focus()
     await page.keyboard.press('Enter')
@@ -106,8 +108,6 @@ for (const mode of ['light', 'dark', 'contrast'] as const)
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
     const picked = await hues(page, ACCENT_HUE)
     expect(picked.accent).toBeGreaterThan(20)
-    // Everything with a hue is the accent: no other colour on the picture.
-    expect(picked.accent / picked.coloured).toBeGreaterThan(0.9)
     const rings = (await canvas.getAttribute('data-rings')) ?? ''
     const sel = /selected:solid:[\d.]+:([\d.]+)/.exec(rings)
     expect(sel, rings).not.toBeNull()
@@ -115,7 +115,7 @@ for (const mode of ['light', 'dark', 'contrast'] as const)
     expect(Number(sel?.[1])).toBe(mode === 'contrast' ? 4 : 2.5)
   })
 
-test('CA14: the communities panel names its clusters with no colour dots', async ({
+test('CA14: the communities panel shows each cluster with the colour it has on the picture', async ({
   page,
   context,
   baseURL,
@@ -123,18 +123,21 @@ test('CA14: the communities panel names its clusters with no colour dots', async
   await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
   await page.goto(GRAPH)
   await settled(page)
-  const dots = await page.evaluate(
-    () =>
-      [...document.querySelectorAll('.graph-communities *')].filter((el) => {
-        const c = getComputedStyle(el).backgroundColor
-        const m = /rgba?\((\d+), (\d+), (\d+)/.exec(c)
-        if (!m) return false
-        const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])]
-        return Math.max(r, g, b) - Math.min(r, g, b) > 24
-      }).length,
+  const colours = await page.evaluate(() =>
+    [...document.querySelectorAll('.graph-communities .com-dot')].map(
+      (el) => getComputedStyle(el).backgroundColor,
+    ),
   )
-  expect(dots).toBe(0)
-  expect(await page.locator('.graph-communities .com-dot').count()).toBe(0)
+  expect(colours.length).toBeGreaterThan(2)
+  // Each cluster has a colour of its own (the small ones and the pages without links are greys).
+  const hued = colours.filter((c) => {
+    const m = /rgba?\((\d+), (\d+), (\d+)/.exec(c)
+    if (!m) return false
+    const rgb = [Number(m[1]), Number(m[2]), Number(m[3])]
+    return Math.max(...rgb) - Math.min(...rgb) > 24
+  })
+  expect(new Set(hued).size).toBe(hued.length)
+  expect(hued.length).toBeGreaterThan(2)
 })
 
 test('CA14: a mode change repaints the graph at once, keeping the page picked', async ({

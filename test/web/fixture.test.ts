@@ -926,6 +926,25 @@ describe('the fixture API', () => {
     assert.deepEqual(writes.tokens[0]?.wikiWrite, ['growth'])
     assert.equal((await call('DELETE', `/v1/brains/growth/wiki/writers/${id}`, o)).status, 200)
     assert.equal((await call('DELETE', `/v1/brains/growth/wiki/writers/${id}`, o)).status, 404)
+    // E2E finding 8: a curator marks a contradiction as a known debate, which leaves the conflicts, and unmarks it.
+    const pair = { a: 'audience/intros', b: 'audience/old-intros' }
+    const health = async () =>
+      (await call('GET', '/v1/brains/growth/wiki/health', o)).body as {
+        conflicts: unknown[]
+        debates: unknown[]
+      }
+    const before = await health()
+    assert.equal(
+      (await call('PUT', '/v1/brains/growth/wiki/debates', { ...o, body: { ...pair, known: true } })).status,
+      200,
+    )
+    const marked = await health()
+    assert.deepEqual([marked.conflicts.length, marked.debates.length], [before.conflicts.length - 1, 1])
+    assert.equal(
+      (await call('PUT', '/v1/brains/growth/wiki/debates', { ...o, body: { ...pair, known: false } })).status,
+      200,
+    )
+    assert.deepEqual((await health()).debates, [])
     assert.equal((await call('DELETE', `/v1/me/tokens/${id}`, o)).status, 200)
     assert.equal((await call('DELETE', `/v1/me/tokens/${id}`, o)).status, 404)
     const apps = (await call('GET', '/v1/me/apps', o)).body as { apps: Array<{ id: string }> }

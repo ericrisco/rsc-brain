@@ -183,8 +183,10 @@ test('«Show more» pages the words that were searched, not what the field says 
     if (r.url().includes('/v1/search')) asked.push(r.url())
   })
   await d.getByLabel('Search for').fill('something else')
-  await d.getByRole('button', { name: 'Show more results' }).click()
-  await expect.poll(() => asked.length).toBe(1)
+  // Before the typing pause ends (a click would wait for the button to hold still, past it).
+  await d.getByRole('button', { name: 'Show more results' }).dispatchEvent('click')
+  await expect.poll(() => asked.length).toBeGreaterThanOrEqual(1)
+  // The first request is «Show more», for the words searched (typing then searches the new words by itself).
   expect(asked[0]).toContain('q=intro')
   expect(asked[0]).toContain('offset=20')
 })
