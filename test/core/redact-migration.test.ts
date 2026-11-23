@@ -34,6 +34,7 @@ const MINIMAL: Record<string, string> = {
   'url-credentials': 'a://:b@',
   authorization: 'authorization: bearer abcdefgh',
   assignment: 'pwd=abcdefgh',
+  'spoken-password': 'contraseña es a1b2c3',
   private: '<private>x</private>',
 }
 
