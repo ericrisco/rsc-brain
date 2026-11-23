@@ -332,14 +332,9 @@ function ToReview({ brain }: { brain: BrainNav | null }) {
   // In the one brain that holds all of them, its own Proposals item already says so: not twice.
   if (brain && brains.find((b) => b.slug === brain.slug)?.stats.pendingProposals === count) return null
   return (
-    <a
-      class="rail-item to-review"
-      href={href}
-      aria-current={path === href ? 'page' : undefined}
-      aria-label={T.shell.toReview(count)}
-    >
+    <a class="rail-item to-review" href={href} aria-current={path === href ? 'page' : undefined}>
       <Icon name="review" />
-      <span class="rail-label">{T.shell.proposals}</span>
+      <span class="rail-label">{T.shell.toReview(count)}</span>
       <span class="rail-badge" aria-hidden="true">
         {count}
       </span>
