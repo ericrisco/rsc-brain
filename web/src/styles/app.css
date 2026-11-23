@@ -3271,11 +3271,7 @@ label.op-head:hover {
       color-mix(in oklch, var(--accent) 5%, transparent) 0 1px,
       transparent 1px 3px
     ),
-    radial-gradient(
-      ellipse at center,
-      color-mix(in oklch, var(--accent) 9%, var(--ground)),
-      var(--ground) 70%
-    );
+    var(--ground);
 }
 
 .graph-box.holo::before {
