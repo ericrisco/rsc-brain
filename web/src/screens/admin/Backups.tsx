@@ -348,7 +348,7 @@ function RestoreDialog({ copy, onClose }: { copy: CopyItem | null; onClose: () =
       const a = err as ApiError
       setPassword('')
       if (a.code === 'reauth_failed') {
-        const onCode = totp && /code/i.test(a.message)
+        const onCode = totp && /code/i.test(a.rawMessage)
         setProblems({ [onCode ? 'code' : 'password']: `${a.message} ${a.howToProceed}` })
         document.getElementById(onCode ? 'restore-code' : 'restore-password')?.focus()
       } else if (a.code === 'confirm_mismatch') {
@@ -515,7 +515,7 @@ export function KeyPart({ keyId }: { keyId: string | null | undefined }) {
       const a = err as ApiError
       setPassword('')
       if (a.code === 'reauth_failed') {
-        const onCode = totp && /code/i.test(a.message)
+        const onCode = totp && /code/i.test(a.rawMessage)
         setProblems({ [onCode ? 'code' : 'password']: `${a.message} ${a.howToProceed}` })
         document.getElementById(onCode ? 'key-code' : 'key-password')?.focus()
       } else setError(a)

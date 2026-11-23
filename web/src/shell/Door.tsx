@@ -4,6 +4,7 @@
 import type { ComponentChildren } from 'preact'
 import { T } from '../text.ts'
 import { Brand } from '../ui/Brand.tsx'
+import { LanguagePicker } from '../ui/LanguagePicker.tsx'
 import { OfflineStrip } from '../ui/states.tsx'
 import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
@@ -24,6 +25,7 @@ export function Door({
     <div class="door">
       <header class="door-bar">
         <Brand href={brand ? (signedIn ? '/' : '/sign-in') : null} />
+        <LanguagePicker variant="door" />
       </header>
       <main id="main">
         <OfflineStrip />

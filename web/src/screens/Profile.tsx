@@ -763,8 +763,8 @@ function Notices() {
 // Which field a refusal is about, so it is marked and the keyboard goes there.
 function passwordFieldOf(e: ApiError): 'current' | 'next' | 'code' | null {
   if (e.code === 'wrong_password') return 'current'
-  if (/code/i.test(e.message)) return 'code'
-  if (/password has/i.test(e.message)) return 'next'
+  if (/code/i.test(e.rawMessage)) return 'code'
+  if (/password has/i.test(e.rawMessage)) return 'next'
   return null
 }
 

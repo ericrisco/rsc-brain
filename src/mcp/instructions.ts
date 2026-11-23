@@ -46,7 +46,7 @@ export const PROMPTS: PromptDef[] = [
     text: (a) =>
       [
         `Close the brain session${a.session ? ` ${a.session}` : ''}.`,
-        '1. Save anything not yet saved with mem_save: decisions with their why, discoveries, failed attempts, corrections from the person (as "learning").',
+        '1. Save anything not yet saved with mem_save: decisions with their why, learnings, failed attempts, corrections from the person (as "learning").',
         '2. Call mem_session_summary with: Goal, Done, Discovered, Decided, Pending. Short and concrete.',
         '3. Tell the person it is saved.',
       ].join('\n'),

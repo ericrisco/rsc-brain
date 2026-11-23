@@ -14,6 +14,7 @@ import type { Me } from '../session.ts'
 import { T } from '../text.ts'
 import { Brand } from '../ui/Brand.tsx'
 import { Icon, type IconName } from '../ui/icons.tsx'
+import { LanguagePicker } from '../ui/LanguagePicker.tsx'
 import { usePopover } from '../ui/usePopover.ts'
 import { createOpen } from './dialogs.ts'
 import { helpOpen, searchOpen } from './keys.ts'
@@ -279,6 +280,7 @@ function AccountMenu({ me }: { me: Me }) {
               <span>{T.shell.admin}</span>
             </a>
           ) : null}
+          <LanguagePicker variant="menu" />
           <button
             type="button"
             class="keyboard-only"
@@ -436,6 +438,7 @@ export function Rail({
           class="rail-item searchbox only-narrow"
           onClick={() => (searchOpen.value = true)}
           aria-keyshortcuts="Meta+K Control+K"
+          aria-label={T.shell.searchHint}
         >
           <Icon name="search" />
           <span class="rail-label">{T.shell.searchHint}</span>
@@ -472,10 +475,11 @@ export function Rail({
           class="rail-item rail-toggle"
           aria-expanded={open ? 'true' : 'false'}
           aria-controls="rail"
+          aria-label={open ? T.shell.foldRail : T.shell.expandRail}
           onClick={() => toggleRail()}
         >
           <Icon name="panel" />
-          <span class="rail-label">{open ? T.shell.foldRail : T.shell.expandRail}</span>
+          <span class="rail-label">{open ? T.shell.foldRailShort : T.shell.expandRailShort}</span>
         </button>
       </div>
     </header>
