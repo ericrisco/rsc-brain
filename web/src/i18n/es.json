@@ -1566,7 +1566,173 @@
     "There is no second factor being set up.": "No se está configurando ningún segundo factor.",
     "Start it first.": "Inicia primero la configuración.",
     "Something went wrong.": "Se ha producido un error.",
-    "Try again; if it keeps failing, give the reference to an administrator.": "Vuelve a intentarlo. Si sigue fallando, comunica la referencia a un administrador."
+    "Try again; if it keeps failing, give the reference to an administrator.": "Vuelve a intentarlo. Si sigue fallando, comunica la referencia a un administrador.",
+    "No brain with that name is available to you.": "No tienes acceso a ningún cerebro con ese nombre.",
+    "Check the name with GET /v1/brains, or ask a curator of that brain to add you.": "Comprueba el nombre en la lista de cerebros o pide a un curador que te añada.",
+    "An account name has 1 to 80 characters.": "El nombre de la cuenta debe tener entre 1 y 80 caracteres.",
+    "Shorten the name.": "Acorta el nombre.",
+    "A person needs a valid email.": "Introduce una dirección de correo válida para esta persona.",
+    "Give an email such as ana@example.com.": "Usa una dirección como ana@example.com.",
+    "A service account has no email.": "Las cuentas de servicio no tienen correo.",
+    "Leave the email out.": "Deja el correo en blanco.",
+    "A service account cannot be an administrator.": "Las cuentas de servicio no pueden ser administradoras.",
+    "Create a person account instead.": "Crea una cuenta de persona.",
+    "An account with that email already exists.": "Ya existe una cuenta con ese correo.",
+    "Use another email.": "Usa otro correo.",
+    "This is the last administrator of the installation.": "Es la última persona con permisos de administración en la instalación.",
+    "Make another person an administrator first.": "Primero dale permisos de administración a otra persona.",
+    "Choose a person.": "Selecciona una persona.",
+    "You cannot remove your own account.": "No puedes eliminar tu propia cuenta.",
+    "Ask another administrator.": "Pídeselo a otro administrador.",
+    "Read the current values in \"current\", then save your change again on top of them.": "Revisa los valores actuales y vuelve a guardar tus cambios.",
+    "The installation name has 1 to 80 characters.": "El nombre de la instalación debe tener entre 1 y 80 caracteres.",
+    "Shorten it.": "Acórtalo.",
+    "A service account joins a brain as contributor or reader, never curator.": "Las cuentas de servicio solo pueden participar como lector o colaborador.",
+    "A key name has at most 80 characters.": "El nombre de la clave admite hasta 80 caracteres.",
+    "This service account is deactivated.": "Esta cuenta de servicio está desactivada.",
+    "Reactivate it first.": "Reactívala primero.",
+    "Revoke the old key once the program uses the new one, then make another.": "Cuando el programa utilice la clave nueva, revoca la anterior antes de crear otra.",
+    "\"host\" is the name of the mail server.": "Introduce el nombre del servidor de correo.",
+    "\"port\" is a number from 1 to 65535.": "El puerto debe ser un número entre 1 y 65535.",
+    "Usually 587, or 465 with \"secure\".": "Normalmente se usa 587 o, para una conexión segura, 465.",
+    "True for port 465.": "Activa la conexión segura para el puerto 465.",
+    "\"user\" is the account name on the mail server.": "Introduce el nombre de la cuenta en el servidor de correo.",
+    "\"fromAddress\" is the email mail is sent from.": "Introduce la dirección desde la que se enviarán los correos.",
+    "Such as brain@example.com.": "Por ejemplo, brain@example.com.",
+    "The mail password belongs to the server, port and user it was set for.": "La contraseña de correo corresponde al servidor, puerto y usuario que se configuraron antes.",
+    "Type the password again for the new server (or remove it, if the new one needs none).": "Vuelve a introducir la contraseña del nuevo servidor o bórrala si ya no hace falta.",
+    "Mail is not set up.": "El correo no está configurado.",
+    "A service account is never a curator.": "Las cuentas de servicio no pueden ser curadoras.",
+    "Give it the contributor or reader role.": "Elige el rol de colaborador o lector.",
+    "A brain name (slug) is 2 to 64 lowercase letters, digits and single hyphens.": "La dirección del cerebro debe tener entre 2 y 64 caracteres. Usa minúsculas, dígitos y guiones simples.",
+    "Use something like \"youtube-channel\".": "Por ejemplo, «youtube-channel».",
+    "The first curator must be an active person account.": "El primer curador debe tener una cuenta personal activa.",
+    "Ask an administrator of rsc-brain to resend or withdraw that invitation, then create the brain again, or name another first curator.": "Pide a un administrador que reenvíe o retire esa invitación y vuelve a crear el cerebro, o elige otro primer curador.",
+    "Choose another name.": "Elige otro nombre.",
+    "To delete a brain, type its name to confirm.": "Escribe el nombre del cerebro para confirmar su eliminación.",
+    "Use a PNG, JPEG or WebP of at most 2 MB and 4096 pixels a side.": "Usa una imagen PNG, JPEG o WebP de hasta 2 MB y un máximo de 4096 píxeles por lado.",
+    "The logo is larger than 2 MB.": "El logotipo supera los 2 MB.",
+    "Use a smaller image; a logo needs a few kilobytes.": "Elige una imagen más pequeña. Para un logotipo suelen bastar unos kilobytes.",
+    "Finish the setup in rsc-factory.": "Termina la configuración en rsc-factory.",
+    "Only an administrator of rsc-brain can reconnect rsc-factory.": "Solo un administrador de rsc-brain puede volver a conectar rsc-factory.",
+    "Use the email and password of an administrator of rsc-brain.": "Usa el correo y la contraseña de un administrador de rsc-brain.",
+    "This entry is forgotten.": "Esta entrada está olvidada.",
+    "Recover it first (curators), then edit it.": "Pide a un curador que la recupere antes de editarla.",
+    "Read the current version (in \"current\"), apply your change to it and send it with its revision.": "Revisa la versión actual, aplica tus cambios y vuelve a guardarlos sobre esa revisión.",
+    "Say why, in 1 to 500 characters.": "Explica el motivo en entre 1 y 500 caracteres.",
+    "Add a short reason.": "Añade una breve explicación.",
+    "Forget that entry first, or keep this one forgotten.": "Olvida primero esa entrada o deja esta como olvidada.",
+    "Recover it first.": "Recupérala primero.",
+    "Send an ISO date, or null to clear it.": "Introduce una fecha ISO o borra la fecha.",
+    "Write why it is purged, in 1 to 500 characters.": "Explica en entre 1 y 500 caracteres el motivo de la eliminación definitiva.",
+    "Add the reason.": "Añade el motivo.",
+    "Send an ISO date such as 2026-11-30.": "Introduce una fecha como 2026-11-30.",
+    "A correction is about one page or one entry, not both.": "Una corrección puede referirse a una página o a una entrada. Selecciona solo una.",
+    "Only the administration of this installation does this.": "Solo los administradores de esta instalación pueden hacerlo.",
+    "This connection is not encrypted, so rsc-brain does not accept a password over it.": "La conexión no está cifrada. Para proteger tu contraseña, rsc-brain necesita una conexión segura.",
+    "Open rsc-brain over HTTPS (a domain with a certificate, or a tunnel), or on its local address from the same machine.": "Abre rsc-brain por HTTPS, con un dominio con certificado o un túnel, o accede desde la propia máquina usando su dirección local.",
+    "Give an address such as https://brain.example.com.": "Introduce una dirección como https://brain.example.com.",
+    "\"publicUrl\" is not an address.": "«publicUrl» debe ser una dirección válida.",
+    "The installation needs a name of 1 to 80 characters.": "El nombre de la instalación debe tener entre 1 y 80 caracteres.",
+    "For example \"Acme rsc-brain\".": "Por ejemplo, «Acme rsc-brain».",
+    "This installation is already set up.": "Esta instalación ya está configurada.",
+    "Sign in instead.": "Inicia sesión.",
+    "Once the person is in, add them to your brain; or ask the administration.": "Cuando acepte la invitación, añade a la persona a tu cerebro. También puedes consultar a un administrador.",
+    "Fix the list of brains.": "Revisa la lista de cerebros.",
+    "Give plain emails such as ana@example.com.": "Usa direcciones como ana@example.com.",
+    "A curator invites people only to the brains they curate, with a role there.": "Los curadores solo pueden invitar a personas a los cerebros que gestionan y deben asignarles un rol.",
+    "Choose brains you curate; the administration gives wider permissions.": "Elige un cerebro que gestiones. Un administrador puede conceder permisos más amplios.",
+    "Curators may no longer invite in this installation.": "La instalación ya no permite que los curadores inviten a personas.",
+    "Ask the administration to resend or withdraw it.": "Pide a un administrador que reenvíe o retire la invitación.",
+    "This invitation was already used or withdrawn.": "Esta invitación ya se ha usado o retirado.",
+    "Invite the email again if it still needs access.": "Vuelve a invitar a esa dirección si aún necesita acceso.",
+    "A new link for this invitation was made less than a minute ago.": "Ya se creó un enlace para esta invitación hace menos de un minuto.",
+    "This invitation was already used.": "Esta invitación ya se ha usado.",
+    "Remove the person, or change their roles.": "Elimina a la persona o modifica sus roles.",
+    "This invitation link is not valid: it expired, was already used, or was withdrawn.": "El enlace de invitación ha caducado, ya se ha utilizado o se ha retirado.",
+    "Ask an administrator to send a new one.": "Pide a un administrador que te envíe uno nuevo.",
+    "Your name has 1 to 80 characters.": "Tu nombre debe tener entre 1 y 80 caracteres.",
+    "Type the name others will see.": "Escribe el nombre que verán otras personas.",
+    "Only curators see forgotten entries.": "Solo los curadores pueden ver las entradas olvidadas.",
+    "Ask a curator of the brain.": "Consulta a un curador del cerebro.",
+    "Type the password you sign in with in \"password\".": "Introduce la contraseña que usas para iniciar sesión.",
+    "Send your current password in \"current\".": "Introduce tu contraseña actual.",
+    "Type the password you sign in with now.": "Escribe la contraseña con la que inicias sesión actualmente.",
+    "Only the administration does this.": "Solo los administradores pueden hacerlo.",
+    "Only the administration turns meaning search on or off.": "Solo los administradores pueden activar o desactivar la búsqueda semántica.",
+    "Ask the administration of this installation.": "Consulta a un administrador de esta instalación.",
+    "Turn meaning search off first, or set a new one in its place.": "Primero desactiva la búsqueda semántica o configura un sustituto.",
+    "Meaning search stays off until the warning is accepted.": "La búsqueda semántica seguirá desactivada hasta que aceptes el aviso.",
+    "Read the warning and send \"accept\": true.": "Lee el aviso y confirma que lo aceptas.",
+    "Make another member curator first, then change this one.": "Asigna primero el rol de curador a otro miembro y después cambia este.",
+    "Name who to add.": "Indica a quién quieres añadir.",
+    "There is no account with that id or email.": "No hay ninguna cuenta con ese identificador o correo.",
+    "Only people who already have an account can be added; the administration invites new ones.": "Solo puedes añadir a personas que ya tengan cuenta. Un administrador puede invitar a nuevos miembros.",
+    "That account was deactivated.": "Esa cuenta está desactivada.",
+    "The administration can reactivate it first.": "Primero debe reactivarla un administrador.",
+    "Only curators get notices of new proposals.": "Solo los curadores reciben avisos de propuestas nuevas.",
+    "An entry cannot relate to itself.": "Una entrada no puede relacionarse consigo misma.",
+    "Name two different entries.": "Selecciona dos entradas distintas.",
+    "That would make entries supersede each other in a loop.": "Las entradas se sustituirían mutuamente, formando un ciclo.",
+    "This brain is archived, so no repository can be linked to it.": "No puedes vincular un repositorio a un cerebro archivado.",
+    "A curator of the brain can unarchive it first.": "Pide a un curador del cerebro que lo desarchive primero.",
+    "That is not a repository address.": "La dirección del repositorio no es válida.",
+    "Use the full address, e.g. github.com/org/repo (or the output of \"git remote get-url origin\").": "Introduce la dirección completa, por ejemplo github.com/org/repo, o el resultado de «git remote get-url origin».",
+    "That is a folder on your machine; rsc-brain can only match repository addresses.": "Has indicado una carpeta local. rsc-brain necesita la dirección de un repositorio.",
+    "Run \"git remote get-url origin\" in that folder and pass its output.": "Ejecuta «git remote get-url origin» en esa carpeta y usa la dirección que devuelve.",
+    "Its author replaced this proposal; nothing was applied.": "El autor ha sustituido esta propuesta. No se aplicó ningún cambio.",
+    "Review the new version (in \"current\").": "Revisa la versión actual de la propuesta.",
+    "Nothing to do; open the brain log to see what changed.": "No hay cambios pendientes. Abre el registro del cerebro para ver qué ha cambiado.",
+    "The proposal changed while you were looking at it; nothing was applied.": "La propuesta cambió mientras la revisabas. No se aplicó ningún cambio.",
+    "Review it again (the new version is in \"current\").": "Vuelve a revisar la versión actual.",
+    "Text was purged from this wiki after your edit was written; nothing was applied.": "Se eliminó texto de la wiki después de que escribieras tu edición. No se aplicaron cambios.",
+    "Review it again and write your edit anew from what the pages hold now.": "Revisa las páginas actuales y vuelve a redactar tu edición.",
+    "Approve at least one operation.": "Aprueba al menos una operación.",
+    "To approve none, return the proposal.": "Si no quieres aprobar ninguna, devuelve la propuesta.",
+    "A correction has problems; nothing was applied.": "La corrección contiene errores. No se aplicó ningún cambio.",
+    "Fix each one listed in \"problems\".": "Corrige cada uno de los problemas indicados.",
+    "Approving part of a proposal returns the rest, and that needs a comment.": "Si solo apruebas una parte, el resto se devuelve con un comentario.",
+    "Write in \"comment\" why the rest goes back.": "Explica en el comentario por qué devuelves el resto.",
+    "Approve them together, or leave them all out.": "Apruébalas juntas o déjalas todas sin aprobar.",
+    "The change has problems; nothing was saved.": "El cambio contiene errores. No se ha guardado.",
+    "Apply your change to the current version (in \"current\") and save it with its revision.": "Aplica tu cambio a la versión actual y guárdalo con el número de esa revisión.",
+    "The guide has 1 to 20 000 characters.": "La guía debe tener entre 1 y 20.000 caracteres.",
+    "Shorten it, or send null to go back to the default.": "Acorta la guía o restablece la predeterminada.",
+    "The usage note has at most 2 000 characters.": "La nota de uso admite hasta 2.000 caracteres.",
+    "Check the address in the map (GET /v1/brains/:slug/wiki/map), or propose the page.": "Comprueba la dirección en el mapa de la wiki o propón crear la página.",
+    "Apply your change to the current version (in \"current\") and send it again with its revision.": "Aplica tu cambio a la versión actual y vuelve a enviarlo con su número de revisión.",
+    "Use the rsc-brain web to do this.": "Hazlo desde la web de rsc-brain.",
+    "This installation has no folder for its copies.": "Esta instalación no tiene una carpeta configurada para sus copias de seguridad.",
+    "Set RSC_BRAIN_BACKUPS to a folder for the copies (the installer does) and restart rsc-brain.": "Configura RSC_BRAIN_BACKUPS con la ruta de la carpeta de copias y reinicia rsc-brain. El instalador ya configura este valor.",
+    "The installation key is shown once, right after the first-time setup, to whoever ran it.": "La clave de instalación se muestra una sola vez a quien completa la configuración inicial.",
+    "Download it again in Admin › Backups & system, typing your password.": "Puedes volver a descargarla en Administración › Copias de seguridad y sistema con tu contraseña.",
+    "This installation has no public address yet.": "La instalación todavía no tiene una dirección pública.",
+    "An administrator sets it in the settings of the installation.": "Un administrador puede configurarla en los ajustes de la instalación.",
+    "There is no such copy here.": "Esa copia no está disponible.",
+    "Pick a copy from the list in Backups & system.": "Elige una copia de la lista en Copias de seguridad y sistema.",
+    "The name given to confirm does not match this installation. Nothing was changed.": "El nombre de confirmación no coincide con el de esta instalación. No se ha cambiado nada.",
+    "Restore again; if it fails again, keep the copy and look at the log of the service.": "Vuelve a intentar la restauración. Si falla de nuevo, guarda la copia y consulta el registro del servicio.",
+    "This copy holds rows that point to rows it does not hold, so it cannot be restored. Nothing was changed.": "La copia contiene referencias a datos que faltan, por lo que no se puede restaurar. No se ha cambiado nada.",
+    "Use another copy from the list (rsc-brain backups list).": "Usa otra copia de la lista (rsc-brain backups list).",
+    "The server does not have enough free disk space to prepare this export.": "El servidor no tiene suficiente espacio libre para preparar la exportación.",
+    "Ask an administrator to free disk space on the server, then try again.": "Pide a un administrador que libere espacio y vuelve a intentarlo.",
+    "The client left before the export was ready.": "La conexión del cliente se cerró antes de que terminara la exportación.",
+    "Download the export again.": "Vuelve a descargar la exportación.",
+    "This brain already has pages, entries or proposals; an import goes only into an empty brain. Nothing was changed.": "Este cerebro ya tiene páginas, entradas o propuestas. La importación necesita un cerebro vacío. No se ha cambiado nada.",
+    "Create a new brain and import into it.": "Crea un cerebro nuevo e importa el archivo en él.",
+    "Another import is running. Try again in a minute.": "Ya hay una importación en curso. Vuelve a intentarlo en un minuto.",
+    "Wait a minute and import again.": "Espera un minuto y vuelve a importar.",
+    "Import a smaller folder: at most 200 MB of files and 20 000 files.": "Elige una carpeta más pequeña. El límite es de 200 MB y 20.000 archivos.",
+    "Make the zip again from the folder (with no links in it) and import it.": "Vuelve a crear el ZIP a partir de la carpeta, sin enlaces, e impórtalo otra vez.",
+    "The import was stopped: its request ended.": "La solicitud se interrumpió y la importación se ha detenido.",
+    "Import again.": "Vuelve a importar el archivo.",
+    "An update is already running.": "Ya hay una actualización en curso.",
+    "Wait for it to finish; this page shows how it goes.": "Espera a que termine. En esta página puedes consultar su progreso.",
+    "The request could not be left for the updater.": "No se pudo entregar la solicitud al proceso de actualización.",
+    "Updating from the web is off on this installation.": "Las actualizaciones desde la web están desactivadas en esta instalación.",
+    "There is no newer version to update to.": "Ya tienes la versión más reciente disponible.",
+    "Use «Update» instead.": "Usa la opción «Actualizar».",
+    "It is too soon to try again.": "Aún es pronto para volver a intentarlo."
   },
   "functions": {
     "shell.yourRole": {
@@ -5746,6 +5912,126 @@
         {
           "from": "Something went wrong on the server (reference ⟦a0⟧).",
           "to": "El servidor ha devuelto un error (referencia ⟦a0⟧)."
+        },
+        {
+          "from": "Someone changed ⟦a0⟧ since you read ⟦a1⟧.",
+          "to": "Alguien ha cambiado ⟦a0⟧ desde que consultaste ⟦a1⟧."
+        },
+        {
+          "from": "A service account has at most ⟦a0⟧ main keys at once.",
+          "to": "Una cuenta de servicio puede tener hasta ⟦a0⟧ claves principales activas."
+        },
+        {
+          "from": "The ⟦a0⟧ is longer than ⟦a1⟧ characters.",
+          "to": "El campo «⟦a0⟧» supera los ⟦a1⟧ caracteres."
+        },
+        {
+          "from": "Shorten the ⟦a0⟧.",
+          "to": "Acorta el campo «⟦a0⟧»."
+        },
+        {
+          "from": "⟦a0⟧ has an open rsc-brain invitation from someone else.",
+          "to": "⟦a0⟧ ya tiene una invitación pendiente de otra persona en rsc-brain."
+        },
+        {
+          "from": "A brain named \"⟦a0⟧\" already exists.",
+          "to": "Ya existe un cerebro con la dirección «⟦a0⟧»."
+        },
+        {
+          "from": "rsc-brain was installed with rsc-factory: open rsc-factory at ⟦a0⟧ and finish its first-time setup. rsc-brain is set up with the same administration.",
+          "to": "rsc-brain se instaló con rsc-factory. Abre rsc-factory en ⟦a0⟧ y termina la configuración inicial. rsc-brain usará la misma cuenta de administración."
+        },
+        {
+          "from": "The entry changed since revision ⟦a0⟧; it is now at revision ⟦a1⟧.",
+          "to": "La entrada ha cambiado desde la revisión ⟦a0⟧. La revisión actual es la ⟦a1⟧."
+        },
+        {
+          "from": "Another entry (⟦a0⟧) now holds the topic \"⟦a1⟧\".",
+          "to": "Otra entrada (⟦a0⟧) trata ahora el tema «⟦a1⟧»."
+        },
+        {
+          "from": "Unknown entry type \"⟦a0⟧\".",
+          "to": "Tipo de entrada desconocido: «⟦a0⟧»."
+        },
+        {
+          "from": "⟦a0⟧ already has an invitation that was not used yet.",
+          "to": "⟦a0⟧ ya tiene una invitación pendiente."
+        },
+        {
+          "from": "Invite 1 to ⟦a0⟧ emails at a time.",
+          "to": "Puedes invitar de 1 a ⟦a0⟧ direcciones de correo a la vez."
+        },
+        {
+          "from": "\"⟦a0⟧\" is not an email.",
+          "to": "«⟦a0⟧» no es un correo válido."
+        },
+        {
+          "from": "Wait ⟦a0⟧ s, then make another; the last link still works.",
+          "to": "Espera ⟦a0⟧ segundos antes de crear otro. El último enlace sigue funcionando."
+        },
+        {
+          "from": "⟦a0⟧ asks for your password again.",
+          "to": "Para continuar con «⟦a0⟧», vuelve a introducir tu contraseña."
+        },
+        {
+          "from": "The provider \"⟦a0⟧\" is not configured in this installation.",
+          "to": "El proveedor «⟦a0⟧» no está configurado en esta instalación."
+        },
+        {
+          "from": "This is the last curator of \"⟦a0⟧\"; a brain always keeps one.",
+          "to": "Este es el último curador de «⟦a0⟧». Cada cerebro debe conservar al menos uno."
+        },
+        {
+          "from": "Only curators of \"⟦a0⟧\" link repositories to it.",
+          "to": "Solo los curadores de «⟦a0⟧» pueden vincular repositorios a ese cerebro."
+        },
+        {
+          "from": "Some operations cannot be approved without others: ⟦a0⟧.",
+          "to": "Estas operaciones necesitan aprobarse juntas: ⟦a0⟧."
+        },
+        {
+          "from": "Someone changed ⟦a0⟧ of \"⟦a1⟧\" since you read ⟦a2⟧.",
+          "to": "Alguien ha cambiado ⟦a0⟧ de «⟦a1⟧» desde que consultaste ⟦a2⟧."
+        },
+        {
+          "from": "There is no page at \"⟦a0⟧\" in this brain.",
+          "to": "En este cerebro no hay ninguna página en «⟦a0⟧»."
+        },
+        {
+          "from": "There is no kit for the agent \"⟦a0⟧\".",
+          "to": "No se ha preparado una configuración para el agente «⟦a0⟧»."
+        },
+        {
+          "from": "This copy was made with another installation key (key id ⟦a0⟧).",
+          "to": "Esta copia se creó con otra clave de instalación (identificador ⟦a0⟧)."
+        },
+        {
+          "from": "This copy was made by rsc-brain ⟦a0⟧, which is newer than this one (⟦a1⟧).",
+          "to": "Esta copia se creó con rsc-brain ⟦a0⟧, una versión posterior a la actual (⟦a1⟧)."
+        },
+        {
+          "from": "Restore it with rsc-brain ⟦a0⟧ or newer.",
+          "to": "Restáurala con rsc-brain ⟦a0⟧ o una versión posterior."
+        },
+        {
+          "from": "Confirm with the name of this installation, exactly: \"⟦a0⟧\".",
+          "to": "Para confirmar, escribe el nombre exacto de esta instalación: «⟦a0⟧»."
+        },
+        {
+          "from": "The update to ⟦a0⟧ failed.",
+          "to": "Ha fallado la actualización a ⟦a0⟧."
+        },
+        {
+          "from": "The update to ⟦a0⟧ has not failed.",
+          "to": "La actualización a ⟦a0⟧ no ha fallado."
+        },
+        {
+          "from": "The update to ⟦a0⟧ failed ⟦a1⟧ times from the web.",
+          "to": "La actualización a ⟦a0⟧ ha fallado ⟦a1⟧ veces desde la web."
+        },
+        {
+          "from": "Try again after ⟦a0⟧, or update on the server: ⟦a1⟧",
+          "to": "Vuelve a intentarlo después de ⟦a0⟧ o actualiza desde el servidor: ⟦a1⟧"
         }
       ]
     },

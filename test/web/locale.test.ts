@@ -59,3 +59,29 @@ test('already received errors track the selected language and preserve the machi
   setLocale('en')
   assert.equal(err.message, why)
 })
+
+test('explains known refusals and keeps unfamiliar server details and recovery instructions intact', () => {
+  setLocale('es')
+  const duplicate = new ApiError(
+    409,
+    'brain_exists',
+    'A brain named "home" already exists.',
+    'Choose another name.',
+  )
+  assert.equal(duplicate.message, 'Ya existe un cerebro con la dirección «home».')
+  assert.equal(duplicate.howToProceed, 'Elige otro nombre.')
+  const unknown = new ApiError(503, 'future_error', 'Counter 43, ref abcd.', 'Give abcd to the operator.')
+  assert.equal(
+    unknown.message,
+    'No se pudo completar la solicitud. Detalle del servidor: Counter 43, ref abcd.',
+  )
+  assert.equal(unknown.howToProceed, 'Indicaciones del servidor: Give abcd to the operator.')
+  const importRefusal = new ApiError(
+    409,
+    'brain_not_empty',
+    'This brain already has pages, entries or proposals; an import goes only into an empty brain. Nothing was changed.',
+    'Create a new brain and import into it.',
+  )
+  assert.match(importRefusal.message, /La importación necesita un cerebro vacío/)
+  assert.equal(importRefusal.howToProceed, 'Crea un cerebro nuevo e importa el archivo en él.')
+})

@@ -42,3 +42,24 @@ test('changes language in the account menu and keeps the Spanish rail within its
   await page.reload()
   await expect(page.getByRole('link', { name: 'Descripción general' })).toBeVisible()
 })
+
+test('shows a duplicate brain refusal beside the address in Spanish and keeps the typed name', async ({
+  context,
+  baseURL,
+  page,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/')
+  await page.getByRole('button', { name: /Account/ }).click()
+  await page.getByRole('button', { name: 'Spanish' }).click()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Crear un cerebro' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Crear un cerebro' })
+  await dialog.getByLabel('Nombre').fill('Growth')
+  await dialog.getByRole('button', { name: 'Crear un cerebro' }).click()
+  await expect(
+    dialog.getByText('Ya existe un cerebro con la dirección «growth». Elige otro nombre.'),
+  ).toBeVisible()
+  await expect(dialog.locator('input[name="slug"]')).toBeFocused()
+  await expect(dialog.getByLabel('Nombre')).toHaveValue('Growth')
+})

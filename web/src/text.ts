@@ -87,8 +87,7 @@ function translateArrayItem(part: unknown, args: unknown[]): unknown {
   return staticSpanish.get(part) ?? part
 }
 
-export function localizeMessage(message: string): string {
-  if (locale.value !== 'es') return message
+function spanishMessage(message: string): string | undefined {
   const direct = staticSpanish.get(message)
   if (direct) return direct
   for (const entry of patternsFor('$ui')) {
@@ -107,7 +106,22 @@ export function localizeMessage(message: string): string {
       return captured
     })
   }
-  return message
+  return undefined
+}
+
+export function localizeMessage(message: string): string {
+  return locale.value === 'es' ? (spanishMessage(message) ?? message) : message
+}
+
+export function localizeServerMessage(message: string, instruction = false): string {
+  if (locale.value !== 'es' || !message) return message
+  const translated = spanishMessage(message)
+  if (translated !== undefined) return translated
+  // A newer server or an external provider can send a message the web has never seen.
+  // Keep the original detail and any recovery instruction or reference intact.
+  return instruction
+    ? `Indicaciones del servidor: ${message}`
+    : `No se pudo completar la solicitud. Detalle del servidor: ${message}`
 }
 
 function localized<T>(value: T, path = ''): T {

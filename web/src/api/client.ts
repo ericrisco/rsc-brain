@@ -2,7 +2,7 @@
 // only the Brain web sends (B4, CSRF); every refusal arrives as { status, code, message, howToProceed }
 // so a screen can always say what happened and what to do. A lost session leads to sign-in and back.
 import { signInPath } from '../lib/nav.ts'
-import { localizeMessage } from '../text.ts'
+import { localizeServerMessage } from '../text.ts'
 import { type OpName, ROUTE_TABLE } from './routes.ts'
 
 export const WEB_HEADER = 'rsc-brain-web'
@@ -34,7 +34,7 @@ export class ApiError extends Error {
     this.rawHowToProceed = howToProceed
     Object.defineProperty(this, 'message', {
       configurable: true,
-      get: () => localizeMessage(this.rawMessage),
+      get: () => localizeServerMessage(this.rawMessage),
     })
     this.status = status
     this.code = code
@@ -55,11 +55,14 @@ export class ApiError extends Error {
   }
 
   get howToProceed(): string {
-    return localizeMessage(this.rawHowToProceed)
+    return localizeServerMessage(this.rawHowToProceed, true)
   }
 
   get problems(): Array<{ op: number | null; message: string }> {
-    return this.rawProblems.map((problem) => ({ ...problem, message: localizeMessage(problem.message) }))
+    return this.rawProblems.map((problem) => ({
+      ...problem,
+      message: localizeServerMessage(problem.message),
+    }))
   }
 }
 
