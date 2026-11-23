@@ -4,6 +4,14 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.12
+
+- Add Spanish localization and fix sidebar overflow (#63)
+
+## v0.7.11
+
+- ✨ feat(graph): add an optional hologram look to the wiki graph (#65)
+
 ## v0.7.10
 
 - Keep inline code in imported page summaries and skip leading quotes (#69)
