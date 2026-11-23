@@ -3,6 +3,7 @@
 // the curator's note in the context, resolving a repository, and errors that say how to proceed.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
+import { ENTRY_TYPES } from '../../src/domain/entries.ts'
 import { INSTRUCTIONS } from '../../src/mcp/instructions.ts'
 import { MODERN } from '../../src/mcp/server.ts'
 import { skipPg } from '../helpers/pg.ts'
@@ -242,6 +243,25 @@ describe('the MCP endpoint', { skip: skipPg }, () => {
     const tried = await call(ro, 'mem_save', { brain: 'alpha', type: 'learning', title: 'x', content: 'y' })
     assert.equal(tried.isError, true)
     assert.match(tried.text, /read-only.*read \+ write/)
+  })
+
+  it('lists exactly the entry types agents can save and update', async () => {
+    const list = await mcp(eric.key, 'tools/list')
+    const { tools } = list.body.result as {
+      tools: Array<{ name: string; inputSchema: { properties: { type?: { enum?: string[] } } } }>
+    }
+    const allowed = ENTRY_TYPES.filter((type) => type !== 'correction')
+    for (const name of ['mem_save', 'mem_update']) {
+      assert.deepEqual(tools.find((tool) => tool.name === name)?.inputSchema.properties.type?.enum, allowed)
+    }
+    for (const type of allowed) {
+      const result = await call(eric.key, 'mem_save', { brain: 'alpha', type, title: type, content: type })
+      assert.equal(result.isError, false, result.text)
+    }
+    for (const type of ['discovery', 'correction']) {
+      const result = await call(eric.key, 'mem_save', { brain: 'alpha', type, title: type, content: type })
+      assert.equal(result.isError, true, type)
+    }
   })
 
   it('CA1 (with a key) and CA8: save over MCP; a repeated request key gives the same receipt, one entry', async () => {

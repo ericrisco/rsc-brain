@@ -11,6 +11,7 @@ import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
 import { ago, homeTotals } from '../lib/brains.ts'
 import { firstPersonAlone } from '../lib/people.ts'
+import { formatNumber } from '../locale.ts'
 import { branding, justDeleted, justJoined, justSetUp, type Me, me, online } from '../session.ts'
 import { connectHref, createOpen } from '../shell/dialogs.ts'
 import { useSignOut } from '../shell/signOut.ts'
@@ -185,7 +186,7 @@ function Card({ b }: { b: BrainRow }) {
         <a class="name" href={`/b/${encodeURIComponent(b.slug)}`}>
           {b.name}
         </a>
-        <span class="tag">{b.role}</span>
+        <span class="tag">{T.invite.role[b.role] ?? b.role}</span>
         {b.status === 'archived' ? <span class="tag">{T.home.archived}</span> : null}
       </div>
       <p class="purpose">{b.purpose || <span class="muted">{T.brain.noPurpose}</span>}</p>
@@ -226,12 +227,12 @@ function Totals({ brains }: { brains: BrainRow[] }) {
             {href ? (
               <a href={href}>
                 <span class="tile-label">{label}</span>
-                <span class="tile-n">{n.toLocaleString('en')}</span>
+                <span class="tile-n">{formatNumber(n)}</span>
               </a>
             ) : (
               <>
                 <span class="tile-label">{label}</span>
-                <span class="tile-n">{n.toLocaleString('en')}</span>
+                <span class="tile-n">{formatNumber(n)}</span>
               </>
             )}
           </li>

@@ -138,6 +138,56 @@ describe('reading a documentation folder (CA14, CI)', () => {
     ])
   })
 
+  it('keeps inline code literal in an inferred summary', async () => {
+    const plan = await planDocs(
+      memTree({
+        'wiki/code.md':
+          'Verified: `createCheckoutSession`, `handle_webhook` and `[[literal]]`. See **[[help|the guide]]**.',
+      }),
+    )
+    assert.equal(
+      plan.pages[0]?.summary,
+      'Verified: createCheckoutSession, handle_webhook and [[literal]]. See the guide.',
+    )
+  })
+
+  it('skips leading quotes, fences and headings when inferring the first paragraph', async () => {
+    const plan = await planDocs(
+      memTree({
+        'wiki/quote.md':
+          '> Note from the editor.\n> More notes.\n\n~~~sh\necho sample\n~~~\n## Details\nVerified with `handleWebhook`.\nSecond line.',
+      }),
+    )
+    assert.equal(plan.pages[0]?.summary, 'Verified with handleWebhook. Second line.')
+  })
+
+  it('ends a lazy quote at a heading and preserves code spanning two lines', async () => {
+    const plan = await planDocs(
+      memTree({
+        'wiki/lazy.md': '> Editor note\ncontinued quote\n## Details\nUse `handle_\nwebhook` here.',
+      }),
+    )
+    assert.equal(plan.pages[0]?.summary, 'Use handle_ webhook here.')
+  })
+
+  it('continues past a thematic break and an image with no visible text', async () => {
+    const plan = await planDocs(
+      memTree({
+        'wiki/image.md': '___\n![](diagram.png)\n\nActual introduction.',
+      }),
+    )
+    assert.equal(plan.pages[0]?.summary, 'Actual introduction.')
+  })
+
+  it('redacts private text across paragraph boundaries before choosing the summary', async () => {
+    const plan = await planDocs(
+      memTree({
+        'wiki/private.md': '> Draft <private>\n\nInternal review notes.\n\n</private>\n\nPublic paragraph.',
+      }),
+    )
+    assert.equal(plan.pages[0]?.summary, 'Public paragraph.')
+  })
+
   it("writes every link to a page as the wiki's own, and leaves the rest as text", async () => {
     const plan = await planDocs(await treeFromFolder(SAMPLE))
     const body = (a: string) => plan.pages.find((p) => p.address === a)?.body ?? ''

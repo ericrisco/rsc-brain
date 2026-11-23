@@ -586,3 +586,40 @@ test.describe('motion allowed', () => {
   test.use({ reducedMotion: 'no-preference' })
   pickingAndClearance()
 })
+
+test('the hologram look: a tool turns it on and off, the picture keeps its items, the choice is remembered', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.setViewportSize({ width: 1366, height: 768 })
+  await page.goto(GRAPH)
+  await settled(page)
+  await upToDate(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  const before = await canvas.getAttribute('data-items')
+  const holo = page.locator('.graph-tools').getByRole('button', { name: 'Hologram look', exact: true })
+  await expect(holo).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.locator('.graph-box.holo')).toHaveCount(0)
+  await holo.click()
+  await expect(holo).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.graph-box.holo')).toHaveCount(1)
+  await upToDate(page)
+  await expect(canvas).toHaveAttribute('data-reticles', /^[1-9]\d*$/)
+  expect(await canvas.getAttribute('data-items')).toBe(before)
+  expect(await page.evaluate(() => localStorage.getItem('rscb.graphLook'))).toBe('holo')
+  // The hologram decorations leave the canvas available to the pointer.
+  expect(
+    await canvas.evaluate((el) => {
+      const box = el.getBoundingClientRect()
+      return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === el
+    }),
+  ).toBe(true)
+  await page.reload()
+  await settled(page)
+  await expect(page.locator('.graph-box.holo')).toHaveCount(1)
+  await page.locator('.graph-tools').getByRole('button', { name: 'Hologram look', exact: true }).click()
+  await expect(page.locator('.graph-box.holo')).toHaveCount(0)
+  await expect(canvas).not.toHaveAttribute('data-reticles', /.+/)
+})

@@ -1,6 +1,6 @@
 // "?" — the list of shortcuts, each with the visible control that does the same (CA20).
 import { SHORTCUTS } from '../lib/shortcuts.ts'
-import { T } from '../text.ts'
+import { localizeMessage, T } from '../text.ts'
 import { Dialog } from '../ui/Dialog.tsx'
 import { helpOpen } from './keys.ts'
 
@@ -33,19 +33,19 @@ export function HelpDialog({
               <td>
                 {s.id.startsWith('go-') ? (
                   <>
-                    <kbd>{s.keys[0]}</kbd> then <kbd>{s.keys[1]}</kbd>
+                    <kbd>{s.keys[0]}</kbd> {T.help.nextKey} <kbd>{s.keys[1]}</kbd>
                   </>
                 ) : (
                   s.keys.map((k, i) => (
                     <span key={k}>
-                      {i > 0 ? ' or ' : ''}
+                      {i > 0 ? ` ${T.help.or} ` : ''}
                       <kbd>{k}</kbd>
                     </span>
                   ))
                 )}
               </td>
-              <td>{s.label}</td>
-              <td class="muted">{s.control}</td>
+              <td>{localizeMessage(s.label)}</td>
+              <td class="muted">{localizeMessage(s.control)}</td>
             </tr>
           ))}
         </tbody>

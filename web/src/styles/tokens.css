@@ -37,6 +37,17 @@
   --graph-node: #6b6e72;
   --graph-lone: #b4b7ba;
   --graph-ring: 2.5;
+  /* The opt-in hologram uses a colour per community. */
+  --holo-com-0: oklch(0.52 0.16 255);
+  --holo-com-1: oklch(0.6 0.17 55);
+  --holo-com-2: oklch(0.55 0.2 25);
+  --holo-com-3: oklch(0.55 0.1 185);
+  --holo-com-4: oklch(0.55 0.15 140);
+  --holo-com-5: oklch(0.62 0.13 90);
+  --holo-com-6: oklch(0.5 0.17 300);
+  --holo-com-7: oklch(0.6 0.18 350);
+  --holo-com-8: oklch(0.48 0.08 55);
+  --holo-com-9: oklch(0.52 0.1 110);
 
   /* The plate a light logo sits on, in every mode: a logo's tone does not follow the mode. */
   --plate-dark: #131416;
@@ -68,6 +79,16 @@
   --edge: #8d9197;
   --graph-node: #c4c7cb;
   --graph-lone: #8a8e94;
+  --holo-com-0: oklch(0.72 0.15 255);
+  --holo-com-1: oklch(0.77 0.16 60);
+  --holo-com-2: oklch(0.68 0.2 25);
+  --holo-com-3: oklch(0.78 0.12 185);
+  --holo-com-4: oklch(0.78 0.17 140);
+  --holo-com-5: oklch(0.88 0.16 98);
+  --holo-com-6: oklch(0.7 0.16 300);
+  --holo-com-7: oklch(0.8 0.13 350);
+  --holo-com-8: oklch(0.66 0.09 55);
+  --holo-com-9: oklch(0.74 0.11 110);
 }
 
 @media (prefers-contrast: more) {

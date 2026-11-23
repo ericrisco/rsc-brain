@@ -5,6 +5,7 @@
 import { type Principal, roleIn } from '../auth/principal.ts'
 import { invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
+import { ENTRY_TYPES } from '../domain/entries.ts'
 
 type Json = Record<string, unknown>
 export type Call = {
@@ -80,7 +81,9 @@ const query = (a: Json, keys: Record<string, string>) => {
 }
 
 const ENTRY_FIELDS = {
-  type: str('decision, learning, discovery, attempt, preference, note or summary. Never "correction".'),
+  type: str('The journal entry type an agent can write.', {
+    enum: ENTRY_TYPES.filter((type) => type !== 'correction'),
+  }),
   title: str('A short title.'),
   content: str('The entry. Wrap private parts in <private>...</private>; never secrets.'),
   topic: str(
@@ -161,7 +164,7 @@ export const TOOLS: Tool[] = [
     name: 'mem_save',
     title: 'Save an entry',
     description:
-      'Writes to the journal: a decision with its why, a discovery, a failed attempt, a correction from the person (as "learning"). Returns a receipt with similar entries.',
+      'Writes to the journal: a decision with its why, a learning, a failed attempt, a correction from the person (as "learning"). Returns a receipt with similar entries.',
     inputSchema: obj({ brain: BRAIN, session: SESSION, ...ENTRY_FIELDS }, ['type', 'title', 'content']),
     writes: true,
     annotations: { readOnlyHint: false, idempotentHint: true },

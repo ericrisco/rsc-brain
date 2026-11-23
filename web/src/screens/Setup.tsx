@@ -162,7 +162,7 @@ export function Setup() {
       setStage('key')
     } catch (err) {
       const a = err as ApiError
-      const f = a.status === 400 ? fieldOfRefusal(a.message) : null
+      const f = a.status === 400 ? fieldOfRefusal(a.rawMessage) : null
       if (f) {
         setProblems({ [f]: `${a.message} ${a.howToProceed}` })
         focusField(f)

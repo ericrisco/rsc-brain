@@ -23,7 +23,7 @@ export function Skeleton({ rows = 3, label = T.states.loading }: { rows?: number
 }
 
 // The kind of a state, as a word in sentence case.
-const KIND = { error: T.kind.error, offline: T.kind.offline, forbidden: T.kind.noAccess } as const
+const KIND = { error: 'error', offline: 'offline', forbidden: 'noAccess' } as const
 
 // `focus`: off for a part of a screen that failed while the rest stands (the keyboard stays where it is;
 // the alert is still announced).
@@ -53,7 +53,7 @@ export function ErrorState({
       ref={ref}
       data-state={v.kind}
     >
-      <span class="kind">{KIND[v.kind]}</span>
+      <span class="kind">{T.kind[KIND[v.kind]]}</span>
       <Title>{v.title}</Title>
       <p>{v.message}</p>
       <p class="how">{v.howToProceed}</p>
