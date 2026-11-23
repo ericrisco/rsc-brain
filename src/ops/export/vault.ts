@@ -75,3 +75,7 @@ export function frontmatter(fields: Array<[string, unknown]>): string {
     .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
   return `---\n${lines.join('\n')}\n---\n`
 }
+
+// Written before the "## Links" and "## Sources" sections an export adds at the end of each page: they are made
+// from the header and the graph, not part of the body, and an import takes them off (never a heading a person wrote).
+export const GENERATED_MARK = '<!-- rsc-brain:generated -->'

@@ -2,7 +2,9 @@
 // the first heading and paragraph, the links between files ([[x]], [[x|words]], [[x#part]], ![[x]] and relative
 // [words](../y.md)), the address a file's path becomes, and a long text cut into pieces at its headings. Pure: no
 // database, no disk.
+import { LINK_KINDS } from '../../domain/wiki/model.ts'
 import { redact, SECRET_MARK } from '../../privacy/redact.ts'
+import { GENERATED_MARK } from '../export/vault.ts'
 
 // Redacts what an import brings (pack rule 1) without touching what was already redacted: a text exported from
 // another installation holds "[redacted secret]" marks, which a second pass would eat into ("password: [redacted
@@ -70,6 +72,38 @@ export function splitFrontmatter(text: string): { fields: Fields; body: string }
     }
   }
   return { fields, body: t.slice(m[0].length) }
+}
+
+// The "## Links" and "## Sources" sections a readable export adds at the end of a page are made from the header and
+// the graph: not part of the body, and their links never mentions. Taken off here, only when they are the export's
+// own: after its mark, or (exports made before the mark) when the header is the export's (address, type, status,
+// revision and both dates) and the sections have exactly the shape it writes. A "## Links" heading a person wrote
+// in any other page stays.
+export function stripGenerated(fields: Fields, body: string): string {
+  const at = body.lastIndexOf(GENERATED_MARK)
+  if (at !== -1 && (at === 0 || body[at - 1] === '\n')) {
+    const rest = body.slice(at + GENERATED_MARK.length).trim()
+    if (/^## (?:Links|Sources)\r?\n/.test(rest)) return body.slice(0, at).trimEnd()
+  }
+  const fromExport = ['address', 'type', 'status', 'revision', 'created', 'updated'].every(
+    (k) => typeof fields[k] === 'string' || (k === 'revision' && fields[k] !== undefined),
+  )
+  if (!fromExport) return body
+  const lines = body.trimEnd().split(/\r?\n/)
+  const kinds = [...LINK_KINDS, 'mentions'].join('|')
+  const linkLine = new RegExp(`^- (?:${kinds}): \\[\\[[^\\n]*\\]\\]$`)
+  let end = lines.length
+  const section = (title: string, ok: (l: string) => boolean): void => {
+    let i = end - 1
+    while (i >= 0 && ok(lines[i] as string)) i -= 1
+    // At least one item, then the blank line and the heading the export writes.
+    if (i === end - 1 || i < 1 || (lines[i] as string).trim() !== '' || lines[i - 1] !== `## ${title}`) return
+    end = i - 1
+    while (end > 0 && (lines[end - 1] as string).trim() === '') end -= 1
+  }
+  section('Sources', (l) => l.startsWith('- '))
+  section('Links', (l) => linkLine.test(l))
+  return end === lines.length ? body : lines.slice(0, end).join('\n')
 }
 
 export const field = (f: Fields, ...keys: string[]): string | undefined => {

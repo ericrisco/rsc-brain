@@ -15,6 +15,7 @@ import {
   anchorOf,
   bodyWithLinks,
   frontmatter,
+  GENERATED_MARK,
   journalFile,
   journalText,
   link,
@@ -190,6 +191,8 @@ export async function writeReadable(db: Db, zip: Zip, o: ExportOptions): Promise
     const parts = [head, `# ${plain(oneLine(String(r.title)))}\n`]
     if (String(r.summary).trim()) parts.push(`> ${plain(oneLine(String(r.summary)))}\n`)
     if (String(r.body).trim()) parts.push(`${body.trimEnd()}\n`)
+    // What follows is generated from the header and the graph: marked, so an import can take it off again.
+    if (typed.size || srcs.length) parts.push(`${GENERATED_MARK}\n`)
     if (typed.size) {
       const lines = ['## Links', '']
       for (const [kind, tos] of typed)

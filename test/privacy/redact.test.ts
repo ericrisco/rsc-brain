@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { newSecret } from '../../src/auth/secrets.ts'
-import { mayHoldSecret, normalize, PRIVATE_MARK, redact, redactAll, SECRET_MARK } from '../../src/privacy/redact.ts'
+import {
+  mayHoldSecret,
+  normalize,
+  PRIVATE_MARK,
+  redact,
+  redactAll,
+  SECRET_MARK,
+} from '../../src/privacy/redact.ts'
 
 // Fake credentials with the real shapes (none of them is valid anywhere).
 const SECRETS: Record<string, string> = {
@@ -105,7 +112,10 @@ describe('redaction', () => {
   it('redacts a password said in a sentence, in English and Spanish', () => {
     const cases: [string, string][] = [
       ['la contraseña del servidor es hunter2hunter2', `la contraseña del servidor es ${SECRET_MARK}`],
-      ['La Contrasena de la base de datos es Zx9!kLmNop', `La Contrasena de la base de datos es ${SECRET_MARK}`],
+      [
+        'La Contrasena de la base de datos es Zx9!kLmNop',
+        `La Contrasena de la base de datos es ${SECRET_MARK}`,
+      ],
       ['CONTRASEÑA: abc123xyz', `CONTRASEÑA: ${SECRET_MARK}`],
       ['la clave es qwerty123.', `la clave es ${SECRET_MARK}.`],
       ['the server password is hunter2hunter2', `the server password is ${SECRET_MARK}`],
