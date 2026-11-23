@@ -328,7 +328,10 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
     const q = /^>\s?(.+)\r?\n/.exec(body)
     if (q && given && plainText(q[1] as string) === plainText(given))
       body = body.slice(q[0].length).replace(/^\s+/, '')
-    const summary = cut(redactText(plainText(given ?? firstParagraph(body))), WIKI_LIMITS.summary)
+    const summary = cut(
+      redactText(given ? plainText(given) : firstParagraph(redactText(body))),
+      WIKI_LIMITS.summary,
+    )
     const rewritten = rewriteLinks(body, d.path, resolve)
     for (const t of rewritten.unresolved) unresolved.push({ from: address, target: t })
     const links: PlannedPage['links'] = []
