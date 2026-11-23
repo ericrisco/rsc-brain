@@ -221,7 +221,11 @@ export function UpdatePart({ view, reload }: { view: UpdateView; reload: () => v
       ) : null}
       {view.kind === 'available' ? (
         <div class="actions">
-          <Button kind="primary" blocked={blocked()} onClick={() => setAsking({ retry: false, to: view.to })}>
+          <Button
+            kind="secondary"
+            blocked={blocked()}
+            onClick={() => setAsking({ retry: false, to: view.to })}
+          >
             {A.updateTo(view.to)}
           </Button>
         </div>

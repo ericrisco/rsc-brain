@@ -1,43 +1,29 @@
-// Review of PR18: on a long page inside a brain, the line between the side bar (the rail, plan canvas-ui)
-// and the content runs the whole height of the page, not only the first screen.
+// Review of PR18, as the web redesign leaves it («Casos límite»: a very long page reads without the frame
+// moving with it): on a long page inside a brain the sheet scrolls; the rail and the top bar stay where they
+// are, and the sheet's edge beside the rail runs to the bottom of the window.
 import { expect, scenario, test } from './fixture.ts'
 
-test('the side bar line runs to the bottom of a long page', async ({ page, context, baseURL }) => {
+test('a long page scrolls inside the sheet; the frame stays', async ({ page, context, baseURL }) => {
   await scenario(context, baseURL as string, 'signed-in', { overview: 'much-data' })
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/b/growth')
   await expect(page.getByRole('region', { name: "Today's sessions" }).getByRole('listitem')).toHaveCount(20)
-  const tall = await page.evaluate(() => document.documentElement.scrollHeight)
+  const tall = await page.locator('main#main').evaluate((m) => m.scrollHeight)
   expect(tall, 'a long page').toBeGreaterThan(1800)
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
-  // Just right of the side bar, at the bottom of the window: the line is drawn there.
-  const drawn = await page.evaluate(() => {
-    const side = document.querySelector('.rail') as HTMLElement
-    const x = side.getBoundingClientRect().right
-    const y = window.innerHeight - 4
-    // The element whose edge is the line: the side bar's right border or the content's left border.
-    for (const el of document.elementsFromPoint(x - 0.5, y).concat(document.elementsFromPoint(x + 0.5, y))) {
-      const r = el.getBoundingClientRect()
-      const cs = getComputedStyle(el)
-      if (
-        cs.borderRightStyle !== 'none' &&
-        Math.abs(r.right - x) < 2 &&
-        Number.parseFloat(cs.borderRightWidth) > 0
-      )
-        return true
-      if (
-        cs.borderLeftStyle !== 'none' &&
-        Math.abs(r.left - x) < 2 &&
-        Number.parseFloat(cs.borderLeftWidth) > 0
-      )
-        return true
-    }
-    return false
-  })
-  expect(drawn, 'the line is drawn at the bottom of the window').toBe(true)
+  // The window itself does not scroll.
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(900)
+  await page.locator('main#main').evaluate((m) => m.scrollTo(0, m.scrollHeight))
+  const after = await page.evaluate(() => ({
+    rail: (document.querySelector('.rail') as HTMLElement).getBoundingClientRect().top,
+    top: (document.querySelector('.topbar') as HTMLElement).getBoundingClientRect().top,
+    scrolled: (document.querySelector('main#main') as HTMLElement).scrollTop,
+  }))
+  expect(after.scrolled).toBeGreaterThan(800)
+  expect(after.rail).toBe(0)
+  expect(after.top).toBe(0)
 })
 
-test('the line between side bar and content is as tall as the page (a full-page capture too)', async ({
+test("the sheet's edge beside the rail runs from the top bar to 8px above the window's bottom", async ({
   page,
   context,
   baseURL,
@@ -46,16 +32,18 @@ test('the line between side bar and content is as tall as the page (a full-page 
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/b/growth')
   await expect(page.getByRole('region', { name: "Today's sessions" }).getByRole('listitem')).toHaveCount(20)
-  const spans = await page.evaluate(() => {
-    const x = (document.querySelector('.rail') as HTMLElement).getBoundingClientRect().right
-    const bottom = document.documentElement.scrollHeight
-    return [...document.querySelectorAll<HTMLElement>('.frame, .frame > *')].some((el) => {
-      const r = el.getBoundingClientRect()
-      const cs = getComputedStyle(el)
-      const right = Number.parseFloat(cs.borderRightWidth) > 0 && Math.abs(r.right - x) < 2
-      const left = Number.parseFloat(cs.borderLeftWidth) > 0 && Math.abs(r.left - x) < 2
-      return (right || left) && r.bottom + window.scrollY >= bottom - 1
-    })
+  await page.locator('main#main').evaluate((m) => m.scrollTo(0, m.scrollHeight))
+  const edge = await page.evaluate(() => {
+    const rail = (document.querySelector('.rail') as HTMLElement).getBoundingClientRect()
+    const sheet = document.querySelector('main#main') as HTMLElement
+    const r = sheet.getBoundingClientRect()
+    const cs = getComputedStyle(sheet)
+    return {
+      left: Math.round(r.left - rail.right),
+      top: Math.round(r.top),
+      bottom: Math.round(window.innerHeight - r.bottom),
+      line: cs.borderLeftStyle !== 'none' && Number.parseFloat(cs.borderLeftWidth) > 0,
+    }
   })
-  expect(spans, 'a rule from the top bar to the bottom of the page').toBe(true)
+  expect(edge).toEqual({ left: 0, top: 48, bottom: 8, line: true })
 })

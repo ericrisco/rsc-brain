@@ -15,7 +15,8 @@ import { online } from '../session.ts'
 import { connectHref } from '../shell/dialogs.ts'
 import { T } from '../text.ts'
 import { CopyButton } from '../ui/CopyButton.tsx'
-import { colourAt, PanelHead } from '../ui/Panel.tsx'
+import { Icon } from '../ui/icons.tsx'
+import { SectionHead } from '../ui/Section.tsx'
 import { viewState } from '../ui/state.ts'
 import { ErrorState, Skeleton } from '../ui/states.tsx'
 import type { BrainRow, Stats } from './Home.tsx'
@@ -71,14 +72,14 @@ function Step({
     <li class={done ? 'done' : undefined}>
       <div class="step-head">
         <span class={`status ${done ? 'ok' : ''}`} aria-hidden="true">
-          {done ? '✓' : ''}
+          {done ? <Icon name="check" size={14} /> : null}
         </span>
         <h3>
           <span class="n">{n}.</span> {title}
         </h3>
         <span class="tag">{word}</span>
       </div>
-      {children}
+      <div class="step-body">{children}</div>
     </li>
   )
 }
@@ -144,11 +145,11 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
     [...o.pending(stats.pendingProposals), inboxHref(slug)],
   ]
   return (
-    <section class="panel pad" data-c="orange" aria-labelledby="numbers-title">
-      <PanelHead n={1} id="numbers-title" title={o.numbers} about={o.numbersAbout} />
+    <section class="card pad" aria-labelledby="numbers-title">
+      <SectionHead id="numbers-title" title={o.numbers} about={o.numbersAbout} />
       <ul class="tiles">
-        {items.map(([n, label, href], k) => (
-          <li key={label} data-c={colourAt(k)}>
+        {items.map(([n, label, href]) => (
+          <li key={label}>
             {href ? (
               <a class="tile" href={href}>
                 <strong class="tile-n">{n}</strong> <span class="tile-label">{label}</span>
@@ -168,9 +169,8 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
 function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
   const o = T.overview
   return (
-    <section class="panel pad" data-c="cyan" aria-labelledby="today-title">
-      <PanelHead
-        n={2}
+    <section class="card pad" aria-labelledby="today-title">
+      <SectionHead
         id="today-title"
         title={o.today}
         about={o.todayAbout}
@@ -221,9 +221,8 @@ function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
 function Waiting({ slug, pending, total }: { slug: string; pending: Pending[]; total: number }) {
   const o = T.overview
   return (
-    <section class="panel pad" data-c="violet" aria-labelledby="waiting-title">
-      <PanelHead
-        n={3}
+    <section class="card pad" aria-labelledby="waiting-title">
+      <SectionHead
         id="waiting-title"
         title={o.waitingTitle}
         about={o.waitingAbout}
@@ -269,9 +268,8 @@ function Health({ health }: { health: Record<string, number> }) {
   const o = T.overview
   const found = HEALTH_ORDER.filter((k) => (health[k] ?? 0) > 0)
   return (
-    <section class="panel pad" data-c="green" aria-labelledby="health-title">
-      <PanelHead
-        n={4}
+    <section class="card pad" aria-labelledby="health-title">
+      <SectionHead
         id="health-title"
         title={o.healthTitle}
         about={o.healthAbout}
@@ -341,7 +339,10 @@ export function Brain({ slug }: { slug: string }) {
     online: online.value,
   })
   if (state === 'loading') return <Skeleton rows={3} />
-  if (!b) return r.error.value ? <ErrorState error={r.error.value} onRetry={() => void r.reload()} /> : null
+  if (!b)
+    return r.error.value ? (
+      <ErrorState error={r.error.value} onRetry={() => void r.reload()} title="h1" />
+    ) : null
   const o = ov.data.value
   if (o && !(o.firstSteps.agentConnected && o.firstSteps.firstEntry)) stepsShown.current = slug
   const fresh = o !== undefined && stepsShown.current === slug

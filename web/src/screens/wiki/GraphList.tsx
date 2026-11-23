@@ -9,6 +9,7 @@ import { useState } from 'preact/hooks'
 import { countKey, type Filters, keyOf, linksOf, type Model } from '../../graph/model.ts'
 import { formatNumber } from '../../locale.ts'
 import { T } from '../../text.ts'
+import { Dash } from '../../ui/Dash.tsx'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { pageHref, StatusTag } from './common.tsx'
 import { type PageRow, pagesResource } from './data.ts'
@@ -316,7 +317,7 @@ function FocusTable({
                   <StatusTag status={it.status} />
                 </td>
                 <td class="num">{g.hop(hops)}</td>
-                <td>{hops === 0 ? '—' : (direct.get(i)?.join('; ') ?? through(i))}</td>
+                <td>{hops === 0 ? <Dash /> : (direct.get(i)?.join('; ') ?? through(i))}</td>
                 <td>
                   <RowActions label={g.rowActions(it.title)}>
                     <button

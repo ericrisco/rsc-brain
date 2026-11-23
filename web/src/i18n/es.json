@@ -1,5 +1,13 @@
 {
   "strings": {
+    "Mode": "Modo",
+    "System": "Sistema",
+    "Light": "Claro",
+    "Dark": "Oscuro",
+    "High contrast": "Alto contraste",
+    "Where you are": "Dónde estás",
+    "Keys and gestures": "Teclas y gestos",
+    "Struck through and paler: superseded": "Tachado y más tenue: sustituido",
     "rsc-brain": "rsc-brain",
     "Skip to content": "Saltar al contenido",
     "Home": "Inicio",

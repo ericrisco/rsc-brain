@@ -1,5 +1,7 @@
-/* The Brain web: a console to work in (design mode Operate). One ground for the top bar, the side bar and
-   the page, divided by 1px rules; panels one lightness step up, with no border and no shadow. */
+/* The Brain web, on the shared tokens: one sans face for what people read, the monospaced one for what is code
+   (addresses, ids, keys, commands, the figures of tables); sentence case; colour only on data, on states and on
+   the one main action. Depth is one tone step: frame, sheet, card, and nothing deeper. Only what floats casts a
+   shadow. */
 *,
 *::before,
 *::after {
@@ -10,16 +12,21 @@ html {
   accent-color: var(--accent);
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  background: var(--ground);
 }
 
 body {
   margin: 0;
   background: var(--ground);
   color: var(--text);
-  font: 14px / 1.5 var(--sans);
-  font-variant-numeric: tabular-nums;
+  font: var(--fs-body) / var(--lh-body) var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overflow-wrap: anywhere;
+}
+
+strong,
+b {
+  font-weight: 600;
 }
 
 h1,
@@ -43,7 +50,7 @@ ol {
 a {
   color: inherit;
   text-decoration: underline;
-  text-decoration-color: var(--field-line);
+  text-decoration-color: var(--control-strong);
   text-underline-offset: 3px;
 }
 
@@ -52,7 +59,7 @@ a:hover {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -63,9 +70,9 @@ a:hover {
   top: -48px;
   z-index: 50;
   padding: 8px 12px;
-  background: var(--primary-bg);
-  color: var(--primary-fg);
-  border-radius: var(--radius);
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-radius: var(--radius-control);
 }
 
 .skip:focus {
@@ -81,8 +88,26 @@ a:hover {
   white-space: nowrap;
 }
 
-.mono {
-  font-family: var(--mono);
+/* The monospaced face, for one job: addresses, ids, keys, commands and code. */
+.mono,
+.address,
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+}
+
+:is(th, td, span, p, h3, a).mono,
+td.num {
+  font-family: var(--font-mono);
+}
+
+/* Figures that line up in columns or change in place. */
+.num,
+table,
+time {
+  font-variant-numeric: tabular-nums;
 }
 
 .muted {
@@ -91,18 +116,8 @@ a:hover {
 
 .meta {
   color: var(--muted);
-  font-size: 12px;
-}
-
-.door .topbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
-  align-items: stretch;
-  height: var(--topbar);
-  background: var(--ground);
-  border-bottom: 1px solid var(--rule);
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
 }
 
 /* The logo and the installation's name: in the rail (shell.css) and in the bar of the doors. */
@@ -111,11 +126,10 @@ a:hover {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  color: var(--text);
   text-decoration: none;
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 550;
-  letter-spacing: -0.02em;
+  font-size: var(--fs-body);
+  font-weight: 600;
 }
 
 .brand img,
@@ -124,6 +138,20 @@ a:hover {
   width: 24px;
   height: 24px;
   object-fit: contain;
+}
+
+/* An installation's own logo sits on a small plate with an edge, so a light one and a dark one both show on
+   the frame, in each mode. */
+.brand img {
+  padding: 2px;
+  background: var(--plate);
+  border: var(--line) solid var(--control-strong);
+  border-radius: var(--radius-chip);
+}
+
+/* A light logo goes on the dark plate, a dark one on the light plate: it stands out from its plate either way. */
+.brand img[data-tone="light"] {
+  background: var(--plate-dark);
 }
 
 .brand .name {
@@ -136,67 +164,47 @@ kbd,
 .kbd {
   display: inline-block;
   min-width: 22px;
-  padding: 1px 6px;
-  border: 1px solid var(--field-line);
-  border-radius: 4px;
-  font: 12px / 1.5 var(--mono);
+  padding: 0 6px;
+  background: var(--surface);
+  border: var(--line) solid var(--control);
+  border-radius: var(--radius-chip);
+  font: 12px / 18px var(--font-mono);
   color: var(--muted);
   text-align: center;
   white-space: nowrap;
 }
 
-.account-menu .who {
-  padding: 8px 10px 10px;
-  border-bottom: 1px solid var(--rule);
-  margin-bottom: 6px;
-}
-
-.account-menu button,
-.account-menu a {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  min-height: 36px;
-  padding: 0 10px;
-  background: transparent;
-  color: var(--text);
-  border: 0;
-  border-radius: 6px;
-  font: inherit;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.account-menu button:hover,
-.account-menu a:hover {
-  background: var(--surface);
-}
-
 .account-menu .menu-alert {
   margin: 6px 0 0;
   padding: 8px 10px;
-  border-left: 2px solid var(--danger);
+  border: var(--line) solid var(--negative);
+  border-radius: var(--radius-control);
   color: var(--text);
   font-size: 13px;
 }
 
+/* Offline and maintenance: a quiet strip under the top bar; the rest stays readable. */
 .offline-strip {
   display: flex;
   gap: 10px;
   align-items: baseline;
-  padding: 8px var(--gutter);
-  background: var(--surface);
-  border-bottom: 1px solid var(--rule);
-  color: var(--text);
+  margin: 0 var(--sheet-inset) var(--space-2) 0;
+  padding: 8px var(--pad);
+  background: var(--pill-warning-bg);
+  border: var(--line) solid var(--pill-line);
+  border-radius: var(--radius-card);
+  color: var(--pill-warning-ink);
   font-size: 13px;
 }
 
 .offline-strip strong {
-  color: var(--warning);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 600;
+}
+
+.offline-strip strong::before {
+  content: "!" / "";
+  margin-right: 4px;
 }
 
 .update-log pre {
@@ -204,16 +212,17 @@ kbd,
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
+/* Inside the sheet: 24px all round; the screen starts with its title row. */
 .content {
   min-width: 0;
-  padding: 28px var(--gutter) 64px;
+  padding: var(--pad);
 }
 
-/* The page uses all the width the rail leaves, up to the shared cap (plan canvas-ui §0); reading widths
-   (prose, form fields) stay where they are set. */
+/* The page uses all the width the sheet gives, up to the shared cap; reading widths (prose, form fields) stay
+   where they are set. */
 .page {
   max-width: var(--page-cap);
 }
@@ -221,8 +230,8 @@ kbd,
 /* The main column and a side one; one column below 1100px. */
 .split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--side-w, clamp(320px, 22vw, 420px));
-  gap: 32px 40px;
+  grid-template-columns: minmax(0, 1fr) var(--side-w, clamp(320px, 22vw, 384px));
+  gap: var(--gap);
   align-items: start;
 }
 
@@ -238,7 +247,7 @@ kbd,
   align-items: baseline;
   justify-content: space-between;
   gap: 8px 16px;
-  margin-bottom: 20px;
+  margin-bottom: var(--gap);
 }
 
 h1.title:focus {
@@ -250,33 +259,36 @@ h1.title:focus {
 }
 
 .title {
-  font: 550 23px / 1.2 var(--mono);
-  letter-spacing: -0.035em;
+  font: 600 var(--fs-title) / var(--lh-title) var(--font-sans);
 }
 
 .lead {
   color: var(--muted);
-  font-size: 14px;
-  max-width: 64ch;
+  font-size: var(--fs-body);
+  max-width: 72ch;
 }
 
 /* ── Controls ─────────────────────────────────────────────────────────── */
 
+/* A button: secondary with an edge, quiet without one, the one main action near black. 32px tall, 6px corners. */
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: var(--control);
-  padding: 0 18px;
-  border-radius: 18px;
-  border: 1px solid var(--field-line);
-  background: transparent;
+  min-height: var(--control-height);
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  border: var(--line) solid var(--control-strong);
+  background: var(--surface);
   color: var(--text);
-  font: 550 14px / 1 var(--sans);
+  font: 500 var(--fs-body) / 1 var(--font-sans);
   text-decoration: none;
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
 }
 
 .button:hover {
@@ -284,22 +296,37 @@ h1.title:focus {
 }
 
 .button.primary {
-  background: var(--primary-bg);
-  border-color: var(--primary-bg);
-  color: var(--primary-fg);
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-ink);
 }
 
 .button.primary:hover {
-  background: var(--text);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+/* What destroys (delete, anonymise, archive): only inside its confirmation, an outlined button in the negative
+   colour, never a red fill. */
+.button.danger {
+  background: var(--surface);
+  border-color: var(--negative);
+  color: var(--negative);
+}
+
+.button.danger:hover {
+  background: var(--pill-negative-bg);
+  border-color: var(--negative);
 }
 
 .button.quiet {
+  background: transparent;
   border-color: transparent;
-  padding: 0 10px;
+  padding: 0 8px;
 }
 
 .button.quiet:hover {
-  background: var(--surface);
+  background: var(--active);
   border-color: transparent;
 }
 
@@ -320,29 +347,30 @@ h1.title:focus {
   color: inherit;
   font: inherit;
   text-decoration: underline;
-  text-decoration-color: var(--field-line);
+  text-decoration-color: var(--control-strong);
   text-underline-offset: 3px;
   cursor: pointer;
 }
 
+/* A field: its label above, its hint and its problem beside it. */
 .field {
   display: grid;
-  gap: 4px;
+  gap: 8px;
 }
 
 .field label {
-  font-weight: 550;
-  font-size: 13px;
+  font-weight: 500;
+  font-size: var(--fs-body);
 }
 
 .field .hint {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .problem,
 .field .problem {
-  color: var(--danger);
+  color: var(--negative);
   font-size: 13px;
 }
 
@@ -361,36 +389,37 @@ input[type="email"],
 input[type="password"],
 input[type="url"],
 input[type="search"],
-input[type="date"] {
+input[type="date"],
+input[type="number"] {
   width: 100%;
   min-width: 0;
-  height: var(--field);
-  padding: 0 12px;
-  background: var(--ground);
+  height: var(--control-height);
+  padding: 0 10px;
+  background: var(--surface);
   color: var(--text);
-  border: 1px solid var(--field-line);
-  border-radius: var(--radius);
-  font: 14px var(--sans);
+  border: var(--line) solid var(--control-strong);
+  border-radius: var(--radius-control);
+  font: var(--fs-body) var(--font-sans);
 }
 
 input[aria-invalid="true"] {
-  border-color: var(--danger);
+  border-color: var(--negative);
 }
 
 input[readonly] {
-  background: transparent;
+  background: var(--raised);
   border-style: dashed;
   color: var(--muted);
 }
 
 input.code {
-  font: 550 19px var(--mono);
+  font: 500 19px var(--font-mono);
   letter-spacing: 0.3em;
 }
 
 .form {
   display: grid;
-  gap: 18px;
+  gap: var(--space-4);
 }
 
 .actions {
@@ -402,7 +431,7 @@ input.code {
 
 .reason {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 fieldset {
@@ -419,44 +448,53 @@ legend {
   align-items: baseline;
   gap: 10px;
   padding: 0 0 12px;
-  font: 550 13px var(--mono);
-  color: var(--muted);
+  font: 500 var(--fs-body) var(--font-sans);
+  color: var(--text);
 }
 
 legend .step {
-  color: var(--accent);
+  color: var(--muted);
 }
 
 /* ── States ───────────────────────────────────────────────────────────── */
 
+/* A message in the flow: a pale tint of its state with an edge in its colour, and its kind as a word. */
 .alert {
   display: grid;
   gap: 2px;
   padding: 12px 14px;
-  background: var(--raised);
-  border-radius: var(--radius);
-  border-left: 3px solid var(--danger);
+  background: var(--pill-negative-bg);
+  color: var(--text);
+  border: var(--line) solid var(--negative);
+  border-radius: var(--radius-card);
 }
 
 .alert .kind {
-  color: var(--danger);
-  font: 600 12px var(--sans);
+  color: var(--pill-negative-ink);
+  font: 600 var(--fs-small) var(--font-sans);
 }
 
 .alert.warn {
-  border-left-color: var(--warning);
+  background: var(--pill-warning-bg);
+  border-color: var(--warning);
 }
 
 .alert.warn .kind {
-  color: var(--warning);
+  color: var(--pill-warning-ink);
+}
+
+/* A message at the top of a screen (set up, welcome, deleted) does not touch what is under it. */
+.page > .alert {
+  margin-bottom: var(--gap);
 }
 
 .alert.ok {
-  border-left-color: var(--accent);
+  background: var(--pill-positive-bg);
+  border-color: var(--positive);
 }
 
 .alert.ok .kind {
-  color: var(--accent);
+  color: var(--pill-positive-ink);
 }
 
 /* A state fills the work area, its words centred in it, so an empty screen is never a card stuck on the left. */
@@ -466,7 +504,8 @@ legend .step {
   justify-items: center;
   padding: 56px 24px;
   background: var(--surface);
-  border-radius: var(--radius);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-card);
   text-align: center;
 }
 
@@ -474,19 +513,28 @@ legend .step {
   max-width: 72ch;
 }
 
+/* A state that is the whole screen sits in the middle of the sheet, like a doorway. */
+.state.whole {
+  max-width: 480px;
+  min-height: min(70vh, 640px);
+  margin: 0 auto;
+  align-content: center;
+}
+
+.state h1,
 .state h2 {
-  font: 550 16px / 1.3 var(--sans);
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
 }
 
 /* biome-ignore lint/style/noDescendingSpecificity: the state's own label colour, overridden per kind below */
 .state .kind {
-  font: 600 12px var(--sans);
+  font: 600 var(--fs-small) var(--font-sans);
   color: var(--muted);
 }
 
 .state.error .kind,
 .state.forbidden .kind {
-  color: var(--danger);
+  color: var(--negative);
 }
 
 .state.offline .kind {
@@ -501,6 +549,7 @@ legend .step {
   margin-top: 8px;
 }
 
+/* Loading: the final layout in flat grey bars of the real size; no shimmer, no jump when the data comes. */
 .skeleton {
   display: grid;
   gap: 10px;
@@ -522,14 +571,14 @@ legend .step {
 
 .skeleton .block {
   height: 64px;
-  border-radius: var(--radius);
-  background: var(--surface);
+  border-radius: var(--radius-card);
+  background: var(--raised);
 }
 
 /* ── Lists ────────────────────────────────────────────────────────────── */
 
 .rows {
-  border-top: 1px solid var(--rule);
+  border-top: var(--line) solid var(--rule);
 }
 
 .rows li {
@@ -537,13 +586,13 @@ legend .step {
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 120px;
   gap: 4px 24px;
   align-items: baseline;
+  min-height: var(--row-height);
   padding: 14px 4px;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--line) solid var(--rule);
 }
 
 .rows .name {
-  font: 550 14px var(--mono);
-  letter-spacing: -0.02em;
+  font-weight: 600;
 }
 
 .rows .role {
@@ -552,13 +601,75 @@ legend .step {
   font-size: 13px;
 }
 
+/* A status mark: a pale tint with dark ink of the same hue, a sign before the word. Never squeezed. */
 .tag {
   display: inline-block;
-  padding: 0 6px;
-  border: 1px solid var(--field-line);
-  border-radius: 4px;
-  font: 12px / 1.6 var(--mono);
-  color: var(--muted);
+  flex: none;
+  padding: 0 8px;
+  background: var(--pill-neutral-bg);
+  color: var(--pill-neutral-ink);
+  border: var(--line) solid var(--pill-line);
+  border-radius: var(--radius-pill);
+  font: 500 var(--fs-small) / 20px var(--font-sans);
+  white-space: nowrap;
+}
+
+.tag.mono {
+  font-family: var(--font-mono);
+}
+
+.tag.ok {
+  background: var(--pill-positive-bg);
+  color: var(--pill-positive-ink);
+}
+
+.tag.ok::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 8px;
+  margin: 0 6px 2px 1px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.tag.bad {
+  background: var(--pill-negative-bg);
+  color: var(--pill-negative-ink);
+}
+
+.tag.bad::before {
+  content: "×" / "";
+  margin-right: 4px;
+}
+
+/* A state never rests on colour alone: its mark has a sign of its own before the word. */
+.tag.warn {
+  background: var(--pill-warning-bg);
+  color: var(--pill-warning-ink);
+}
+
+.tag.warn::before {
+  content: "!" / "";
+  margin-right: 4px;
+  font-weight: 600;
+}
+
+/* Something happening now (an open session, a proposal or an invitation that waits): an accent tint with an
+   accent edge and a dot, so it is not the grey of the states that are over. */
+.tag.live {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.tag.live::before {
+  content: "●" / "";
+  margin-right: 4px;
+  color: var(--accent);
+  font-size: 9px;
+  vertical-align: 1px;
 }
 
 .facts {
@@ -574,7 +685,7 @@ legend .step {
 }
 
 .facts + .state {
-  margin-top: 28px;
+  margin-top: var(--gap);
 }
 
 /* The way forward when a brain list is empty, and copying a text. */
@@ -598,18 +709,19 @@ legend .step {
 }
 
 .steps li::marker {
-  color: var(--accent);
-  font: 550 13px var(--mono);
+  color: var(--muted);
+  font: 600 13px var(--font-sans);
 }
 
+/* A command to copy: monospaced, on the raised tone, with its button. */
 pre.command {
   max-width: 100%;
   overflow-x: auto;
   padding: 10px 12px;
-  background: var(--ground);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  font: 13px / 1.5 var(--mono);
+  background: var(--raised);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-control);
+  font: 13px / 1.5 var(--font-mono);
   /* Breaks at spaces first; a long address only where it must. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -662,15 +774,23 @@ pre.command .word {
 
 /* ── Sign-in, first run, invitation, reset ─────────────────────────────── */
 
+/* A door: the bar with the installation's name on the frame's ground, the form on a white sheet centred. */
 .door {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: var(--topbar) 1fr auto;
+  grid-template-rows: var(--topbar-height) 1fr auto;
+  background: var(--ground);
 }
 
-.door .topbar .brand {
+.door-bar {
+  display: flex;
+  align-items: center;
+  height: var(--topbar-height);
+  padding: 0 var(--space-4);
+}
+
+.door-bar .brand {
   flex: 1 1 auto;
-  padding: 0 20px;
 }
 
 .door .language-picker--door {
@@ -703,29 +823,27 @@ pre.command .word {
 
 .door main {
   display: grid;
-  align-content: start;
+  align-content: center;
   justify-items: center;
   padding: clamp(24px, 8vh, 88px) 16px 48px;
 }
 
-/* A door's one panel: the shared panel (corners in its colour) laid out as a form. */
-.door .panel {
+.door-card {
   width: 100%;
-  max-width: 420px;
+  max-width: 440px;
   display: grid;
   gap: 20px;
-  padding: 28px;
+  padding: 32px;
+  background: var(--surface);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-sheet);
 }
 
-.door .panel.wide {
+.door-card.wide {
   max-width: 600px;
 }
 
-.door .panel .title {
-  font-size: 23px;
-}
-
-.door .panel hr {
+.door-card hr {
   width: 100%;
   height: 1px;
   margin: 4px 0;
@@ -737,8 +855,8 @@ pre.command .word {
   display: grid;
   gap: 10px;
   padding: 14px 16px;
-  background: var(--ground);
-  border-radius: var(--radius);
+  background: var(--raised);
+  border-radius: var(--radius-card);
 }
 
 .invited li {
@@ -749,7 +867,7 @@ pre.command .word {
 }
 
 .invited .brainname {
-  font: 550 13px var(--mono);
+  font-weight: 600;
 }
 
 .door footer {
@@ -759,19 +877,20 @@ pre.command .word {
   gap: 8px 20px;
   padding: 16px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
-/* ── Dialogs (native) ─────────────────────────────────────────────────── */
+/* ── Dialogs (native): opaque, on the one floating shadow ──────────────── */
 
 dialog {
   width: min(640px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   padding: 0;
-  background: var(--raised);
+  background: var(--surface);
   color: var(--text);
-  border: 1px solid var(--rule);
-  border-radius: 12px;
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-float);
 }
 
 dialog::backdrop {
@@ -783,18 +902,18 @@ dialog::backdrop {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 14px 16px 14px 20px;
-  border-bottom: 1px solid var(--rule);
+  padding: 12px 16px 12px 24px;
+  border-bottom: var(--line) solid var(--rule);
 }
 
 .dialog-head h2 {
-  font: 550 16px var(--mono);
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
 }
 
 .dialog-body {
   display: grid;
-  gap: 14px;
-  padding: 16px 20px 20px;
+  gap: var(--space-4);
+  padding: 16px 24px 24px;
   overflow-y: auto;
 }
 
@@ -808,13 +927,13 @@ dialog::backdrop {
   padding: 0 8px 8px 0;
   color: var(--muted);
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--fs-small);
   text-align: left;
 }
 
 .shortcut-table td {
   padding: 10px 8px 10px 0;
-  border-top: 1px solid var(--rule);
+  border-top: var(--line) solid var(--rule);
   vertical-align: top;
 }
 
@@ -827,12 +946,15 @@ dialog::backdrop {
   display: grid;
   gap: 2px;
   padding: 10px 12px;
-  background: var(--surface);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
+}
+
+.results li:hover {
+  background: var(--active);
 }
 
 .results .rt {
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .results .snippet {
@@ -859,16 +981,15 @@ dialog::backdrop {
 
 @media (max-width: 767px) {
   :root {
-    --topbar: 56px;
-    --gutter: 16px;
+    --pad: 16px;
+  }
+
+  .card.pad {
+    padding: 12px 14px 16px;
   }
 
   .only-narrow {
     display: inline-flex;
-  }
-
-  .door .topbar .brand {
-    padding: 0 12px;
   }
 
   .door .language-picker--door {
@@ -891,11 +1012,17 @@ dialog::backdrop {
   input[type="password"],
   input[type="url"],
   input[type="search"],
-  input[type="date"] {
+  input[type="date"],
+  input[type="number"] {
+    height: var(--touch);
     font-size: 16px;
   }
 
-  .door .panel {
+  .button {
+    min-height: var(--touch);
+  }
+
+  .door-card {
     padding: 22px 18px;
   }
 
@@ -912,7 +1039,7 @@ dialog::backdrop {
 /* The narrowest phones: the bar keeps its controls; the installation name stays for screen readers
    while the logo stands for it. Fonts differ by system, so the bar must not count on their width. */
 @media (max-width: 359px) {
-  .door .topbar .brand .name {
+  .door-bar .brand .name {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -921,14 +1048,27 @@ dialog::backdrop {
     white-space: nowrap;
   }
 
-  .door .topbar .brand {
+  .door-bar .brand {
     flex: 0 0 auto;
-    padding: 0 8px;
   }
 
   .door .language-picker--door button {
     min-height: 30px;
     padding-inline: 6px;
+  }
+}
+
+/* Forced colours: every control keeps an edge the system draws. */
+@media (forced-colors: active) {
+  .button,
+  .tag,
+  .state,
+  dialog {
+    border-color: CanvasText;
+  }
+
+  .button.quiet {
+    border-color: ButtonText;
   }
 }
 
@@ -949,17 +1089,17 @@ dialog::backdrop {
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
-  gap: 16px;
+  gap: var(--gap);
 }
 
 /* Figures in a row of tiles: a word above, the number below. */
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
   overflow: hidden;
   background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-card);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-card);
 }
 
 .tiles > li {
@@ -969,8 +1109,8 @@ dialog::backdrop {
   min-width: 0;
   margin: -1px 0 0 -1px;
   padding: 16px 20px 18px;
-  border-top: 1px solid var(--rule);
-  border-left: 1px solid var(--rule);
+  border-top: var(--line) solid var(--border);
+  border-left: var(--line) solid var(--border);
 }
 
 .tiles .tile-label {
@@ -981,8 +1121,8 @@ dialog::backdrop {
 
 .tiles .tile-n {
   color: var(--text);
-  font: 550 26px / 1.1 var(--mono);
-  letter-spacing: -0.03em;
+  font: 400 var(--fs-kpi) / 1.15 var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 
 .tiles a {
@@ -997,18 +1137,14 @@ dialog::backdrop {
 }
 
 .home-tiles {
-  margin-bottom: 24px;
+  margin-bottom: var(--gap);
 }
 
-/* A tile whose number comes first in the words ("37 not in the wiki yet") and is drawn under them. */
+/* A tile whose number comes first in the words ("37 not in the wiki yet"): the figure, its words under it. */
 .tiles .tile {
   display: flex;
-  flex-direction: column-reverse;
-  gap: 6px;
-}
-
-.tiles .tile .tile-label::first-letter {
-  text-transform: uppercase;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .tiles a.tile .tile-n {
@@ -1035,13 +1171,13 @@ dialog::backdrop {
   gap: 6px;
   padding: 16px 18px;
   background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-card);
   min-width: 0;
 }
 
 .cards > li:hover {
-  border-color: var(--field-line);
+  border-color: var(--control-strong);
 }
 
 .cards > li:focus-within {
@@ -1063,8 +1199,7 @@ dialog::backdrop {
 .card-head .name {
   margin-right: auto;
   color: var(--text);
-  font: 550 16px / 1.3 var(--mono);
-  letter-spacing: -0.02em;
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
   text-decoration: none;
   overflow-wrap: anywhere;
 }
@@ -1087,8 +1222,8 @@ dialog::backdrop {
 }
 
 .cards .review {
-  color: var(--accent);
-  font: 550 13px var(--sans);
+  color: var(--text);
+  font: 500 13px var(--font-sans);
 }
 
 /* Its own link over the card's (the whole card opens the brain; this opens its inbox), 24 px high. */
@@ -1109,12 +1244,12 @@ dialog::backdrop {
   gap: 12px 24px;
   margin-bottom: 20px;
   padding: 16px 18px;
-  border: 1px dashed var(--field-line);
-  border-radius: var(--radius);
+  background: var(--raised);
+  border-radius: var(--radius-card);
 }
 
 .callout h2 {
-  font: 550 15px var(--sans);
+  font: 600 var(--fs-section) var(--font-sans);
   margin-bottom: 2px;
 }
 
@@ -1127,13 +1262,13 @@ dialog::backdrop {
 
 .lead.purpose {
   max-width: 720px;
-  margin: -8px 0 24px;
+  margin: -16px 0 var(--gap);
   color: var(--muted);
 }
 
 .overview {
   display: grid;
-  gap: 32px;
+  gap: var(--gap);
 }
 
 .section-head {
@@ -1143,34 +1278,34 @@ dialog::backdrop {
 }
 
 .section-title {
-  margin-bottom: 10px;
-  font: 600 12px var(--sans);
-  letter-spacing: 0.02em;
-  color: var(--muted);
+  margin-bottom: 8px;
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
+  color: var(--text);
 }
 
 .section-head .count {
-  font: 550 12px var(--mono);
-  color: var(--accent);
+  font: 400 var(--fs-small) var(--font-sans);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .overview-grid {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: 32px 40px;
+  gap: var(--gap);
   align-items: start;
 }
 
 .overview-side {
   display: grid;
-  gap: 32px;
+  gap: var(--gap);
 }
 
 /* Wide: today's sessions, what waits and the health in three columns. */
 @media (min-width: 1500px) {
   .overview-grid {
     grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr);
-    gap: 32px 48px;
+    gap: var(--gap);
   }
 
   .overview-side {
@@ -1178,14 +1313,16 @@ dialog::backdrop {
   }
 }
 .list {
-  border-top: 1px solid var(--rule);
+  border-top: var(--line) solid var(--rule);
 }
 
 .list > li {
   display: grid;
+  align-content: center;
   gap: 4px;
+  min-height: var(--row-height);
   padding: 12px 0;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--line) solid var(--rule);
   min-width: 0;
 }
 
@@ -1210,7 +1347,7 @@ dialog::backdrop {
 }
 
 .list-title {
-  font: 550 14px / 1.4 var(--sans);
+  font: 500 var(--fs-body) / var(--lh-body) var(--font-sans);
   overflow-wrap: anywhere;
 }
 
@@ -1229,26 +1366,8 @@ dialog::backdrop {
 }
 
 .live {
-  color: var(--accent);
-}
-
-.tag.live {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* A state never rests on colour alone (canvas-ui CA9): its tag has a mark of its own before the word, its
-   colour and its ground. The mark is decoration; screen readers hear the word. */
-.tag.warn {
-  border-color: var(--warn-line);
-  background: var(--warn-bg);
-  color: var(--warn-fg);
-}
-
-.tag.warn::before {
-  content: "!" / "";
-  margin-right: 4px;
-  font-weight: 700;
+  color: var(--text);
+  font-weight: 500;
 }
 
 .small {
@@ -1257,7 +1376,7 @@ dialog::backdrop {
 
 .quiet-empty {
   padding: 12px 0;
-  border-top: 1px solid var(--rule);
+  border-top: var(--line) solid var(--rule);
   color: var(--muted);
 }
 
@@ -1276,7 +1395,7 @@ dialog::backdrop {
 }
 
 .first-steps h2 {
-  font: 550 16px / 1.3 var(--sans);
+  font: 500 16px / 1.3 var(--sans);
 }
 
 .first-steps ol {
@@ -1286,13 +1405,25 @@ dialog::backdrop {
   margin-top: 8px;
 }
 
+/* Each step spans two rows of the list's grid, its head and its body, so the heads line up across the columns
+   and so do the bodies, whatever one head or one body holds. */
 /* biome-ignore lint/style/noDescendingSpecificity: a different list from .list; the rules never meet */
 .first-steps li {
   display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
   gap: 8px;
   justify-items: start;
   padding: 16px 0;
-  border-top: 1px solid var(--rule);
+  border-top: var(--line) solid var(--rule);
+}
+
+.step-body {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  justify-items: start;
+  width: 100%;
 }
 
 .step-head {
@@ -1305,12 +1436,12 @@ dialog::backdrop {
 
 .step-head h3 {
   margin-right: auto;
-  font: 550 14px var(--sans);
+  font: 600 var(--fs-body) var(--font-sans);
 }
 
 .step-head h3 .n {
   color: var(--muted);
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .step-head .status {
@@ -1318,20 +1449,15 @@ dialog::backdrop {
   place-items: center;
   width: 20px;
   height: 20px;
-  border: 1px solid var(--field-line);
+  border: var(--line) solid var(--control-strong);
   border-radius: 50%;
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .step-head .status.ok {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--primary-fg);
-}
-
-.first-steps li.done .tag {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--positive);
+  background: var(--pill-positive-bg);
+  color: var(--pill-positive-ink);
 }
 
 .first-steps li.done h3 {
@@ -1343,9 +1469,9 @@ blockquote.ask {
   width: 100%;
   max-width: 640px;
   padding: 10px 12px;
-  background: var(--ground);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  background: var(--raised);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-control);
   font-size: 13px;
   overflow-wrap: anywhere;
 }
@@ -1375,16 +1501,16 @@ select,
 textarea {
   width: 100%;
   min-width: 0;
-  background: var(--ground);
+  background: var(--surface);
   color: var(--text);
-  border: 1px solid var(--field-line);
-  border-radius: var(--radius);
-  font: 14px var(--sans);
+  border: var(--line) solid var(--control-strong);
+  border-radius: var(--radius-control);
+  font: var(--fs-body) var(--font-sans);
 }
 
 select {
-  height: var(--field);
-  padding: 0 10px;
+  height: var(--control-height);
+  padding: 0 8px;
 }
 
 textarea {
@@ -1404,28 +1530,29 @@ select:disabled {
 /* People */
 
 .people {
-  margin-top: 20px;
+  margin-top: var(--gap);
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-  gap: 32px 40px;
+  gap: var(--gap);
   align-items: start;
 }
 
 .people-main,
 .people-side {
   display: grid;
-  gap: 28px;
+  gap: var(--gap);
   min-width: 0;
 }
 
 .invite-form {
-  padding: 20px 22px;
+  padding: 20px 24px;
   background: var(--surface);
-  border-radius: var(--radius);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-card);
 }
 
 .invite-form h2 {
-  font: 550 16px var(--sans);
+  font: 600 var(--fs-section) var(--font-sans);
 }
 
 .pick {
@@ -1461,12 +1588,12 @@ select:disabled {
   display: grid;
   gap: 8px;
   padding: 18px 20px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
+  border: var(--line) solid var(--positive);
+  border-radius: var(--radius-card);
 }
 
 .links-shown h2 {
-  font: 550 16px var(--sans);
+  font: 600 var(--fs-section) var(--font-sans);
 }
 
 .links-shown ul {
@@ -1478,7 +1605,7 @@ select:disabled {
   display: grid;
   gap: 6px;
   padding: 12px 0;
-  border-top: 1px solid var(--rule);
+  border-top: var(--line) solid var(--rule);
 }
 
 /* A one-time link, next to what made it. In a row it takes the whole width under the row. */
@@ -1491,8 +1618,8 @@ select:disabled {
 .list > li > .link-card {
   grid-column: 1 / -1;
   padding: 12px 14px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
+  border: var(--line) solid var(--positive);
+  border-radius: var(--radius-card);
 }
 
 @media (max-width: 1023px) {
@@ -1539,7 +1666,7 @@ select:disabled {
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 12px 16px;
-  margin: 16px 0 24px;
+  margin: 0 0 var(--gap);
 }
 
 .filters .field {
@@ -1574,28 +1701,28 @@ select:disabled {
 }
 
 .map-type {
-  margin-bottom: 32px;
+  margin-bottom: var(--gap);
 }
 
 .type-title {
   margin-bottom: 12px;
-  font: 550 16px / 1.3 var(--sans);
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
 }
 
 /* An area is read as one column of pages, never cut between two columns. */
 .map-groups {
   column-width: 340px;
-  column-gap: 40px;
+  column-gap: var(--gap);
 }
 
 .map-group {
   break-inside: avoid;
-  margin-bottom: 24px;
+  margin-bottom: var(--gap);
 }
 
 .map-group .area {
   margin: 0 0 6px;
-  font: 550 12px / 1.4 var(--mono);
+  font: 400 var(--fs-small) / var(--lh-small) var(--font-mono);
   color: var(--muted);
 }
 
@@ -1620,16 +1747,18 @@ select:disabled {
 .tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 20px;
-  margin-bottom: 24px;
-  border-bottom: 1px solid var(--rule);
+  gap: 4px 24px;
+  margin-bottom: var(--gap);
+  border-bottom: var(--line) solid var(--border);
 }
 
 .tabs a {
   display: inline-flex;
   align-items: center;
-  min-height: 36px;
-  color: var(--nav);
+  /* A count after the label is a flex item: the space between them is this gap, not a text space. */
+  gap: 6px;
+  min-height: 40px;
+  color: var(--muted);
   text-decoration: none;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
@@ -1641,14 +1770,68 @@ select:disabled {
 
 .tabs a[aria-current] {
   color: var(--text);
-  font-weight: 550;
+  font-weight: 600;
   border-bottom-color: var(--text);
+}
+
+/* A phone: the tabs stay on one line and slide sideways; the last one is cut by the edge when more wait. */
+@media (max-width: 767px) {
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--control-strong) transparent;
+  }
+
+  .tabs a {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .tabs .tab-list {
+    flex-wrap: nowrap;
+  }
+
+  .tabs .tab-list li {
+    flex: none;
+  }
+
+  /* More tabs to the left or the right: a mark at that edge, gone once the row is slid to that end. */
+  .tabs[data-more-start]::before {
+    content: "‹";
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    flex: none;
+    align-self: center;
+    /* No width of its own: the glyph hangs in the blank before the first tab (see tabsStart). */
+    width: 0;
+    margin-right: -24px;
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .tabs[data-more]::after {
+    content: "›";
+    position: sticky;
+    right: 0;
+    flex: none;
+    align-self: center;
+    padding: 0 4px 0 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+  }
 }
 
 .wiki-page {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
-  gap: 32px 40px;
+  gap: var(--gap);
   align-items: start;
 }
 
@@ -1659,7 +1842,7 @@ select:disabled {
 
 .page-aside {
   display: grid;
-  gap: 28px;
+  gap: var(--gap);
   min-width: 0;
 }
 
@@ -1669,13 +1852,13 @@ select:disabled {
 
 .aside-sub {
   margin: 12px 0 4px;
-  font: 550 13px / 1.4 var(--sans);
+  font: 600 13px / 1.4 var(--font-sans);
 }
 
 .link-kind h4 {
   margin: 8px 0 2px;
   color: var(--muted);
-  font: 12px / 1.4 var(--sans);
+  font: var(--fs-small) / var(--lh-small) var(--font-sans);
 }
 
 /* biome-ignore lint/style/noDescendingSpecificity: scoped to a wiki block; it never competes with the earlier rule */
@@ -1684,7 +1867,6 @@ select:disabled {
   min-width: 0;
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: scoped to a wiki block; it never competes with the earlier rule */
 .plain > li .tag {
   margin-left: 6px;
 }
@@ -1698,8 +1880,9 @@ select:disabled {
   font-size: 13px;
 }
 
+/* Reading: the text face in a column of 60 to 80 characters, whatever the width of the window. */
 .prose {
-  max-width: 72ch;
+  max-width: 55ch;
   font-size: 15px;
   line-height: 1.65;
 }
@@ -1711,11 +1894,12 @@ select:disabled {
 
 .prose :is(h1, h2, h3, h4) {
   margin-top: 24px;
-  font: 550 16px / 1.35 var(--sans);
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
 }
 
 .prose h1 {
-  font-size: 19px;
+  font-size: 20px;
+  line-height: 26px;
 }
 
 .prose ul,
@@ -1740,15 +1924,15 @@ select:disabled {
 .prose code {
   padding: 1px 4px;
   background: var(--raised);
-  border-radius: 4px;
-  font: 13px var(--mono);
+  border-radius: var(--radius-chip);
+  font: 13px var(--font-mono);
 }
 
 .prose pre {
   padding: 12px;
   overflow-x: auto;
-  background: var(--surface);
-  border-radius: var(--radius);
+  background: var(--raised);
+  border-radius: var(--radius-control);
 }
 
 .prose pre code {
@@ -1758,7 +1942,7 @@ select:disabled {
 
 .prose blockquote {
   padding-left: 12px;
-  border-left: 2px solid var(--rule);
+  border-left: 2px solid var(--border);
   color: var(--muted);
 }
 
@@ -1772,13 +1956,32 @@ select:disabled {
 .prose th,
 .prose td {
   padding: 4px 10px;
-  border: 1px solid var(--rule);
+  border: var(--line) solid var(--border);
+}
+
+/* A mention of another page, a link out and a mention that leads nowhere differ by more than colour: a solid
+   underline, an arrow after the link out, a dashed underline and a mark for the broken one. */
+.prose a:not(.wikilink)[href^="http"]::after {
+  content: "↗" / "";
+  margin-left: 2px;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.prose .wikilink {
+  text-decoration-style: solid;
 }
 
 .prose .wikilink.broken {
   color: var(--warning);
   text-decoration-style: dashed;
   text-decoration-color: var(--warning);
+}
+
+.prose .wikilink.broken::before {
+  content: "?" / "";
+  margin-right: 2px;
+  font-weight: 600;
 }
 
 .prose .wikilink.retired,
@@ -1790,7 +1993,6 @@ select:disabled {
   font-size: 12px;
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: scoped to a wiki block; it never competes with the earlier rule */
 .tags .tag + .tag {
   margin-left: 6px;
 }
@@ -1837,7 +2039,7 @@ select:disabled {
 }
 
 .history > section + section {
-  margin-top: 32px;
+  margin-top: var(--gap);
 }
 
 .compare {
@@ -1852,9 +2054,10 @@ select:disabled {
 .diff-part h3 {
   margin-bottom: 4px;
   color: var(--muted);
-  font: 550 12px / 1.4 var(--sans);
+  font: 500 var(--fs-small) / var(--lh-small) var(--font-sans);
 }
 
+/* A difference: what is added and what is removed on a pale tint, each with its sign. */
 .diff {
   white-space: pre-wrap;
   line-height: 1.65;
@@ -1863,14 +2066,26 @@ select:disabled {
 .diff ins {
   text-decoration: underline;
   text-decoration-color: var(--positive);
-  text-decoration-thickness: 2px;
-  background: color-mix(in oklch, var(--positive) 18%, transparent);
+  text-decoration-thickness: 1px;
+  background: var(--pill-positive-bg);
+  color: var(--pill-positive-ink);
 }
 
 .diff del {
   text-decoration: line-through;
-  text-decoration-color: var(--danger);
-  background: color-mix(in oklch, var(--danger) 16%, transparent);
+  text-decoration-color: var(--negative);
+  background: var(--pill-negative-bg);
+  color: var(--pill-negative-ink);
+}
+
+.diff ins::before {
+  content: "+" / "";
+  font-weight: 600;
+}
+
+.diff del::before {
+  content: "−" / "";
+  font-weight: 600;
 }
 
 h2.section-title:focus {
@@ -1879,7 +2094,7 @@ h2.section-title:focus {
 
 .page-edit {
   display: grid;
-  gap: 40px;
+  gap: var(--gap);
   max-width: 820px;
 }
 
@@ -1913,8 +2128,8 @@ h2.section-title:focus {
 .preview {
   min-height: 200px;
   padding: 12px;
-  border: 1px dashed var(--field-line);
-  border-radius: var(--radius);
+  border: var(--line) dashed var(--control-strong);
+  border-radius: var(--radius-card);
 }
 
 .suggest-host,
@@ -1926,9 +2141,10 @@ h2.section-title:focus {
   margin-top: 4px;
   max-height: 260px;
   overflow-y: auto;
-  border: 1px solid var(--field-line);
-  border-radius: var(--radius);
-  background: var(--raised);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
 }
 
 /* biome-ignore lint/style/noDescendingSpecificity: scoped to a wiki block; it never competes with the earlier rule */
@@ -1939,7 +2155,8 @@ h2.section-title:focus {
 }
 
 .suggest li[aria-selected="true"] {
-  outline: 2px solid var(--accent);
+  background: var(--active);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: -2px;
 }
 
@@ -1970,12 +2187,12 @@ h2.section-title:focus {
 }
 
 .conflict h2 {
-  font: 550 16px / 1.3 var(--sans);
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
 }
 
 /* biome-ignore lint/style/noDescendingSpecificity: scoped to a wiki block; it never competes with the earlier rule */
 .conflict h3 {
-  font: 550 14px / 1.3 var(--sans);
+  font: 600 var(--fs-body) / var(--lh-body) var(--font-sans);
 }
 
 .conflict-actions {
@@ -2024,13 +2241,12 @@ h2.section-title:focus {
 
 .choice {
   gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--field-line);
-  border-radius: var(--radius);
+  padding: 0;
+  border: 0;
 }
 
 .choice legend {
-  padding: 0 4px;
+  padding: 0 0 4px;
   color: var(--text);
 }
 
@@ -2060,7 +2276,7 @@ h2.section-title:focus {
 .result-part h4 {
   margin-bottom: 4px;
   color: var(--muted);
-  font: 550 12px / 1.4 var(--sans);
+  font: 500 12px / 1.4 var(--sans);
 }
 
 pre.version {
@@ -2104,7 +2320,7 @@ pre.version {
 .suggest.over ul,
 .suggest.over > p {
   margin: 0;
-  box-shadow: 0 6px 18px oklch(0 0 0 / 0.35);
+  box-shadow: var(--shadow-float);
 }
 
 .suggest.over > p {
@@ -2142,7 +2358,7 @@ pre.version {
   gap: 8px;
   min-height: 24px;
   cursor: pointer;
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .filter-box[open] > summary {
@@ -2151,6 +2367,18 @@ pre.version {
 
 .filter-box .filters {
   margin: 8px 0 0;
+}
+
+/* In a part (already a card on the sheet) the audit's filters are not a card of their own: frame, sheet, card. */
+.part-body > form.filter-box {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+/* The button of a filter form sits apart from the last field. */
+form.filter-box > .actions {
+  margin-top: var(--space-4);
 }
 
 .check-line {
@@ -2317,6 +2545,23 @@ pre.version {
   }
 }
 
+/* Wide: the decision starts level with why it was sent, with no rule over it. */
+@media (min-width: 1280px) {
+  .proposal-body > .why,
+  .proposal-body > .decide {
+    margin-top: 0;
+  }
+
+  .proposal-body > .decide {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .proposal-body {
+    margin-top: 20px;
+  }
+}
+
 .back-link {
   margin-bottom: 8px;
   font-size: 13px;
@@ -2342,8 +2587,13 @@ pre.version {
   overflow-wrap: anywhere;
 }
 
+.op-card:has(> .op-head input:checked) {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 var(--line) var(--accent);
+}
+
 .op-card.stale {
-  border-left: 3px solid var(--warning);
+  border-color: var(--warning);
 }
 
 .op-head {
@@ -2375,7 +2625,7 @@ label.op-head:hover {
 
 .op-title {
   min-width: 0;
-  font: 550 15px / 1.4 var(--sans);
+  font: 500 15px / 1.4 var(--sans);
 }
 
 .op-n {
@@ -2411,7 +2661,7 @@ label.op-head:hover {
 .op-card h5 {
   margin-bottom: 4px;
   color: var(--muted);
-  font: 550 12px / 1.4 var(--sans);
+  font: 500 12px / 1.4 var(--sans);
 }
 
 .three .note {
@@ -2453,7 +2703,7 @@ label.op-head:hover {
   float: left;
   width: 100%;
   padding: 0;
-  font: 550 13px / 1.4 var(--sans);
+  font: 500 13px / 1.4 var(--sans);
 }
 
 /* A legend floated: it sits inside the box, as the first line, at every width. */
@@ -2466,7 +2716,7 @@ label.op-head:hover {
 }
 
 .new-title {
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .plain-body {
@@ -2481,7 +2731,7 @@ label.op-head:hover {
 
 .next-link {
   margin-top: 8px;
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .not-sent {
@@ -2615,7 +2865,7 @@ label.op-head:hover {
   min-height: 24px;
   cursor: pointer;
   color: var(--nav);
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .graph-filters .filters {
@@ -2631,13 +2881,13 @@ label.op-head:hover {
 }
 
 .graph-place {
-  font: 550 16px / 1.3 var(--sans);
+  font: 500 16px / 1.3 var(--sans);
   overflow-wrap: anywhere;
 }
 
 .graph-place:focus-visible,
 .graph-focus:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -2683,7 +2933,7 @@ label.op-head:hover {
 }
 
 .graph-tools .tool:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 1px;
 }
 
@@ -2714,7 +2964,7 @@ label.op-head:hover {
 }
 
 .graph-canvas:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: -2px;
 }
 
@@ -2755,7 +3005,7 @@ label.op-head:hover {
 }
 
 .inspector-title:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -2779,7 +3029,6 @@ label.op-head:hover {
   overflow-wrap: anywhere;
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: scoped to the inspector; it never competes with the earlier rule */
 .graph-inspector .tags .tag {
   font-family: var(--sans);
   font-size: 12.5px;
@@ -2808,6 +3057,25 @@ label.op-head:hover {
   overflow-x: auto;
 }
 
+/* A table wider than its box: a mark at the right edge, over the header row, while more columns wait. */
+.table-wrap[data-more]::before,
+.table-scroll[data-more]::before {
+  content: "›";
+  display: block;
+  position: sticky;
+  left: calc(100% - 28px);
+  z-index: 1;
+  width: 28px;
+  height: 36px;
+  margin-bottom: -36px;
+  background: var(--surface);
+  border-left: var(--line) solid var(--rule);
+  color: var(--text);
+  font-size: 20px;
+  line-height: 36px;
+  text-align: center;
+}
+
 .table-wrap + .table-wrap {
   margin-top: 32px;
 }
@@ -2821,7 +3089,7 @@ label.op-head:hover {
 .data-table caption {
   padding: 0 0 12px;
   text-align: left;
-  font: 550 16px / 1.3 var(--sans);
+  font: 500 16px / 1.3 var(--sans);
 }
 
 .data-table th,
@@ -2834,7 +3102,7 @@ label.op-head:hover {
 
 .data-table thead th {
   color: var(--muted);
-  font-weight: 550;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -2854,7 +3122,7 @@ label.op-head:hover {
 }
 
 .data-table .mono {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 13px;
 }
 
@@ -2890,7 +3158,7 @@ label.op-head:hover {
 }
 
 .pager:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -2947,7 +3215,7 @@ label.op-head:hover {
     gap: 8px;
     padding: 14px 20px 16px;
     border-radius: 12px 12px 0 0;
-    box-shadow: 0 -8px 24px oklch(0 0 0 / 0.35);
+    box-shadow: var(--shadow-float);
   }
 
   .graph-inspector[data-sheet="full"] {
@@ -2981,6 +3249,7 @@ label.op-head:hover {
   position: relative;
   min-height: 0;
   padding: 0;
+  overflow: hidden;
 }
 
 .frame[data-mode="canvas"] .page {
@@ -2991,7 +3260,18 @@ label.op-head:hover {
 
 @media (max-width: 767px) {
   .frame[data-mode="canvas"] {
+    height: 100dvh;
     grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .frame[data-mode="canvas"] .stage {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .frame[data-mode="canvas"] .content {
+    grid-row: 3;
+    min-height: 0;
   }
 }
 
@@ -2999,7 +3279,7 @@ label.op-head:hover {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: var(--ground);
+  background: var(--raised);
 }
 
 .graph-screen .graph-layout,
@@ -3016,7 +3296,7 @@ label.op-head:hover {
 }
 
 .graph-screen .graph-box {
-  background: var(--ground);
+  background: var(--raised);
 }
 
 .graph-screen .graph-canvas {
@@ -3031,9 +3311,8 @@ label.op-head:hover {
   top: 12px;
   z-index: 4;
   background: var(--surface);
-  border: 1px solid var(--rule);
+  border: var(--line) solid var(--border);
   border-radius: var(--r-card);
-  box-shadow: 0 6px 20px -12px oklch(0 0 0 / 0.35);
 }
 
 .graph-over {
@@ -3046,7 +3325,6 @@ label.op-head:hover {
   margin: 0;
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: the canvas head and a door never meet */
 .graph-over .title {
   font-size: 20px;
   line-height: 1.3;
@@ -3103,7 +3381,7 @@ label.op-head:hover {
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--r-card);
-  box-shadow: 0 12px 32px -12px oklch(0 0 0 / 0.45);
+  box-shadow: var(--shadow-float);
 }
 
 .graph-center .graph-filters .filters {
@@ -3134,13 +3412,11 @@ label.op-head:hover {
   }
 }
 
-/* The canvas while it loads: its dotted ground and grey cards where pages will be. */
+/* The canvas while it loads: its flat well and grey bars where pages will be. */
 .graph-screen .graph-box.loading,
 .graph-wait {
   padding: 0;
-  background-color: var(--ground);
-  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1.4px);
-  background-size: 24px 24px;
+  background-color: var(--raised);
 }
 
 .graph-wait {
@@ -3154,8 +3430,7 @@ label.op-head:hover {
   width: 150px;
   height: 28px;
   border-radius: 14px;
-  background: var(--raised);
-  border: 1px solid var(--node-line);
+  background: var(--active);
 }
 
 .skeleton-card:nth-of-type(1) {
@@ -3217,7 +3492,7 @@ label.op-head:hover {
   border: 1px solid var(--rule);
   border-radius: var(--r-card);
   font: inherit;
-  font-weight: 550;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -3226,7 +3501,7 @@ label.op-head:hover {
 }
 
 .inspector-toggle:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -3235,28 +3510,6 @@ label.op-head:hover {
   .inspector-toggle {
     display: none;
   }
-}
-
-/* How the keyboard walks the picture: said to screen readers, shown while the keyboard is on it. */
-.graph-screen .graph-section > .hint {
-  position: absolute;
-  left: 50%;
-  bottom: 16px;
-  z-index: 3;
-  width: max-content;
-  max-width: min(72ch, calc(100% - 32px));
-  margin: 0;
-  padding: 8px 12px;
-  transform: translateX(-50%);
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-card);
-  clip-path: inset(50%);
-  pointer-events: none;
-}
-
-.graph-screen .graph-section:has(.graph-canvas:focus-visible) > .hint {
-  clip-path: none;
 }
 
 /* Wide: the inspector is a panel at the right of the picture, over it. */
@@ -3298,7 +3551,7 @@ label.op-head:hover {
     top: 4px;
   }
 
-  .graph-strip .panel-meta {
+  .graph-strip .sec-meta {
     margin-right: 150px;
   }
 }
@@ -3306,15 +3559,136 @@ label.op-head:hover {
 /* With the panel open the strip is shorter: what does not fit beside Graph | List | Filters goes (the pages
    are counted again over the picture, the brain is named in the rail). */
 @media (min-width: 1100px) and (max-width: 1799px) {
-  .graph-screen:has(.graph-inspector[data-open]) .graph-strip .panel-meta {
+  .graph-screen:has(.graph-inspector[data-open]) .graph-strip .sec-meta {
     display: none;
   }
 }
 
 @media (min-width: 1100px) and (max-width: 1499px) {
-  .graph-screen:has(.graph-inspector[data-open]) .graph-strip .panel-about {
+  .graph-screen:has(.graph-inspector[data-open]) .graph-strip .sec-about {
     display: none;
   }
+}
+
+/* The help for the keys and gestures: opened from the tools, over the picture only while it is asked for. */
+.graph-keys {
+  position: absolute;
+  left: 16px;
+  bottom: 64px;
+  z-index: 3;
+  max-width: min(360px, calc(100% - 32px));
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--surface);
+  color: var(--text);
+  border: var(--line) solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-float);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.graph-keys[hidden] {
+  display: none;
+}
+
+/* A phone: the tools wrap and the legend takes its own line inside the plate. */
+@media (max-width: 767px) {
+  .graph-tools {
+    flex-wrap: wrap;
+    max-width: calc(100% - 48px);
+  }
+
+  /* The tools are two rows tall with the legend: Graph | List rises over them. */
+  .graph-screen:has(.graph-mark) .graph-center {
+    bottom: 106px;
+  }
+
+  .graph-screen:has(.graph-mark) .graph-communities {
+    bottom: 166px;
+  }
+
+  .graph-mark {
+    flex: 1 1 100%;
+    border-left: 0;
+    padding: 4px 8px;
+    white-space: normal;
+  }
+}
+
+/* What the strike through a page means, beside the tools. */
+.graph-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 8px;
+  border-left: var(--line) solid var(--rule);
+  color: var(--muted);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+
+/* The focus ring of the picture is drawn on what can be seen of it: the strip over its top and the open
+   inspector over its right side would otherwise cover two of its four sides. */
+.graph-screen .graph-box:has(.graph-canvas:focus-visible)::after {
+  content: "";
+  position: absolute;
+  top: 49px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  border: var(--focus-w) solid var(--focus);
+  pointer-events: none;
+}
+
+@media (min-width: 1100px) {
+  .graph-screen:has(.graph-inspector[data-open]) .graph-box:has(.graph-canvas:focus-visible)::after {
+    right: clamp(320px, 22vw, 420px);
+  }
+}
+
+/* Graph | List and the filters, the same control in both views: in the list it sits in the page. */
+.graph-center.in-page {
+  margin-inline: auto;
+  position: static;
+  transform: none;
+  width: max-content;
+  max-width: 100%;
+}
+
+/* In the list the open filters are part of the page, under the control, not a panel over a picture. */
+.graph-center.in-page {
+  flex-wrap: wrap;
+}
+
+.graph-center.in-page:has(.graph-filters[open]) {
+  width: 100%;
+  margin-inline: 0;
+  transform: none;
+}
+
+.graph-center.in-page .graph-filters[open] {
+  flex: 1 1 100%;
+  border-left: 0;
+}
+
+.graph-center.in-page .graph-filters > search {
+  position: static;
+  width: auto;
+  max-height: none;
+  margin-top: 8px;
+  transform: none;
+  box-shadow: none;
+}
+
+/* The list's inspector starts level with the table. */
+:not(.graph-screen) > .graph-layout > .graph-inspector {
+  padding-top: 0;
+}
+
+:not(.graph-screen) > .graph-layout > .graph-inspector .inspector-head {
+  margin-top: 0;
 }
 
 /* ── Activity, Health and Search (PR23) ───────────────────────────────── */
@@ -3349,8 +3723,14 @@ label.op-head:hover {
   gap: 8px;
 }
 
+/* The quiet sessions are a second list: they keep the space of a new section from the list above. */
+.act-sessions > section + section {
+  margin-top: 24px;
+}
+
 .act-sessions .count {
-  font: 550 12px var(--mono);
+  font: 500 12px var(--font-sans);
+  font-variant-numeric: tabular-nums;
   color: var(--accent);
 }
 
@@ -3379,7 +3759,8 @@ label.op-head:hover {
   align-items: center;
   gap: 6px;
   margin-right: auto;
-  font: 550 12px var(--mono);
+  font: 500 12px var(--font-sans);
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
 
@@ -3418,7 +3799,7 @@ label.op-head:hover {
 }
 
 .act-what {
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .act-tag {
@@ -3514,9 +3895,9 @@ dialog.search-dialog {
 
 .results mark {
   padding: 0 1px;
-  background: color-mix(in oklch, var(--accent) 20%, var(--surface));
+  background: var(--pill-warning-bg);
   color: var(--text);
-  font-weight: 550;
+  font-weight: 500;
   border-radius: 2px;
 }
 
@@ -3683,7 +4064,7 @@ dialog.search-dialog {
 
 .copy-manual textarea {
   width: 100%;
-  font: 12px var(--mono);
+  font: 12px var(--font-mono);
 }
 
 @media (max-width: 767px) {
@@ -3750,7 +4131,7 @@ dialog.search-dialog {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font: 550 15px var(--sans);
+  font: 500 15px var(--sans);
 }
 
 .check-word.ok {
@@ -3829,7 +4210,7 @@ dialog.search-dialog {
 
 .agent-tabs [role="tab"][aria-selected="true"] {
   color: var(--text);
-  font-weight: 550;
+  font-weight: 500;
   border-bottom-color: var(--text);
 }
 
@@ -3847,7 +4228,7 @@ dialog.search-dialog {
 
 .part-title {
   margin: 0;
-  font: 550 15px var(--sans);
+  font: 500 15px var(--sans);
 }
 
 /* A long action ("Create a token and fill in the configuration") wraps on a phone instead of widening it. */
@@ -3928,24 +4309,13 @@ dialog.search-dialog {
   grid-column: 1 / -1;
 }
 
-.tag.ok {
-  border-color: var(--ok-line);
-  background: var(--ok-bg);
-  color: var(--ok-fg);
-}
-
-.tag.ok::before {
-  content: "✓" / "";
-  margin-right: 4px;
-}
-
 .totp-key {
   display: grid;
   gap: 8px;
 }
 
 .totp-key .key code {
-  font: 550 16px / 1.5 var(--mono);
+  font: 500 16px / 1.5 var(--font-mono);
   letter-spacing: 0.04em;
   overflow-wrap: anywhere;
 }
@@ -3988,7 +4358,7 @@ dialog.search-dialog {
 }
 
 .settings-form textarea {
-  font: 14px / 1.55 var(--mono);
+  font: 14px / 1.55 var(--font-mono);
 }
 
 .add-member {
@@ -4069,7 +4439,7 @@ dialog.search-dialog {
 
 /* Fixes of PR25a: headings of the settings parts stronger than field labels; folded guide. */
 .part-heading {
-  font: 600 18px / 1.3 var(--sans);
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
   color: var(--text);
 }
 
@@ -4160,30 +4530,6 @@ dialog.search-dialog {
   .settings-parts > :only-child {
     grid-column: 1 / -1;
   }
-
-  /* A list with its add form (the members): the list wide, the form beside it. */
-  .settings-part:has(> .add-form) {
-    grid-template-columns: minmax(0, 1fr) clamp(340px, 26vw, 460px);
-    column-gap: 56px;
-    align-items: start;
-  }
-
-  .settings-part:has(> .add-form) > * {
-    grid-column: 1;
-  }
-
-  .settings-part:has(> .add-form) > .add-form {
-    grid-column: 2;
-    grid-row: 1 / span 4;
-    padding: 18px 20px 20px;
-    background: var(--surface);
-    border: 1px solid var(--rule);
-    border-radius: var(--r-card);
-  }
-
-  .settings-part > .add-form .add-member {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .choices {
@@ -4197,7 +4543,7 @@ dialog.search-dialog {
 
 .choices legend {
   margin-bottom: 4px;
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .pick input[type="radio"] {
@@ -4248,7 +4594,9 @@ dialog.search-dialog {
 
 .audit-filters {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  /* Six fields: one row on a wide sheet, never five and one left alone. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  align-items: end;
   gap: 8px 16px;
   margin: 0;
   padding: 0;
@@ -4258,7 +4606,7 @@ dialog.search-dialog {
 
 .audit-filters legend {
   margin-bottom: 8px;
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .table-scroll {
@@ -4282,27 +4630,42 @@ dialog.search-dialog {
 
 /* A date field's focus sits on its inner parts, where :focus-visible does not reach: ring the field itself. */
 input[type="date"]:focus {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-w) solid var(--focus);
   outline-offset: 2px;
 }
 
 /* Fixes of PR25b: the file picker looks like the other controls; the audit's time zone spans the filters. */
+/* A file field is drawn as the other fields: the same height, edge, radius and fill, its button inside it. */
 input[type="file"] {
+  width: 100%;
   max-width: 100%;
-  font: 14px var(--sans);
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0;
+  background: var(--surface);
   color: var(--muted);
+  border: var(--line) solid var(--field-line);
+  border-radius: var(--radius-control);
+  font: var(--fs-body) var(--font-sans);
+  line-height: calc(var(--control-height) - 2px);
 }
 
 input[type="file"]::file-selector-button {
-  min-height: 36px;
-  margin-right: 12px;
-  padding: 0 14px;
-  background: var(--raised, var(--surface));
+  height: calc(var(--control-height) - 2px);
+  margin: 0 12px 0 0;
+  padding: 0 12px;
+  background: var(--raised);
   color: var(--text);
-  border: 1px solid var(--field-line);
-  border-radius: 999px;
-  font: 550 14px var(--sans);
+  border: 0;
+  border-right: var(--line) solid var(--field-line);
+  border-radius: 0;
+  font: 500 var(--fs-body) var(--font-sans);
   cursor: pointer;
+}
+
+input[type="file"]:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: 2px;
 }
 
 .audit-zone {
@@ -4354,7 +4717,7 @@ input[type="file"]::file-selector-button {
 .release pre.notes {
   max-height: 320px;
   overflow: auto;
-  font: 13px / 1.5 var(--mono);
+  font: 13px / 1.5 var(--font-mono);
 }
 
 .key-step {
@@ -4386,7 +4749,7 @@ input[type="file"]::file-selector-button {
 
 .import-count {
   cursor: pointer;
-  font-weight: 550;
+  font-weight: 500;
   min-height: 24px;
 }
 
@@ -4431,24 +4794,46 @@ input[type="file"]::file-selector-button {
     background: var(--surface);
     border-radius: var(--r-card);
   }
+
+  /* The sessions of Activity sit in a narrow column: what it is above, its facts below. */
+  .act-sessions .list > li:not(.with-actions):has(> .meta:last-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .act-sessions .list > li:not(.with-actions):has(> .meta:last-child) > .meta:last-child {
+    grid-column: 1;
+    grid-row: auto;
+    max-width: none;
+    text-align: left;
+  }
 }
 
-/* The dark terminal style (plan canvas-ui S.1, SB2): content sits in panels (shared.css v2) with square
-   corners, a head edge to edge, and figures in the colour of their family. */
-.panel.pad {
-  padding: 0 var(--space-4) var(--space-4);
-  border-radius: 0;
+/* A section of a screen that holds its own block: a card (the third level), white with a hairline edge and 8px
+   corners, no shadow; its head a 16px title in sentence case with its figure in grey at the right. */
+.card.pad {
+  min-width: 0;
+  padding: 16px 20px 20px;
+  background: var(--surface);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-card);
 }
 
-.panel.pad > .panel-head {
-  margin: 0 calc(-1 * var(--space-4)) var(--space-4);
+.sec-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: var(--space-3);
 }
 
-.panel-head .panel-title {
-  color: var(--panel-ink);
+.sec-title {
+  margin: 0;
+  min-width: 0;
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
+  color: var(--text);
 }
 
-.panel-about {
+.sec-about {
   flex: 1 1 12ch;
   min-width: 0;
   overflow: hidden;
@@ -4457,66 +4842,38 @@ input[type="file"]::file-selector-button {
   white-space: nowrap;
 }
 
-.panel > .tiles {
+.sec-meta {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.card.pad > .tiles {
   background: transparent;
-  border-color: var(--panel-line);
+  border: 0;
   border-radius: 0;
-}
-
-.panel .tiles > li {
-  border-color: var(--panel-line);
-}
-
-.tiles > li[data-c] .tile-n {
-  color: var(--panel-c);
-  font-weight: 700;
-}
-
-.cards > li.panel {
-  background: var(--panel-bg);
-  border-color: var(--panel-line);
-  border-radius: 0;
-}
-
-.cards > li.panel:hover,
-.cards > li.panel:focus-within {
-  border-color: var(--panel-c);
-}
-
-.cards > li.panel.archived {
-  background: transparent;
-}
-
-.card-head .panel-num {
-  align-self: center;
 }
 
 .card-head .name::after {
-  border-radius: 0;
+  border-radius: var(--radius-card);
 }
 
-.map-type.panel {
-  margin-bottom: 40px;
-  padding: 0 var(--space-4) var(--space-4);
-  background: var(--panel-bg);
-  border-radius: 0;
+.map-type.card {
+  margin-bottom: var(--gap);
 }
 
-.page-main.panel > .panel-head + * {
+.page-main.card > .sec-head + * {
   margin-top: 0;
-}
-
-.page-aside .panel.pad > .panel-head {
-  margin-bottom: var(--space-3);
 }
 
 .overview-side,
 .page-aside {
-  gap: 28px;
+  gap: var(--gap);
 }
 
-/* A monospaced word is wider: a button in a row of actions wraps its words before it would push the page
-   wider than a phone. */
+/* A button in a row of actions wraps its words before it would push the page wider than a phone. */
 .actions.wrap > .button {
   max-width: 100%;
   white-space: normal;
@@ -4553,17 +4910,6 @@ input[type="file"]::file-selector-button {
   }
 }
 
-/* The canvas as a panel (polish 2026-11-09): its corners inside its edges (the screen clips what is outside),
-   over the picture; a strip along its top as the panel's head. */
-.graph-screen.panel {
-  border: 0;
-}
-
-.graph-screen.panel::before {
-  inset: 0;
-  z-index: 6;
-}
-
 .graph-strip {
   position: absolute;
   top: 0;
@@ -4571,22 +4917,19 @@ input[type="file"]::file-selector-button {
   right: 0;
   z-index: 4;
   min-height: 48px;
+  margin: 0;
   gap: 4px 8px;
-  padding: 0 16px 0 10px;
-}
-
-/* The name close to the left edge, right after the chip. */
-.graph-strip .panel-num {
-  min-width: 26px;
-  padding: 0 6px;
+  padding: 0 16px;
+  align-items: center;
+  background: var(--surface);
+  border-bottom: var(--line) solid var(--border);
 }
 
 .graph-strip h1.title {
-  font-size: 12px;
-  line-height: 1.4;
+  font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
 }
 
-.graph-strip .panel-about {
+.graph-strip .sec-about {
   flex: 0 1 auto;
 }
 
@@ -4597,10 +4940,6 @@ input[type="file"]::file-selector-button {
 /* The map's bands: a type's panel never reaches into the one beside it (its corners sit on its border,
    not outside it), and a page's address goes under its title, the monospaced address being too wide to sit
    beside it. */
-.map-type.panel::before {
-  inset: -1px;
-}
-
 @media (min-width: 1100px) {
   .map .map-pages > li:not(.with-actions):has(> .meta:last-child) {
     grid-template-columns: minmax(0, 1fr);
@@ -4614,10 +4953,9 @@ input[type="file"]::file-selector-button {
 }
 
 /* ── The graph's communities and its tooltip (v0.5.0) ─────────────────────
-   The panel at the right of the canvas names the communities the picture is coloured by, each with a box that
+   The panel at the right of the canvas names the communities, each with a box that
    shows or hides it; it folds from its head and never reaches the middle of the picture. */
 .graph-communities {
-  --panel-c: var(--fam-cyan);
   position: absolute;
   top: 60px;
   right: 16px;
@@ -4626,9 +4964,9 @@ input[type="file"]::file-selector-button {
   max-height: calc(100% - 140px);
   overflow: auto;
   padding: 0 14px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-line);
-  border-radius: var(--r-card);
+  background: var(--surface);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-card);
   font-size: 13px;
 }
 
@@ -4641,8 +4979,8 @@ input[type="file"]::file-selector-button {
   min-height: 40px;
   margin: 0 -14px 6px;
   padding: 0 14px;
-  background: var(--panel-head-bg);
-  border-bottom: 1px solid var(--panel-line);
+  background: var(--surface);
+  border-bottom: var(--line) solid var(--rule);
   cursor: pointer;
   list-style: none;
 }
@@ -4656,15 +4994,8 @@ input[type="file"]::file-selector-button {
   border-bottom: 0;
 }
 
-.com-head .panel-title {
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.com-head .panel-meta {
-  margin-left: auto;
-  color: var(--muted);
+.com-head .sec-title {
+  font-size: var(--fs-body);
 }
 
 .com-list {
@@ -4675,17 +5006,17 @@ input[type="file"]::file-selector-button {
 
 .com-row {
   display: grid;
-  grid-template-columns: 18px 12px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-height: 30px;
-  color: var(--panel-ink);
+  color: var(--text);
   cursor: pointer;
 }
 
 .com-row.com-all {
   grid-template-columns: 18px minmax(0, 1fr);
-  border-bottom: 1px solid var(--panel-line);
+  border-bottom: var(--line) solid var(--rule);
   margin-bottom: 4px;
 }
 
@@ -4693,14 +5024,7 @@ input[type="file"]::file-selector-button {
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: var(--accent);
-}
-
-.com-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--com-other);
+  accent-color: var(--text);
 }
 
 .com-name {
@@ -4713,40 +5037,6 @@ input[type="file"]::file-selector-button {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   text-align: right;
-}
-
-.com-row[data-com="0"] .com-dot {
-  background: var(--com-0);
-}
-.com-row[data-com="1"] .com-dot {
-  background: var(--com-1);
-}
-.com-row[data-com="2"] .com-dot {
-  background: var(--com-2);
-}
-.com-row[data-com="3"] .com-dot {
-  background: var(--com-3);
-}
-.com-row[data-com="4"] .com-dot {
-  background: var(--com-4);
-}
-.com-row[data-com="5"] .com-dot {
-  background: var(--com-5);
-}
-.com-row[data-com="6"] .com-dot {
-  background: var(--com-6);
-}
-.com-row[data-com="7"] .com-dot {
-  background: var(--com-7);
-}
-.com-row[data-com="8"] .com-dot {
-  background: var(--com-8);
-}
-.com-row[data-com="9"] .com-dot {
-  background: var(--com-9);
-}
-.com-row[data-com="lone"] .com-dot {
-  background: var(--com-lone);
 }
 
 /* Wide, with the inspector open: the communities sit left of it. */
@@ -4780,7 +5070,7 @@ input[type="file"]::file-selector-button {
   color: var(--text);
   border: 1px solid var(--rule);
   border-radius: var(--r-card);
-  box-shadow: 0 6px 20px -12px oklch(0 0 0 / 0.5);
+  box-shadow: var(--shadow-float);
   pointer-events: none;
   visibility: hidden;
 }
@@ -4791,7 +5081,7 @@ input[type="file"]::file-selector-button {
 
 .tip-title {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -4800,4 +5090,224 @@ input[type="file"]::file-selector-button {
   color: var(--muted);
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+/* ── Settings in two columns: the label of a part (its title and what it is for) at the left, its panel at the
+   right; parts one under the other, split by a rule. A narrower window stacks them. ───────────────────── */
+.part-label {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+
+.part-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  .settings-tab,
+  .settings-parts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .settings-part {
+    grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+    gap: var(--gap);
+    align-items: start;
+    padding: 0;
+  }
+
+  .settings-part + .settings-part {
+    margin-top: var(--gap);
+    padding-top: var(--gap);
+    border-top: var(--line) solid var(--rule);
+  }
+
+  .settings-part > .part-label,
+  .settings-part > .part-body {
+    grid-row: 1;
+  }
+
+  .settings-part > .part-label {
+    grid-column: 1;
+  }
+
+  .settings-part > .part-body {
+    grid-column: 2;
+    padding: var(--space-5);
+    background: var(--surface);
+    border: var(--line) solid var(--border);
+    border-radius: var(--r-card);
+  }
+
+  /* A part that holds a table needs the whole width: its label goes above. */
+  .settings-part:has(.table-scroll) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-part:has(.table-scroll) > .part-label,
+  .settings-part:has(.table-scroll) > .part-body {
+    grid-column: 1;
+  }
+
+  .settings-part:has(.table-scroll) > .part-body {
+    grid-row: 2;
+  }
+
+  .part-body :is(input[type="text"], input[type="email"], input[type="url"], input[type="number"], select) {
+    max-width: 520px;
+  }
+}
+
+/* An absent datum. */
+.none {
+  color: var(--muted);
+}
+
+/* ── The graph on a phone ─────────────────────────────────────────────────
+   The strip floats a little off the top bar as a plate like the other controls (it touched the bar), Graph | List
+   and the filters sit under it where they are first seen (they had dropped under the communities at the foot),
+   and the place card comes after them. The count of pages is on the place card: the strip drops it. */
+@media (max-width: 767px) {
+  .graph-strip {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    min-height: 40px;
+    padding: 0 12px;
+    border: var(--line) solid var(--border);
+    border-radius: var(--r-card);
+  }
+
+  .graph-strip .sec-meta {
+    display: none;
+  }
+
+  .graph-screen .graph-center,
+  .graph-screen:has(.graph-mark) .graph-center {
+    top: 56px;
+    bottom: auto;
+    left: 8px;
+  }
+
+  .graph-screen .graph-left {
+    top: 108px;
+    left: 8px;
+  }
+
+  .graph-center .graph-filters > search {
+    top: calc(100% + 10px);
+    bottom: auto;
+  }
+
+  .graph-screen .graph-communities {
+    bottom: 64px;
+  }
+
+  .graph-screen:has(.graph-mark) .graph-communities {
+    bottom: 106px;
+  }
+
+  .graph-screen .graph-box:has(.graph-canvas:focus-visible)::after {
+    top: 57px;
+  }
+}
+
+/* ── Checkboxes and radios in dark ────────────────────────────────────────
+   The system draws an empty one as a grey fill with a faint edge. In dark they are drawn here: the sheet's
+   own fill, an edge at 3:1 or more, and the accent when on. Light and high contrast keep the system's. The size
+   is the lowest-priority rule (a screen that sets its own, 18px or 16px, keeps it). */
+:where(:root[data-theme="dark"]) :where(input[type="checkbox"], input[type="radio"]) {
+  width: 16px;
+  height: 16px;
+}
+
+:root[data-theme="dark"] :where(input[type="checkbox"], input[type="radio"]) {
+  appearance: none;
+  flex: none;
+  background: var(--surface);
+  border: var(--line) solid var(--control-strong);
+}
+
+:root[data-theme="dark"] input[type="checkbox"] {
+  border-radius: 4px;
+}
+
+:root[data-theme="dark"] input[type="radio"] {
+  border-radius: 50%;
+}
+
+:root[data-theme="dark"] :where(input[type="checkbox"], input[type="radio"]):checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+:root[data-theme="dark"] input[type="checkbox"]:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%230f1011' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+:root[data-theme="dark"] input[type="radio"]:checked {
+  box-shadow: inset 0 0 0 3px var(--surface);
+}
+
+:root[data-theme="dark"] :where(input[type="checkbox"], input[type="radio"]):disabled {
+  opacity: 0.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme])) :where(input[type="checkbox"], input[type="radio"]) {
+    width: 16px;
+    height: 16px;
+  }
+
+  :root:not([data-theme]) :where(input[type="checkbox"], input[type="radio"]) {
+    appearance: none;
+    flex: none;
+    background: var(--surface);
+    border: var(--line) solid var(--control-strong);
+  }
+
+  :root:not([data-theme]) input[type="checkbox"] {
+    border-radius: 4px;
+  }
+
+  :root:not([data-theme]) input[type="radio"] {
+    border-radius: 50%;
+  }
+
+  :root:not([data-theme]) :where(input[type="checkbox"], input[type="radio"]):checked {
+    background-color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  :root:not([data-theme]) input[type="checkbox"]:checked {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%230f1011' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  :root:not([data-theme]) input[type="radio"]:checked {
+    box-shadow: inset 0 0 0 3px var(--surface);
+  }
+
+  :root:not([data-theme]) :where(input[type="checkbox"], input[type="radio"]):disabled {
+    opacity: 0.5;
+  }
+}
+
+/* Forced colours paint every fill and shadow over, so the drawn checked state would vanish: give the controls back
+   to the system, which draws checked and unchecked in the person's own colours. Important, because the drawn rules
+   above are scoped by theme and outrank a plain selector. */
+@media (forced-colors: active) {
+  input[type="checkbox"],
+  input[type="radio"] {
+    appearance: auto !important;
+    background-image: none !important;
+  }
 }

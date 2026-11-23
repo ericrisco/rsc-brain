@@ -563,6 +563,26 @@ describe('connections with the standard sign-in', { skip: skipPg }, () => {
     )
   })
 
+  it('a served page loads the faces from this installation and carries its name (CA20, CA29)', async () => {
+    const redirect = 'http://127.0.0.1:43129/cb'
+    const client = String((await register(redirect)).body.client_id)
+    const session = await w.web(eric.id)
+    await w.db.query("UPDATE installation SET name = 'Lumen <Studio>' WHERE id = 1")
+    try {
+      const page = await get(
+        `/oauth/authorize?${authzQuery(client, redirect, s256('n'.repeat(43)))}`,
+        `rscb_session=${session}`,
+      )
+      assert.match(String(page.headers.get('content-security-policy')), /font-src 'self'/)
+      const html = page.text
+      assert.match(html, /<title>[^<]* · Lumen &lt;Studio&gt;<\/title>/)
+      assert.match(html, /<p class="muted foot">Lumen &lt;Studio&gt;<\/p>/)
+      assert.match(html, /url\("\/fonts\/ibm-plex-sans-latin1-400\.woff2"\)/)
+    } finally {
+      await w.db.query("UPDATE installation SET name = '' WHERE id = 1")
+    }
+  })
+
   it('the consent cannot be made by another site: no form token, no approval; the page cannot be framed', async () => {
     const redirect = 'http://127.0.0.1:43129/cb'
     const client = String((await register(redirect)).body.client_id)

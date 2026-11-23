@@ -1,30 +1,74 @@
-/* shared.css v2 — the tokens rsc-brain and rsc-factory share (plan canvas-ui §0 and S.0). The same file lives
-   in both repositories, byte for byte: change it in one, copy it (and fonts/ beside it) to the other, and raise
-   the version above. Each product keeps its own accent and ink in its own sheet.
+/* shared.css v4 — the tokens rsc-brain and rsc-factory share. The same file lives in both repositories, byte for
+   byte: change it in one, copy it (and fonts/ beside it) to the other, and raise the version above.
 
-   The style is a dark terminal with neon: a near-black blue ground, panels one step lighter with thin borders
-   and coloured corners, everything in a monospaced face. Dark is the default, on :root; light is the person's
-   choice (data-theme="light" on <html>). data-theme="dark" sets the same values as :root. */
+   The look: the app chrome is one tinted L-shaped frame (sidebar and top bar on one ground, no
+   rule between them) and the work sits on a white sheet with a hairline edge and soft corners. Depth comes from one
+   tone step, never from a shadow; only what floats (a menu, a dialog, a toast) casts one.
 
-/* JetBrains Mono (SIL Open Font License 1.1, fonts/OFL.txt), served from the same origin as the page. */
+   Three modes, the same layout, sizes and type in each; only the colours change (and, in high contrast, the focus
+   ring grows to 3px):
+   - System (no data-theme on <html>): light, or dark when the system asks for it, or high contrast when the system
+     asks for more contrast.
+   - data-theme="light", "dark" or "contrast": the person's choice, which wins over the system. */
+
+/* IBM Plex Sans and IBM Plex Mono (SIL Open Font License 1.1, fonts/OFL.txt), served from the same origin as the
+   page: nothing is asked of a third party. Latin-1 subset. */
 @font-face {
-  font-family: "JetBrains Mono";
+  font-family: "IBM Plex Sans";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("./fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  src: url("./fonts/ibm-plex-sans-latin1-400.woff2") format("woff2");
 }
 
 @font-face {
-  font-family: "JetBrains Mono";
+  font-family: "IBM Plex Sans";
   font-style: normal;
-  font-weight: 700;
+  font-weight: 500;
   font-display: swap;
-  src: url("./fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+  src: url("./fonts/ibm-plex-sans-latin1-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-sans-latin1-600.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-mono-latin1-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/ibm-plex-mono-latin1-500.woff2") format("woff2");
 }
 
 :root {
-  /* Space on a 4px base. */
+  /* Type. Sans for everything people read; mono for one job: identifiers, keys, code, log lines and the figures
+     in tables. Sentence case everywhere, no tracked capitals. */
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --fs-title: 22px;
+  --fs-section: 16px;
+  --fs-kpi: 28px;
+  --fs-body: 14px;
+  --fs-small: 12px;
+  --lh-title: 28px;
+  --lh-section: 22px;
+  --lh-body: 20px;
+  --lh-small: 16px;
+
+  /* Space on a 4px base, and the one gap: 24px, horizontally and vertically. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -34,295 +78,235 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
+  --gap: 24px;
+  --pad: 24px;
 
-  /* Radii: a chip, a control, a card, a sheet. */
-  --r-chip: 4px;
-  --r-control: 6px;
-  --r-card: 8px;
-  --r-sheet: 14px;
-
-  /* The rail: narrow with icons, open with their names. */
-  --rail-w-folded: 56px;
-  --rail-w-open: 220px;
+  /* The frame and the sheet. */
+  --sidebar-width: 228px;
+  --sidebar-folded: 56px;
+  --topbar-height: 48px;
+  --sheet-inset: 8px;
+  --row-height: 48px;
+  --control-height: 32px;
+  --touch: 44px;
 
   /* Content has no maximum width below this one. */
   --page-cap: 2400px;
 
-  /* Movement. */
+  /* Radii: a card, a control, the sheet, a chip; pills are round. */
+  --radius-card: 8px;
+  --radius-control: 6px;
+  --radius-sheet: 16px;
+  --radius-chip: 4px;
+  --radius-pill: 999px;
+
+  /* Lines: one width at rest; the focus ring. */
+  --line: 1px;
+  --focus-w: 2px;
+
+  /* Movement is an answer (press, hover, focus, open), never an entrance. */
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --t-fast: 120ms;
   --t: 200ms;
 
-  /* Type: one monospaced face for the whole interface. */
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* Light: the sheet as dealt (seed 883260745). */
+  color-scheme: light;
+  --ground: #f9fbfc;
+  --surface: #ffffff;
+  --raised: #f4f6f8;
+  --active: #ebedee;
+  --border: #e8eaec;
+  --rule: #f0f1f2;
+  --control: #cdced1;
+  /* WCAG 1.4.11: where a border is all that shows a control (a text field, an empty checkbox), it reaches 3:1. */
+  --control-strong: #878a8e;
+  /* A canvas card's edge: the hairline in light and high contrast; a step stronger in dark, where the card sits on a lighter well. */
+  --node-edge: var(--border);
+  --text: #131416;
+  --muted: #5d5f60;
+  --accent: #1b6c80;
+  --positive: #1e7b4f;
+  --negative: #c4242a;
+  --warning: #92400e;
+  --chart-1: #1b6c80;
+  --chart-2: #2f70bb;
+  --chart-3: #a86f0c;
+  --pill-positive-bg: #dcfae5;
+  --pill-positive-ink: #04250e;
+  --pill-negative-bg: #ffedea;
+  --pill-negative-ink: #831c1e;
+  --pill-warning-bg: #fffbeb;
+  --pill-warning-ink: #92400e;
+  --pill-neutral-bg: #ebedee;
+  --pill-neutral-ink: #353736;
+  /* A pill's edge: none at rest; in high contrast a state never rests on a tint alone. */
+  --pill-line: transparent;
+  /* The one primary action: near-black. */
+  --primary: #131416;
+  --primary-ink: #ffffff;
+  --focus: #1b6c80;
+  /* Provider marks keep their own colours on a light plate in every mode. */
+  --plate: #ffffff;
+  --scrim: rgb(19 20 22 / 0.32);
+  --shadow-float: 0 1px 2px rgb(19 20 22 / 0.08), 0 8px 24px rgb(19 20 22 / 0.12);
+}
 
-  /* Light: a soft halo around what is lit (a selected node, a running one), and the pulses that travel along
-     lines: their colour, their length as a share of the line, and the time one takes to cross a line. */
-  --glow: 0 0 14px;
-  --glow-strong: 0 0 26px;
-  --pulse-len: 0.12;
-  --pulse-speed: 1600ms;
-
-  color-scheme: dark;
-
-  --rail-bg: oklch(0.155 0.016 262);
-  --rail-line: oklch(0.27 0.018 262);
-  --rail-ink: oklch(0.86 0.008 260);
-  --rail-hover: oklch(0.22 0.018 262);
-
-  /* Panels: their ground, border, head and words; the corners and the chip take --panel-c. */
-  --panel-bg: oklch(0.175 0.016 262);
-  --panel-line: oklch(0.29 0.018 262);
-  --panel-head-bg: oklch(0.195 0.018 262);
-  --panel-ink: oklch(0.94 0.006 260);
-
-  /* Seven families, named by colour, never by meaning: a product says what each one stands for. Each has a
-     dim variant, the ground of its pill. */
-  --fam-orange: oklch(0.75 0.16 50);
-  --fam-orange-dim: oklch(0.3 0.07 50);
-  --fam-amber: oklch(0.85 0.14 85);
-  --fam-amber-dim: oklch(0.3 0.06 85);
-  --fam-blue: oklch(0.74 0.13 262);
-  --fam-blue-dim: oklch(0.3 0.07 262);
-  --fam-cyan: oklch(0.83 0.12 205);
-  --fam-cyan-dim: oklch(0.3 0.05 205);
-  --fam-pink: oklch(0.76 0.16 355);
-  --fam-pink-dim: oklch(0.3 0.07 355);
-  --fam-violet: oklch(0.76 0.13 298);
-  --fam-violet-dim: oklch(0.3 0.07 298);
-  --fam-green: oklch(0.82 0.16 150);
-  --fam-green-dim: oklch(0.3 0.06 150);
-
-  /* States: words (fg) on their own ground (bg), and a line for borders and marks. Never colour alone. */
-  --ok-fg: oklch(0.84 0.15 150);
-  --ok-bg: oklch(0.25 0.05 150);
-  --ok-line: oklch(0.66 0.15 150);
-  --bad-fg: oklch(0.8 0.13 25);
-  --bad-bg: oklch(0.26 0.06 25);
-  --bad-line: oklch(0.66 0.18 25);
-  --warn-fg: oklch(0.86 0.13 85);
-  --warn-bg: oklch(0.27 0.05 80);
-  --warn-line: oklch(0.74 0.14 80);
-  --run-fg: oklch(0.82 0.11 255);
-  --run-bg: oklch(0.26 0.05 255);
-  --run-line: oklch(0.66 0.14 255);
-  --neutral-fg: oklch(0.82 0.008 260);
-  --neutral-bg: oklch(0.24 0.014 262);
-  --neutral-line: oklch(0.42 0.014 262);
-
-  /* The canvas: a dotted ground, edges, the nodes on it, and the pulses. */
-  --grid-dot: oklch(0.3 0.016 262);
-  --edge: oklch(0.55 0.03 262);
-  --node-bg: oklch(0.2 0.018 262);
-  --node-line: oklch(0.34 0.02 262);
-  --node-ink: oklch(0.95 0.005 260);
-  --node-sub: oklch(0.78 0.01 260);
-  --pulse: oklch(0.98 0.01 95);
+/* Dark: the same move. The frame is one neutral dark, the sheet one step lighter with a hairline edge; no navy or
+   slate tint; the accent lightened just enough for 4.5:1 on the sheet; the primary action inverted. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --ground: #0a0b0c;
+    --surface: #1a1b1d;
+    --raised: #222427;
+    --active: #2c2e32;
+    --border: #45474b;
+    --rule: #303236;
+    --control: #7a7e84;
+    --control-strong: #868a90;
+    --node-edge: #5d6167;
+    --text: #f2f3f4;
+    --muted: #a4a7ab;
+    --accent: #5fb3c7;
+    --positive: #4cc38a;
+    --negative: #f0787c;
+    --warning: #e0a85a;
+    --chart-1: #5fb3c7;
+    --chart-2: #6ea6e6;
+    --chart-3: #d6a24a;
+    --pill-positive-bg: #12301f;
+    --pill-positive-ink: #a3e6c2;
+    --pill-negative-bg: #3d1719;
+    --pill-negative-ink: #ffb8b5;
+    --pill-warning-bg: #36260f;
+    --pill-warning-ink: #f3cd94;
+    --pill-neutral-bg: #26282b;
+    --pill-neutral-ink: #d6d8db;
+    --pill-line: transparent;
+    --primary: #f2f3f4;
+    --primary-ink: #131416;
+    --focus: #5fb3c7;
+    --plate: #ffffff;
+    --scrim: rgb(0 0 0 / 0.56);
+    --shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.48);
+  }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --rail-bg: oklch(0.155 0.016 262);
-  --rail-line: oklch(0.27 0.018 262);
-  --rail-ink: oklch(0.86 0.008 260);
-  --rail-hover: oklch(0.22 0.018 262);
-  --panel-bg: oklch(0.175 0.016 262);
-  --panel-line: oklch(0.29 0.018 262);
-  --panel-head-bg: oklch(0.195 0.018 262);
-  --panel-ink: oklch(0.94 0.006 260);
-  --fam-orange: oklch(0.75 0.16 50);
-  --fam-orange-dim: oklch(0.3 0.07 50);
-  --fam-amber: oklch(0.85 0.14 85);
-  --fam-amber-dim: oklch(0.3 0.06 85);
-  --fam-blue: oklch(0.74 0.13 262);
-  --fam-blue-dim: oklch(0.3 0.07 262);
-  --fam-cyan: oklch(0.83 0.12 205);
-  --fam-cyan-dim: oklch(0.3 0.05 205);
-  --fam-pink: oklch(0.76 0.16 355);
-  --fam-pink-dim: oklch(0.3 0.07 355);
-  --fam-violet: oklch(0.76 0.13 298);
-  --fam-violet-dim: oklch(0.3 0.07 298);
-  --fam-green: oklch(0.82 0.16 150);
-  --fam-green-dim: oklch(0.3 0.06 150);
-  --ok-fg: oklch(0.84 0.15 150);
-  --ok-bg: oklch(0.25 0.05 150);
-  --ok-line: oklch(0.66 0.15 150);
-  --bad-fg: oklch(0.8 0.13 25);
-  --bad-bg: oklch(0.26 0.06 25);
-  --bad-line: oklch(0.66 0.18 25);
-  --warn-fg: oklch(0.86 0.13 85);
-  --warn-bg: oklch(0.27 0.05 80);
-  --warn-line: oklch(0.74 0.14 80);
-  --run-fg: oklch(0.82 0.11 255);
-  --run-bg: oklch(0.26 0.05 255);
-  --run-line: oklch(0.66 0.14 255);
-  --neutral-fg: oklch(0.82 0.008 260);
-  --neutral-bg: oklch(0.24 0.014 262);
-  --neutral-line: oklch(0.42 0.014 262);
-  --grid-dot: oklch(0.3 0.016 262);
-  --edge: oklch(0.55 0.03 262);
-  --node-bg: oklch(0.2 0.018 262);
-  --node-line: oklch(0.34 0.02 262);
-  --node-ink: oklch(0.95 0.005 260);
-  --node-sub: oklch(0.78 0.01 260);
-  --pulse: oklch(0.98 0.01 95);
+  --ground: #0a0b0c;
+  --surface: #1a1b1d;
+  --raised: #222427;
+  --active: #2c2e32;
+  --border: #45474b;
+  --rule: #303236;
+  --control: #7a7e84;
+  --control-strong: #868a90;
+  --node-edge: #5d6167;
+  --text: #f2f3f4;
+  --muted: #a4a7ab;
+  --accent: #5fb3c7;
+  --positive: #4cc38a;
+  --negative: #f0787c;
+  --warning: #e0a85a;
+  --chart-1: #5fb3c7;
+  --chart-2: #6ea6e6;
+  --chart-3: #d6a24a;
+  --pill-positive-bg: #12301f;
+  --pill-positive-ink: #a3e6c2;
+  --pill-negative-bg: #3d1719;
+  --pill-negative-ink: #ffb8b5;
+  --pill-warning-bg: #36260f;
+  --pill-warning-ink: #f3cd94;
+  --pill-neutral-bg: #26282b;
+  --pill-neutral-ink: #d6d8db;
+  --pill-line: transparent;
+  --primary: #f2f3f4;
+  --primary-ink: #131416;
+  --focus: #5fb3c7;
+  --plate: #ffffff;
+  --scrim: rgb(0 0 0 / 0.56);
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.48);
 }
 
-:root[data-theme="light"] {
+/* High contrast: white ground, black text; every text at 7:1 or more, every edge at 4.5:1 or more, no separation
+   by tone alone, a 3px focus ring, states with an edge as well as a tint. One version, on white. */
+@media (prefers-contrast: more) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --ground: #ffffff;
+    --surface: #ffffff;
+    --raised: #f2f2f2;
+    --active: #e3e3e3;
+    --border: #595959;
+    --rule: #767676;
+    --control: #595959;
+    --control-strong: #595959;
+    --node-edge: var(--border);
+    --text: #000000;
+    --muted: #3d3d3d;
+    --accent: #0b4f60;
+    --positive: #0a5c36;
+    --negative: #a3161b;
+    --warning: #6b2f05;
+    --chart-1: #0b4f60;
+    --chart-2: #1d4f91;
+    --chart-3: #6b4708;
+    --pill-positive-bg: #e6f7ec;
+    --pill-positive-ink: #00321a;
+    --pill-negative-bg: #fdecea;
+    --pill-negative-ink: #6b0f12;
+    --pill-warning-bg: #fff6dd;
+    --pill-warning-ink: #4d2203;
+    --pill-neutral-bg: #ececec;
+    --pill-neutral-ink: #1f1f1f;
+    --pill-line: currentColor;
+    --primary: #000000;
+    --primary-ink: #ffffff;
+    --focus: #000000;
+    --focus-w: 3px;
+    --plate: #ffffff;
+    --scrim: rgb(0 0 0 / 0.6);
+    --shadow-float: 0 8px 24px rgb(0 0 0 / 0.24);
+  }
+}
+
+:root[data-theme="contrast"] {
   color-scheme: light;
-  --rail-bg: oklch(0.975 0.004 260);
-  --rail-line: oklch(0.88 0.008 260);
-  --rail-ink: oklch(0.34 0.014 260);
-  --rail-hover: oklch(0.93 0.006 260);
-  --panel-bg: oklch(0.995 0.002 260);
-  --panel-line: oklch(0.86 0.01 260);
-  --panel-head-bg: oklch(0.965 0.005 260);
-  --panel-ink: oklch(0.22 0.014 260);
-  --fam-orange: oklch(0.53 0.15 45);
-  --fam-orange-dim: oklch(0.93 0.04 50);
-  --fam-amber: oklch(0.5 0.1 75);
-  --fam-amber-dim: oklch(0.94 0.05 85);
-  --fam-blue: oklch(0.5 0.15 262);
-  --fam-blue-dim: oklch(0.93 0.03 262);
-  --fam-cyan: oklch(0.5 0.09 215);
-  --fam-cyan-dim: oklch(0.94 0.03 205);
-  --fam-pink: oklch(0.52 0.18 355);
-  --fam-pink-dim: oklch(0.94 0.03 355);
-  --fam-violet: oklch(0.5 0.16 298);
-  --fam-violet-dim: oklch(0.93 0.03 298);
-  --fam-green: oklch(0.5 0.13 150);
-  --fam-green-dim: oklch(0.94 0.04 150);
-  --ok-fg: oklch(0.42 0.11 156);
-  --ok-bg: oklch(0.955 0.04 156);
-  --ok-line: oklch(0.62 0.14 156);
-  --bad-fg: oklch(0.47 0.17 25);
-  --bad-bg: oklch(0.96 0.025 25);
-  --bad-line: oklch(0.62 0.18 25);
-  --warn-fg: oklch(0.45 0.1 65);
-  --warn-bg: oklch(0.965 0.045 88);
-  --warn-line: oklch(0.75 0.14 75);
-  --run-fg: oklch(0.46 0.14 250);
-  --run-bg: oklch(0.96 0.025 250);
-  --run-line: oklch(0.62 0.15 250);
-  --neutral-fg: oklch(0.42 0.012 260);
-  --neutral-bg: oklch(0.945 0.005 260);
-  --neutral-line: oklch(0.82 0.008 260);
-  --grid-dot: oklch(0.82 0.006 260);
-  --edge: oklch(0.66 0.02 260);
-  --node-bg: oklch(1 0 0);
-  --node-line: oklch(0.86 0.008 260);
-  --node-ink: oklch(0.22 0.012 260);
-  --node-sub: oklch(0.46 0.012 260);
-  --pulse: oklch(0.45 0.1 262);
-}
-
-/* A panel: a thin border, a ground one step above the page, and four L-shaped corners in its colour just
-   outside it. Its colour is a family: <section class="panel" data-c="cyan">, or --panel-c set directly. */
-.panel {
-  --panel-c: var(--fam-orange);
-  position: relative;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-line);
-  color: var(--panel-ink);
-}
-
-.panel::before {
-  content: "";
-  position: absolute;
-  inset: -4px;
-  pointer-events: none;
-  background:
-    linear-gradient(var(--panel-c), var(--panel-c)) left top / 14px 2px no-repeat,
-    linear-gradient(var(--panel-c), var(--panel-c)) left top / 2px 14px no-repeat,
-    linear-gradient(var(--panel-c), var(--panel-c)) right top / 14px 2px no-repeat,
-    linear-gradient(var(--panel-c), var(--panel-c)) right top / 2px 14px no-repeat,
-    linear-gradient(var(--panel-c), var(--panel-c)) left bottom / 14px 2px no-repeat,
-    linear-gradient(var(--panel-c), var(--panel-c)) left bottom / 2px 14px no-repeat,
-    linear-gradient(var(--panel-c), var(--panel-c)) right bottom / 14px 2px no-repeat,
-    linear-gradient(var(--panel-c), var(--panel-c)) right bottom / 2px 14px no-repeat;
-}
-
-[data-c="orange"] {
-  --panel-c: var(--fam-orange);
-}
-[data-c="amber"] {
-  --panel-c: var(--fam-amber);
-}
-[data-c="blue"] {
-  --panel-c: var(--fam-blue);
-}
-[data-c="cyan"] {
-  --panel-c: var(--fam-cyan);
-}
-[data-c="pink"] {
-  --panel-c: var(--fam-pink);
-}
-[data-c="violet"] {
-  --panel-c: var(--fam-violet);
-}
-[data-c="green"] {
-  --panel-c: var(--fam-green);
-}
-
-/* The head: the numbered chip, the title in capitals with "·" between its parts, and the panel's own figure
-   or word at the right, in its colour. */
-.panel-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
-  min-height: 40px;
-  padding: var(--space-2) var(--space-4);
-  background: var(--panel-head-bg);
-  border-bottom: 1px solid var(--panel-line);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-}
-
-.panel-head :is(h1, h2, h3, .panel-title) {
-  margin: 0;
-  min-width: 0;
-  font-size: inherit;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.panel-num {
-  flex: none;
-  display: inline-grid;
-  place-items: center;
-  min-width: 30px;
-  height: 20px;
-  padding: 0 var(--space-2);
-  border-radius: 3px;
-  background: var(--panel-c);
-  color: var(--panel-bg);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.panel-meta {
-  margin-left: auto;
-  color: var(--panel-c);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  white-space: nowrap;
-}
-
-/* A big figure in the panel's colour. */
-.panel-figure {
-  color: var(--panel-c);
-  font-family: var(--font-mono);
-  font-size: 28px;
-  font-weight: 700;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
+  --ground: #ffffff;
+  --surface: #ffffff;
+  --raised: #f2f2f2;
+  --active: #e3e3e3;
+  --border: #595959;
+  --rule: #767676;
+  --control: #595959;
+  --control-strong: #595959;
+  --node-edge: var(--border);
+  --text: #000000;
+  --muted: #3d3d3d;
+  --accent: #0b4f60;
+  --positive: #0a5c36;
+  --negative: #a3161b;
+  --warning: #6b2f05;
+  --chart-1: #0b4f60;
+  --chart-2: #1d4f91;
+  --chart-3: #6b4708;
+  --pill-positive-bg: #e6f7ec;
+  --pill-positive-ink: #00321a;
+  --pill-negative-bg: #fdecea;
+  --pill-negative-ink: #6b0f12;
+  --pill-warning-bg: #fff6dd;
+  --pill-warning-ink: #4d2203;
+  --pill-neutral-bg: #ececec;
+  --pill-neutral-ink: #1f1f1f;
+  --pill-line: currentColor;
+  --primary: #000000;
+  --primary-ink: #ffffff;
+  --focus: #000000;
+  --focus-w: 3px;
+  --plate: #ffffff;
+  --scrim: rgb(0 0 0 / 0.6);
+  --shadow-float: 0 8px 24px rgb(0 0 0 / 0.24);
 }
 
 @media (prefers-reduced-motion: reduce) {

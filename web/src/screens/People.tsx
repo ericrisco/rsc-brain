@@ -63,6 +63,9 @@ export type Links = {
 let made = 0
 export const nextKey = (kind: string) => `${kind}:${++made}`
 
+// An invitation waiting is live, one taken is done, one that ran out is a fault; a withdrawn one is just off.
+const INVITE_TONE: Record<string, string> = { pending: ' live', used: ' ok', expired: ' bad' }
+
 const ROLES = ['reader', 'contributor', 'curator'] as const
 
 // The first page of invitations of a status ('all' for every one); the rest come by «Show more» with the
@@ -525,9 +528,7 @@ function Invitations({
                 <div>
                   <p class="list-title">
                     <span class="mono">{inv.email}</span>{' '}
-                    <span class={`tag ${inv.status === 'pending' ? 'live' : ''}`}>
-                      {p.status[inv.status]}
-                    </span>
+                    <span class={`tag${INVITE_TONE[inv.status] ?? ''}`}>{p.status[inv.status]}</span>
                     {inv.isAdmin ? <span class="tag">{p.admin}</span> : null}
                   </p>
                   <p class="meta">
@@ -592,7 +593,7 @@ function Invitations({
           <>
             <p>{p.withdrawLead(asking.email)}</p>
             <div class="actions">
-              <Button kind="primary" onClick={() => void withdraw(asking)}>
+              <Button kind="danger" onClick={() => void withdraw(asking)}>
                 {p.withdrawConfirm}
               </Button>
               <Button kind="quiet" onClick={() => setAsking(null)}>
