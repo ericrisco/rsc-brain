@@ -91,7 +91,7 @@ export function useEntries(slug: string) {
     (q) =>
       api
         .call<{ items: { kind: string; id: string; title: string; at: string }[] }>('search', {
-          query: { q: q || undefined, brains: slug, in: 'entries', limit: 8 },
+          query: { q, brains: slug, in: 'entries', limit: 8 },
         })
         .then((r) =>
           r.items.filter((h) => h.kind === 'entry').map((h) => ({ id: h.id, title: h.title, at: h.at })),

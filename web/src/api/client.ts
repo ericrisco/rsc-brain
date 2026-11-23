@@ -103,8 +103,10 @@ function urlOf(route: string, o: CallOptions): { method: string; url: string } {
     return k === 'address' ? v.split('/').map(encodeURIComponent).join('/') : encodeURIComponent(v)
   })
   const q = new URLSearchParams()
+  // Search requires its "q", even empty (an empty field lists the recent ones); elsewhere an empty value is left out.
+  const keepEmpty = template === '/v1/search' ? 'q' : null
   for (const [k, v] of Object.entries(o.query ?? {}))
-    if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+    if (v !== undefined && v !== null && (v !== '' || k === keepEmpty)) q.set(k, String(v))
   const qs = q.toString()
   return { method, url: qs ? `${path}?${qs}` : path }
 }
