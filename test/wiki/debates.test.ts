@@ -179,6 +179,34 @@ describe('known debates and the import baseline', { skip: skipPg }, () => {
     )
   })
 
+  it('a revert drops the links the revision did not have and restores the ones it did', async () => {
+    const change = (op: Record<string, unknown>) =>
+      w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
+    const out = async (address: string) =>
+      (
+        (await w.call(eric.key, 'GET', `/v1/brains/yt/pages/${address}`)).body as {
+          links: { out: { kind: string; address: string }[] }
+        }
+      ).links.out
+        .map((l) => `${l.kind} ${l.address}`)
+        .sort()
+    assert.equal((await make('papers/r1')).status, 201)
+    assert.equal((await make('papers/r2')).status, 201)
+    // Revision 1 links r1; revision 2 swaps it for r2.
+    assert.equal((await make('papers/rv', { links: [{ kind: 'related', to: 'papers/r1' }] })).status, 201)
+    assert.equal(
+      (await change({ op: 'link', address: 'papers/rv', kind: 'related', to: 'papers/r2' })).status,
+      201,
+    )
+    assert.equal(
+      (await change({ op: 'unlink', address: 'papers/rv', kind: 'related', to: 'papers/r1' })).status,
+      201,
+    )
+    assert.deepEqual(await out('papers/rv'), ['related papers/r2'])
+    assert.equal((await change({ op: 'revert', address: 'papers/rv', toRevision: 1 })).status, 201)
+    assert.deepEqual(await out('papers/rv'), ['related papers/r1'])
+  })
+
   it('with the contradiction written both ways, the debate stays until the last link goes', async () => {
     const change = (op: Record<string, unknown>) =>
       w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
@@ -189,12 +217,18 @@ describe('known debates and the import baseline', { skip: skipPg }, () => {
       201,
     )
     assert.equal((await debate(ericWeb, true, 'papers/aa', 'papers/bb')).status, 200)
-    await change({ op: 'unlink', address: 'papers/aa', kind: 'contradicts', to: 'papers/bb' })
+    assert.equal(
+      (await change({ op: 'unlink', address: 'papers/aa', kind: 'contradicts', to: 'papers/bb' })).status,
+      201,
+    )
     assert.equal(
       (await health()).debates.some((d) => d.a === 'papers/aa'),
       true,
     )
-    await change({ op: 'unlink', address: 'papers/bb', kind: 'contradicts', to: 'papers/aa' })
+    assert.equal(
+      (await change({ op: 'unlink', address: 'papers/bb', kind: 'contradicts', to: 'papers/aa' })).status,
+      201,
+    )
     assert.equal(
       (await health()).debates.some((d) => d.a === 'papers/aa'),
       false,
