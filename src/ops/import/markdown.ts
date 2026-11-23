@@ -107,17 +107,46 @@ export function firstHeading(body: string): string | undefined {
   return m ? plainText(m[1] as string) || undefined : undefined
 }
 
-// The first paragraph: lines of text before a blank line, past headings, tables, rules, fences and comments.
+const INLINE_CODE = /(`+)([^`]|[^`].*?[^`])\1(?!`)/g
+
+// Keep inline code literal while flattening a paragraph's links and emphasis. NUL is
+// replaced in Markdown input, so the numbered placeholders cannot collide with the source.
+function paragraphText(md: string): string {
+  const spans: string[] = []
+  const marked = md.replaceAll('\0', '�').replace(INLINE_CODE, (_whole, _ticks: string, code: string) => {
+    spans.push(code)
+    return `\0${spans.length - 1}\0`
+  })
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: restore only the placeholders above.
+  return plainText(marked).replace(/\x00(\d+)\x00/g, (_, i: string) => spans[Number(i)] as string)
+}
+
 export function firstParagraph(body: string): string {
-  const blocks = stripCode(body).split(/\r?\n\s*\r?\n/)
-  for (const b of blocks) {
-    const t = b.trim()
-    if (!t || /^(#|\||---|\*\*\*|<!--|```|~~~)/.test(t)) continue
-    const lines = t.split(/\r?\n/).filter((l) => !/^\s*#/.test(l))
-    const text = plainText(lines.join('\n'))
-    if (text) return text
+  const source = mapCodeLines(
+    body,
+    () => '',
+    (line) => line,
+  )
+  const paragraph: string[] = []
+  let quote = false
+  let comment = false
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    const inComment = comment || trimmed.startsWith('<!--')
+    const divider = !trimmed || /^(?:#|\||(?:-\s*){3,}$|(?:\*\s*){3,}$|(?:_\s*){3,}$)/.test(trimmed)
+    if (inComment) comment = !trimmed.includes('-->')
+    else if (divider) quote = false
+    else if (trimmed.startsWith('>')) quote = true
+    // Markdown allows an unmarked line to continue a quote until the next block.
+    if (!inComment && !divider && !quote) {
+      paragraph.push(trimmed)
+    } else if (paragraph.length) {
+      const text = paragraphText(paragraph.join(' '))
+      if (text) return text
+      paragraph.length = 0
+    }
   }
-  return ''
+  return paragraphText(paragraph.join(' '))
 }
 
 // Code (fenced blocks and inline spans) blanked out, same length, so what is in it is never read as a link.
@@ -130,6 +159,14 @@ function stripCode(text: string): string {
 // a fence as long) and inline spans (`code`, ``co`de``).
 function maskCode(text: string): string {
   const hide = (s: string) => s.replace(/[^\n]/g, '\u0001')
+  return mapCodeLines(text, hide, (line) => line.replace(INLINE_CODE, hide))
+}
+
+function mapCodeLines(
+  text: string,
+  fenced: (line: string) => string,
+  prose: (line: string) => string,
+): string {
   let fence: string | null = null
   return text
     .split('\n')
@@ -138,13 +175,13 @@ function maskCode(text: string): string {
       if (fence) {
         const f1 = f?.[1]
         if (f1 && f1[0] === fence[0] && f1.length >= fence.length && line.trim() === f1) fence = null
-        return hide(line)
+        return fenced(line)
       }
       if (f) {
         fence = f[1] as string
-        return hide(line)
+        return fenced(line)
       }
-      return line.replace(/(`+)(?:[^`]|[^`].*?[^`])\1(?!`)/g, hide)
+      return prose(line)
     })
     .join('\n')
 }

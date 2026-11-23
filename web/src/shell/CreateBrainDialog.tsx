@@ -57,7 +57,7 @@ function Form() {
       route(`/b/${encodeURIComponent(slug)}`)
     } catch (err) {
       const a = err as ApiError
-      if (a.code === 'brain_exists' || (a.status === 400 && /slug|brain name/i.test(a.message))) {
+      if (a.code === 'brain_exists' || (a.status === 400 && /slug|brain name/i.test(a.rawMessage))) {
         setProblems({ slug: `${a.message} ${a.howToProceed}` })
         focus('slug')
       } else setError(a)

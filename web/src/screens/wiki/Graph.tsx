@@ -28,7 +28,8 @@ import {
   visibility,
 } from '../../graph/model.ts'
 import type { DrawnMessage, FromWorker, ToWorker } from '../../graph/protocol.ts'
-import { NODE_R, type Palette, Renderer, type Scene, type State } from '../../graph/render.ts'
+import { type Look, NODE_R, type Palette, Renderer, type Scene, type State } from '../../graph/render.ts'
+import { graphLook, setGraphLook } from '../../lib/graphLook.ts'
 import { landing } from '../../lib/landing.ts'
 import { isField } from '../../lib/screen.ts'
 import { PAGE_STATUSES, PAGE_TYPES } from '../../lib/wiki.ts'
@@ -760,7 +761,7 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
   )
 }
 
-function palette(): Palette {
+function palette(look: Look): Palette {
   const css = getComputedStyle(document.documentElement)
   const v = (name: string) => css.getPropertyValue(name).trim() || '#888'
   return {
@@ -770,8 +771,8 @@ function palette(): Palette {
     ground: v('--ground'),
     edge: v('--edge'),
     // One hue per community (tokens.css, each mode its own set); the small ones share the neutral grey and the
-    // pages without links a lighter one.
-    com: Array.from({ length: COLOURS }, (_, k) => v(`--graph-c${k}`)),
+    // pages without links a lighter one. The optional hologram keeps its own glow colours.
+    com: Array.from({ length: COLOURS }, (_, k) => v(look === 'holo' ? `--holo-com-${k}` : `--graph-c${k}`)),
     font: css.getPropertyValue('--font-sans').trim() || 'sans-serif',
     other: v('--graph-node'),
     lone: v('--graph-lone'),
@@ -915,6 +916,8 @@ function GraphCanvas({
   const [tip, setTip] = useState(-1)
   const tipNow = useRef(-1)
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 })
+  // The look the person chose (plain or hologram): reading it here repaints when it changes.
+  const look = graphLook.value
   // Once the person pans, zooms or drags a page, the view stays theirs until what is drawn changes.
   const auto = useRef(true)
   const hover = useRef(-1)
@@ -1024,6 +1027,8 @@ function GraphCanvas({
       frameMs.current = frameMs.current ? 0.8 * frameMs.current + 0.2 * d.ms : d.ms
       c.dataset.frameMs = frameMs.current.toFixed(3)
     }
+    if (d.reticles !== undefined) c.dataset.reticles = String(d.reticles)
+    else if (c.hasAttribute('data-reticles')) delete c.dataset.reticles
     if (d.counts) {
       c.dataset.counts = `${d.counts.lit},${d.counts.dim},${d.counts.lines}`
       c.dataset.named = `${d.counts.named ?? 0}`
@@ -1089,7 +1094,8 @@ function GraphCanvas({
       width: w,
       height: h,
       dpr: dpr.current,
-      palette: palette(),
+      palette: palette(graphLook.value),
+      look: graphLook.value,
       nodes: s.nodes,
       edges: s.edges,
       fit: s.nodes,
@@ -1353,7 +1359,7 @@ function GraphCanvas({
     const moved = panel && bringIntoView(latest.current.selected, true)
     if (toggled || moved) sendState()
   }, [panel, selected])
-  useEffect(sendState, [nodes, edges, focus, selected, active, refit, rings, hop, bridgePairs])
+  useEffect(sendState, [nodes, edges, focus, selected, active, refit, rings, hop, bridgePairs, look])
   // A hidden item is not named.
   useEffect(() => {
     if (tipNow.current >= 0 && !nodes[tipNow.current]) showTip(-1)
@@ -1675,8 +1681,18 @@ function GraphCanvas({
   return (
     <section class="graph-section" aria-label={g.graphView}>
       <div class="graph-stage">
-        <div class="graph-box" ref={box} data-scroll-x>
+        <div class={`graph-box${look === 'holo' ? ' holo' : ''}`} ref={box} data-scroll-x>
           <div class="graph-tools" ref={tools}>
+            <button
+              type="button"
+              class="tool"
+              onClick={() => setGraphLook(look === 'holo' ? 'plain' : 'holo')}
+              aria-label={g.holoLook}
+              aria-pressed={look === 'holo' ? 'true' : 'false'}
+              title={g.holoLook}
+            >
+              <Icon name="holo" />
+            </button>
             <button
               type="button"
               class="tool"
