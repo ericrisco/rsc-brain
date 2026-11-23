@@ -1,5 +1,7 @@
 // Brains as Home and the top bar show them: the address made from a name, what waits for review, and
 // when something last happened, in words.
+import { locale } from '../locale.ts'
+import { localizeMessage, T } from '../text.ts'
 
 // The address (slug) the server accepts: 2 to 64 lowercase letters, digits and single hyphens.
 export function slugOf(name: string): string {
@@ -63,6 +65,15 @@ export function ago(iso: string | null, now: Date = new Date()): string | null {
   if (!iso) return null
   const t = new Date(iso)
   const s = Math.max(0, (now.getTime() - t.getTime()) / 1000)
+  if (locale.value === 'es') {
+    const relative = new Intl.RelativeTimeFormat('es-ES', { numeric: 'auto' })
+    if (s < 60) return relative.format(0, 'second')
+    if (s < 3600) return relative.format(-Math.floor(s / 60), 'minute')
+    if (s < 86_400) return relative.format(-Math.floor(s / 3600), 'hour')
+    const days = Math.floor(s / 86_400)
+    if (days < 30) return relative.format(-days, 'day')
+    return T.date(iso)
+  }
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)} min ago`
   if (s < 86_400) return `${Math.floor(s / 3600)} h ago`
@@ -90,10 +101,10 @@ const PROGRAMS =
 export function clientLabel(raw: string | null | undefined): string | null {
   const v = (raw ?? '').trim()
   if (!v) return null
-  if (v === 'web') return 'the web'
-  for (const [re, name] of AGENTS) if (re.test(v)) return name
-  if (PROGRAMS.test(v)) return 'an API client'
-  if (/^mozilla\//i.test(v)) return 'a browser'
+  if (v === 'web') return localizeMessage('the web')
+  for (const [re, name] of AGENTS) if (re.test(v)) return localizeMessage(name)
+  if (PROGRAMS.test(v)) return localizeMessage('an API client')
+  if (/^mozilla\//i.test(v)) return localizeMessage('a browser')
   // "Name/1.2 (details)": the name.
   const name = (v.split('/')[0] ?? v).replace(/\s*\(.*$/, '').trim()
   return name.length > 40 ? `${name.slice(0, 39)}…` : name || null

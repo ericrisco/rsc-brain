@@ -14,6 +14,7 @@ import { factoryProblem, localWhen, logoProblem, progressLabel, rateProblem } fr
 import { lastUpdateText, sizeLabel } from '../../lib/backups.ts'
 import { ago } from '../../lib/brains.ts'
 import { lastUpdateFor, type UpdateInfo, updateView } from '../../lib/updates.ts'
+import { formatNumber } from '../../locale.ts'
 import { branding, me } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
@@ -81,7 +82,7 @@ function Limits({ account }: { account: string }) {
             {theirs ? (
               <Conflict>
                 <p>
-                  {A.rateLabel}: <strong>{theirs.rateLimit.toLocaleString('en')}</strong>
+                  {A.rateLabel}: <strong>{formatNumber(theirs.rateLimit)}</strong>
                 </p>
               </Conflict>
             ) : null}
