@@ -2,8 +2,9 @@
 // page never waits for a picture (CA6); without OffscreenCanvas it runs on the page. It paints when the
 // positions, the size or what the person does changes: frame after frame only while the layout moves.
 //
-// A flat picture with no words on it: each page a small dot in its community's colour (communities.ts),
-// bigger the more links it has; each group a rounded box; each link a thin pale line. Words come only on
+// A flat picture with no words on it: each page a small neutral dot, bigger the more links it has; each group a
+// rounded box; each link a thin pale line. What the picture is about (the page picked or under the pointer, its
+// neighbours and its lines) takes the accent; the rest dims. In high contrast the pick's ring is thicker. Words come only on
 // asking: the page under the pointer gets a tooltip and the page clicked the inspector, both in the DOM.
 // Under the pointer a page and its lines are brightened; picked, it and its neighbours stay bright and the
 // rest dims. Never by colour alone: a superseded page is dimmed and struck through, the page picked has a solid
@@ -19,10 +20,12 @@ export type Palette = {
   muted: string
   accent: string
   ground: string
-  // The communities' colours (tokens.css --com-0 …), then the small ones' and the pages without links'.
+  // The pages' grey per community slot (one neutral for all), the small ones' and the pages without links'.
   com: string[]
   other: string
   lone: string
+  // The width of the ring of the page picked (thicker in high contrast).
+  ring: number
 }
 
 export const NODE_R = 4
@@ -103,7 +106,7 @@ export type Drawn = {
   // For a test: how many items and lines were drawn, at full strength and dimmed.
   counts?: { lit: number; dim: number; lines: number }
   // For a test: the rings drawn, by what they mark, with their radius and whether they are dashed.
-  rings?: { what: string; r: number; dashed: boolean }[]
+  rings?: { what: string; r: number; dashed: boolean; width: number }[]
   // For a test: in the hologram look, how many reticles were drawn round the hubs.
   reticles?: number
 }
@@ -159,15 +162,6 @@ export class Renderer {
       const r = base * grow(sc.degree[i] as number)
       return st.hop && st.hop[i] === 2 ? r * 0.8 : r
     }
-    const colourOf = (i: number) => {
-      const c = sc.colour[i] as number
-      return c < palette.com.length
-        ? (palette.com[c] as string)
-        : c === palette.com.length
-          ? palette.other
-          : palette.lone
-    }
-
     // The page the picture is about: under the pointer, or else the one picked. It and its neighbours stay
     // bright; the rest dims, more behind a pick than behind the pointer.
     const hovered = st.hover >= 0 && st.nodes[st.hover] ? st.hover : -1
@@ -233,7 +227,7 @@ export class Renderer {
         ctx.lineTo(SX(bright[k + 1] as number), SY(bright[k + 1] as number))
       }
       ctx.lineWidth = 1.3
-      ctx.strokeStyle = colourOf(on)
+      ctx.strokeStyle = palette.accent
       ctx.globalAlpha = EDGE.lit
       ctx.stroke()
     }
@@ -257,6 +251,8 @@ export class Renderer {
 
     // Items: one path per colour and strength. A superseded page is drawn at half strength and struck through.
     const slots = palette.com.length + 2
+    const slotColour = (slot: number) =>
+      palette.com[slot] ?? (slot === palette.com.length ? palette.other : palette.lone)
     let litCount = 0
     let dimCount = 0
     for (let slot = 0; slot < slots; slot++) {
@@ -282,12 +278,8 @@ export class Renderer {
           else litCount += 1
         }
         if (!any) continue
-        ctx.fillStyle =
-          slot < palette.com.length
-            ? (palette.com[slot] as string)
-            : slot === palette.com.length
-              ? palette.other
-              : palette.lone
+        // Bright behind a pick or the pointer: the page the picture is about and its neighbours, in the accent.
+        ctx.fillStyle = lit && tier !== 2 ? palette.accent : slotColour(slot)
         ctx.globalAlpha = tier === 0 ? 1 : tier === 1 ? 0.5 : behind
         if (holo && tier === 0) {
           ctx.shadowColor = ctx.fillStyle
@@ -306,7 +298,7 @@ export class Renderer {
         const x = SX(i)
         const y = SY(i)
         const turn = (i * 2.399) % (Math.PI * 2)
-        ctx.strokeStyle = colourOf(i)
+        ctx.strokeStyle = lit?.[i] ? palette.accent : slotColour(sc.colour[i] as number)
         ctx.globalAlpha = lit && !lit[i] ? behind * 0.8 : 0.75
         ctx.lineWidth = 1.1
         ctx.beginPath()
@@ -349,7 +341,7 @@ export class Renderer {
 
     // Rings: the page under the pointer (thin, light), the page in focus, the one picked (solid), and where the
     // keyboard is (dashed, further out): told apart by their shape, not their colour alone.
-    const rings: { what: string; r: number; dashed: boolean }[] = []
+    const rings: { what: string; r: number; dashed: boolean; width: number }[] = []
     const ring = (
       what: string,
       i: number,
@@ -367,11 +359,11 @@ export class Renderer {
       ctx.setLineDash(dash)
       ctx.stroke()
       ctx.setLineDash([])
-      if (st.probe) rings.push({ what, r: Math.round(r * 10) / 10, dashed: dash.length > 0 })
+      if (st.probe) rings.push({ what, r: Math.round(r * 10) / 10, dashed: dash.length > 0, width })
     }
     ring('hover', hovered, 1.5, 2, palette.text)
     ring('focus', st.focus, 1.5, 4, palette.muted)
-    ring('selected', st.selected, 2.5, 3, palette.accent)
+    ring('selected', st.selected, palette.ring, 3, palette.accent)
     ring('active', st.active, 2, 8, palette.accent, [4, 3])
 
     const at = (i: number): [number, number] | null =>

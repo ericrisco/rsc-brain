@@ -1,5 +1,5 @@
 // How the graph looks: plain until the person turns the hologram on with the graph's tools; then the choice
-// is remembered in this browser only (as the theme is, lib/theme.ts).
+// is remembered in this browser only.
 import { signal } from '@preact/signals'
 import type { Look } from '../graph/render.ts'
 

@@ -60,7 +60,7 @@ test('each shortcut and its visible control do the same', async ({ page, context
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog', { name: 'Search' })).toBeHidden()
   await page
-    .locator('header')
+    .locator('.topbar')
     .getByRole('button', { name: /Search/ })
     .click()
   await expect(page.getByRole('dialog', { name: 'Search' })).toBeVisible()

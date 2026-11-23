@@ -43,6 +43,7 @@ import { useLive } from '../../live/follow.ts'
 import { me } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
+import { Dash } from '../../ui/Dash.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import { TextArea } from '../../ui/TextArea.tsx'
@@ -60,6 +61,14 @@ import {
   type SourceEntry,
 } from './data.ts'
 import { DecidedLine, proposer, ReadOnlyLine } from './Inbox.tsx'
+
+// A proposal waiting is live; approved is done, partly approved or returned want a look; the rest is just off.
+const PROPOSAL_TONE: Record<string, string> = {
+  pending: ' live',
+  approved: ' ok',
+  partially_approved: ' warn',
+  returned: ' bad',
+}
 
 const NONE: Choices = { selected: [], corrections: {}, baseReviewed: [], comment: '' }
 
@@ -757,9 +766,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
         <a href={backHref}>{w.back}</a>
       </p>
       <WikiHead title={p.title}>
-        <span class={`tag${p.status === 'pending' ? '' : ' warn'}`}>
-          {w.statusWord[p.status] ?? p.status}
-        </span>
+        <span class={`tag${PROPOSAL_TONE[p.status] ?? ''}`}>{w.statusWord[p.status] ?? p.status}</span>
         {p.old && p.status === 'pending' ? (
           <span class="tag warn" title={w.oldTitle}>
             {w.old}
@@ -822,7 +829,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
           <h2 id="why-title" class="section-title">
             {w.why}
           </h2>
-          <p>{p.reason || '—'}</p>
+          <p>{p.reason || <Dash />}</p>
           {p.collected.length ? <p class="muted small">{w.collected(p.collected.length)}</p> : null}
           {review.warnings.length ? (
             <ul class="plain op-warnings">
@@ -936,7 +943,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
               {chose ? approveAll : null}
               <p class="decide-row">
                 <Button
-                  kind="quiet"
+                  kind="secondary"
                   data-shortcut="return"
                   data-needs={b.backNeedsComment ? 'proposal-comment' : undefined}
                   aria-keyshortcuts="r"

@@ -32,7 +32,7 @@ for (const size of [
   { width: 1920, height: 1080 },
   { width: 1366, height: 768 },
 ])
-  test(`CA8 at ${size.width}×${size.height}: the canvas fills the space right of the rail, edge to edge`, async ({
+  test(`CA8 at ${size.width}×${size.height}: the canvas fills the sheet right of the rail, edge to edge`, async ({
     page,
     context,
     baseURL,
@@ -43,11 +43,12 @@ for (const size of [
     await settled(page)
     const rail = await box(page, 'header.rail')
     const canvas = await box(page, 'canvas.graph-canvas')
-    // From the rail's edge (its line belongs to the screen) to the window's right edge, top to bottom.
-    expect(Math.abs(canvas.left - rail.right), 'left edge').toBeLessThanOrEqual(1)
-    expect(Math.abs(canvas.right - size.width), 'right edge').toBeLessThanOrEqual(1)
-    expect(Math.abs(canvas.top), 'top edge').toBeLessThanOrEqual(1)
-    expect(Math.abs(canvas.bottom - size.height), 'bottom edge').toBeLessThanOrEqual(1)
+    // The whole sheet, inside its 1px edge: from the rail to 8px from the window's right edge, from under the
+    // 48px top bar to 8px above the window's bottom.
+    expect(Math.abs(canvas.left - (rail.right + 1)), 'left edge').toBeLessThanOrEqual(1)
+    expect(Math.abs(canvas.right - (size.width - 9)), 'right edge').toBeLessThanOrEqual(1)
+    expect(Math.abs(canvas.top - 49), 'top edge').toBeLessThanOrEqual(1)
+    expect(Math.abs(canvas.bottom - (size.height - 9)), 'bottom edge').toBeLessThanOrEqual(1)
     // Nothing to scroll: the canvas is the screen.
     const scroll = await page.evaluate(() => ({
       y: document.scrollingElement?.scrollHeight ?? 0,
@@ -68,7 +69,8 @@ test('the list is a page: it scrolls, and the frame is not in canvas mode', asyn
   await page.goto(`${GRAPH}?view=list`)
   await expect(page.getByRole('table', { name: /Pages of the wiki/ }).locator('tbody tr')).toHaveCount(50)
   await expect(page.locator('.frame')).not.toHaveAttribute('data-mode', 'canvas')
-  expect(await page.evaluate(() => document.scrollingElement?.scrollHeight ?? 0)).toBeGreaterThan(768)
+  // The sheet scrolls (the frame stays): its content is taller than it.
+  expect(await page.locator('main#main').evaluate((m) => m.scrollHeight > m.clientHeight + 100)).toBe(true)
   // Back to the graph by its button: the frame becomes a canvas again.
   await page.getByRole('button', { name: 'Graph', exact: true }).click()
   await settled(page)
@@ -124,7 +126,11 @@ test('CA8: the canvas controls at its edges; the filters open over the picture w
   expect(panel.top).toBeGreaterThan(views.top)
 })
 
-test('loading: the canvas shows its dotted ground and grey cards', async ({ page, context, baseURL }) => {
+test('loading: the canvas shows its flat ground, without dots, and grey bars', async ({
+  page,
+  context,
+  baseURL,
+}) => {
   const s = await scenario(context, baseURL as string, 'signed-in')
   await s.state('graph', 'loading')
   await page.setViewportSize({ width: 1366, height: 768 })
@@ -133,9 +139,9 @@ test('loading: the canvas shows its dotted ground and grey cards', async ({ page
   await expect(loading).toBeVisible()
   await expect(loading.locator('.skeleton-card')).not.toHaveCount(0)
   const ground = await loading.evaluate((el) => getComputedStyle(el).backgroundImage)
-  expect(ground).toContain('radial-gradient')
+  expect(ground).toBe('none')
   const b = await box(page, '.graph-box.loading')
-  expect(b.bottom).toBeGreaterThanOrEqual(767)
+  expect(b.bottom).toBeGreaterThanOrEqual(768 - 9)
 })
 
 // D9 (B16): the inspector is a panel over the right of the canvas that folds away. Opening it resizes
@@ -200,8 +206,8 @@ test('CA9: the canvas by keyboard: Tab to it, arrows walk the pages, Enter opens
   await page.goto(GRAPH)
   await settled(page)
   const canvas = page.getByRole('application', { name: /^Graph of \d+ items$/ })
-  // The zoom tools come just before it: Tab from the last one reaches the canvas.
-  await page.getByRole('button', { name: 'Zoom out', exact: true }).focus()
+  // The tools come just before it (the last is the keys help): Tab from it reaches the canvas.
+  await page.getByRole('button', { name: 'Keys and gestures' }).focus()
   await page.keyboard.press('Tab')
   await expect(canvas).toBeFocused()
   const said = page.locator('[aria-live="polite"]').filter({ hasText: /Enter to inspect/ })
@@ -310,7 +316,7 @@ test('CA9: with reduced motion nothing moves on the canvas screen', async ({ bro
   await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
   await page.goto(GRAPH)
   await settled(page)
-  await page.getByRole('button', { name: 'Expand the side bar' }).click()
+  await page.getByRole('button', { name: 'Collapse the side bar' }).click()
   await page.getByRole('button', { name: 'Inspector', exact: true }).click()
   expect(await page.evaluate(() => document.getAnimations().length)).toBe(0)
   const t = await page
@@ -600,6 +606,7 @@ test('the hologram look: a tool turns it on and off, the picture keeps its items
   await expect(holo).toHaveAttribute('aria-pressed', 'true')
   await expect(page.locator('.graph-box.holo')).toHaveCount(1)
   await upToDate(page)
+  await expect(canvas).toHaveAttribute('data-reticles', /^[1-9]\d*$/)
   expect(await canvas.getAttribute('data-items')).toBe(before)
   expect(await page.evaluate(() => localStorage.getItem('rscb.graphLook'))).toBe('holo')
   // The overlay never takes the pointer from the canvas.
@@ -612,4 +619,5 @@ test('the hologram look: a tool turns it on and off, the picture keeps its items
   await expect(page.locator('.graph-box.holo')).toHaveCount(1)
   await page.locator('.graph-tools').getByRole('button', { name: 'Hologram look', exact: true }).click()
   await expect(page.locator('.graph-box.holo')).toHaveCount(0)
+  await expect(canvas).not.toHaveAttribute('data-reticles', /.+/)
 })

@@ -27,7 +27,7 @@ import {
   visibility,
 } from '../../graph/model.ts'
 import type { DrawnMessage, FromWorker, ToWorker } from '../../graph/protocol.ts'
-import { NODE_R, type Palette, Renderer, type Scene, type State } from '../../graph/render.ts'
+import { type Look, NODE_R, type Palette, Renderer, type Scene, type State } from '../../graph/render.ts'
 import { graphLook, setGraphLook } from '../../lib/graphLook.ts'
 import { landing } from '../../lib/landing.ts'
 import { isField } from '../../lib/screen.ts'
@@ -580,13 +580,16 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
       {loose && !focusItem ? <p class="graph-note">{g.otherPagesNote(group, model?.total ?? 0)}</p> : null}
     </>
   )
+  const target = selected ? targetOf(selected) : null
   const head = list ? (
     <>
       <WikiHead title={g.title} lead={g.lead} />
       <div class="graph-bar">
-        {viewsToggle}
+        <div class="graph-center in-page">
+          {viewsToggle}
+          {filtersBox}
+        </div>
         {trailNav}
-        {filtersBox}
       </div>
       {focusBar}
       {placeRow}
@@ -596,18 +599,15 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
     // Over the canvas: its name and where you are at the top left; Graph | List and the filters at the top in
     // the middle (plan canvas-ui B.2); the communities at the right (v0.5.0).
     <>
-      {/* The strip along the top of the canvas, as a panel's head: its number, its name and what it is about,
-          and how much it holds; Graph | List, the filters and the inspector's switch sit in it. */}
-      <div class="graph-strip panel-head">
-        <span class="panel-num" aria-hidden="true">
-          01
-        </span>
-        <h1 class="title panel-title">{g.title}</h1>
-        <span class="panel-about">
+      {/* The strip along the top of the canvas: its name and what it is about, and how much it holds;
+          Graph | List, the filters and the inspector's switch sit in it. */}
+      <div class="graph-strip sec-head">
+        <h1 class="title sec-title">{g.title}</h1>
+        <span class="sec-about">
           <span aria-hidden="true">· </span>
           {g.stripAbout(brainName)}
         </span>
-        {vis && model ? <span class="panel-meta">{g.stripMeta(vis.pages, linksDrawn)}</span> : null}
+        {vis && model ? <span class="sec-meta">{g.stripMeta(vis.pages, linksDrawn)}</span> : null}
       </div>
       <div class="graph-left">
         <div class="graph-over">
@@ -622,7 +622,13 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
         {filtersBox}
       </div>
       {vis && model && communities && model.mode !== 'too-big' && model.items.length ? (
-        <CommunitiesPanel communities={communities} nodes={vis.nodes} hidden={hidden} onChange={setHidden} />
+        <CommunitiesPanel
+          communities={communities}
+          nodes={vis.nodes}
+          hidden={hidden}
+          onChange={setHidden}
+          folded={Boolean(target) || pinned}
+        />
       ) : null}
       {emptyWiki ? null : (
         <button
@@ -639,7 +645,6 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
     </>
   )
 
-  const target = selected ? targetOf(selected) : null
   const inspector = (
     <Inspector
       slug={slug}
@@ -748,14 +753,14 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
       </>
     )
   return (
-    <div class="graph-screen panel" data-c="orange">
+    <div class="graph-screen">
       {head}
       {layout}
     </div>
   )
 }
 
-function palette(): Palette {
+function palette(look: Look): Palette {
   const css = getComputedStyle(document.documentElement)
   const v = (name: string) => css.getPropertyValue(name).trim() || '#888'
   return {
@@ -764,9 +769,11 @@ function palette(): Palette {
     accent: v('--accent'),
     ground: v('--ground'),
     edge: v('--edge'),
-    com: Array.from({ length: COLOURS }, (_, k) => v(`--com-${k}`)),
-    other: v('--com-other'),
-    lone: v('--com-lone'),
+    // Plain pages share a neutral tone. The optional hologram uses the community colours for its glow.
+    com: Array.from({ length: COLOURS }, (_, k) => v(look === 'holo' ? `--holo-com-${k}` : '--graph-node')),
+    other: v('--graph-node'),
+    lone: v('--graph-lone'),
+    ring: Number.parseFloat(v('--graph-ring')) || 2.5,
   }
 }
 
@@ -869,6 +876,23 @@ function GraphCanvas({
     setActiveState(i)
   }
   const [said, setSaid] = useState('')
+  // The help for the keys and gestures: a button in the tools opens it; it never lies over the drawing unasked.
+  const [keysOpen, setKeysOpen] = useState(false)
+  useLayoutEffect(() => {
+    if (!keysOpen) return
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      // Only the help closes: the inspector's own handler (on document) never hears this Escape.
+      e.stopPropagation()
+      setKeysOpen(false)
+    }
+    window.addEventListener('keydown', esc, true)
+    return () => window.removeEventListener('keydown', esc, true)
+  }, [keysOpen])
+  const anySuperseded = useMemo(
+    () => model.items.some((it) => it.kind === 'page' && it.status === 'superseded'),
+    [model],
+  )
   // The item the tooltip names: under the pointer, or under the keyboard while the canvas has it.
   const [tip, setTip] = useState(-1)
   const tipNow = useRef(-1)
@@ -984,13 +1008,17 @@ function GraphCanvas({
       frameMs.current = frameMs.current ? 0.8 * frameMs.current + 0.2 * d.ms : d.ms
       c.dataset.frameMs = frameMs.current.toFixed(3)
     }
+    if (d.reticles !== undefined) c.dataset.reticles = String(d.reticles)
+    else if (c.hasAttribute('data-reticles')) delete c.dataset.reticles
     if (d.counts) c.dataset.counts = `${d.counts.lit},${d.counts.dim},${d.counts.lines}`
     if (d.active) c.dataset.active = `${d.active[0]},${d.active[1]}`
     else delete c.dataset.active
     if (d.selected) c.dataset.selected = `${d.selected[0]},${d.selected[1]}`
     else delete c.dataset.selected
     if (d.rings)
-      c.dataset.rings = d.rings.map((r) => `${r.what}:${r.dashed ? 'dashed' : 'solid'}:${r.r}`).join(' ')
+      c.dataset.rings = d.rings
+        .map((r) => `${r.what}:${r.dashed ? 'dashed' : 'solid'}:${r.r}:${r.width}`)
+        .join(' ')
     // Where the page's own copy of the positions puts the keyboard's page: the pointer works on it (review R2).
     const here = probe ? onScreen(latest.current.active) : null
     if (here) c.dataset.activeHere = `${Math.round(here[0])},${Math.round(here[1])}`
@@ -1044,7 +1072,7 @@ function GraphCanvas({
       width: w,
       height: h,
       dpr: dpr.current,
-      palette: palette(),
+      palette: palette(graphLook.value),
       look: graphLook.value,
       nodes: s.nodes,
       edges: s.edges,
@@ -1210,7 +1238,8 @@ function GraphCanvas({
       const sb = side?.getBoundingClientRect()
       if (sb?.width && r.right - sb.right < r.width * 0.5) {
         const above = sb.top + sb.bottom < r.top + r.bottom
-        if (sb.height > 64) {
+        // Folded because the inspector opened: the column stays reserved, so opening it moves nothing.
+        if (sb.height > 64 || screen?.querySelector('.graph-inspector[data-open]')) {
           if (!narrow()) right = Math.ceil(r.right - sb.left) + BAND_GAP
         } else if (above) top = Math.max(top, Math.ceil(sb.bottom - r.top) + BAND_GAP)
         else bottom = Math.max(bottom, Math.ceil(r.bottom - sb.top) + BAND_GAP)
@@ -1672,7 +1701,30 @@ function GraphCanvas({
             >
               <Icon name="zoomOut" />
             </button>
+            <button
+              type="button"
+              class="tool"
+              onClick={() => setKeysOpen((o) => !o)}
+              aria-label={g.keysHelp}
+              title={g.keysHelp}
+              aria-expanded={keysOpen ? 'true' : 'false'}
+              aria-controls="graph-keys"
+            >
+              <Icon name="help" />
+            </button>
+            {anySuperseded ? (
+              <span class="graph-mark">
+                <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+                  <circle cx="7" cy="7" r="5" fill="currentColor" opacity="0.45" />
+                  <path d="M2 12L12 2" stroke="currentColor" stroke-width="1.5" />
+                </svg>
+                {g.legendSuperseded}
+              </span>
+            ) : null}
           </div>
+          <p id="graph-keys" class="graph-keys" hidden={!keysOpen}>
+            {coarse() ? g.touchHelp : g.canvasHelp}
+          </p>
           {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: "application" makes a screen reader hand the arrow keys to the canvas, which walks the graph with them */}
           <canvas
             ref={canvas}
@@ -1749,7 +1801,7 @@ function GraphCanvas({
           {ready ? null : <CanvasSkeleton wait />}
         </div>
       </div>
-      <p id="graph-help" class="hint">
+      <p id="graph-help" class="sr-only">
         {coarse() ? g.touchHelp : g.canvasHelp}
       </p>
       <p class="sr-only" aria-live="polite">

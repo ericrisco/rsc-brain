@@ -170,7 +170,7 @@ function DeactivateDialog({
           <FormAlert error={error} />
           <div class="actions">
             <Button
-              kind="primary"
+              kind="danger"
               pending={pending}
               pendingLabel={T.states.pending}
               blocked={blocked()}

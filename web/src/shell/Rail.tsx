@@ -1,13 +1,14 @@
-// The rail at the left of every signed-in screen (plan canvas-ui D1, D2): the logo, the search, the brain
-// switcher, the sections of the brain, and at the foot what waits for review, People, help, the account
-// and the button that shows the names. Folded it is 56px of icons whose names stay in the page, hidden to
-// the eye and shown as a tooltip on hover or focus (Esc hides it); open it is 220px with the names. On a
-// phone it is a bar across the top, and the sections fold into a menu.
+// The rail at the left of every signed-in screen: the logo, the brain switcher, the sections of the brain, and
+// at the foot what waits for review, People, help, the account and the button that folds it. Open it is 228px
+// with the names (the first time, and until the person folds it); folded it is 56px of icons whose names stay
+// in the page, hidden to the eye and shown as a tooltip on hover or focus (Esc hides it). The search is in the
+// top bar. On a phone it is the bar across the top, with the search as an icon, and the sections fold into a
+// menu.
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import { toReview } from '../lib/brains.ts'
+import { CHOICES, choice, chooseMode } from '../lib/mode.ts'
 import { foldRail, isTablet, rail, startRail, TABLET, toggleRail } from '../lib/rail.ts'
-import { applyTheme, theme } from '../lib/theme.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import type { Me } from '../session.ts'
 import { T } from '../text.ts'
@@ -117,7 +118,9 @@ function RailLink({ item }: { item: Item }) {
 }
 
 // The sections of the brain, and the way back to all brains. Also the content of the menu on a phone.
-export function BrainLinks({ brain }: { brain: BrainNav | null }) {
+// Outside a brain (Administration, People, all brains) the phone's menu, which is given `me`, has no sections
+// to hold, so it holds the places a person goes from there. The rail on a wide screen has them elsewhere.
+export function BrainLinks({ brain, me }: { brain: BrainNav | null; me?: Me }) {
   const { path } = useLocation()
   // How many proposals wait in this brain, beside its section (from the brains and their numbers).
   const waiting = brain
@@ -130,6 +133,25 @@ export function BrainLinks({ brain }: { brain: BrainNav | null }) {
         <li>
           <RailLink item={home} />
         </li>
+        {!brain && me?.account.canInvite ? (
+          <li>
+            <RailLink
+              item={{ href: '/people', label: T.shell.people, icon: 'people', here: path === '/people' }}
+            />
+          </li>
+        ) : null}
+        {!brain && me?.account.isAdmin ? (
+          <li>
+            <RailLink
+              item={{
+                href: '/admin/people',
+                label: T.shell.admin,
+                icon: 'admin',
+                here: path.startsWith('/admin'),
+              }}
+            />
+          </li>
+        ) : null}
       </ul>
       {brain ? (
         <ul class="rail-group">
@@ -268,14 +290,21 @@ function AccountMenu({ me }: { me: Me }) {
             <span>{T.shell.shortcuts}</span>
             <kbd>?</kbd>
           </button>
-          <button
-            type="button"
-            aria-pressed={theme.value === 'light' ? 'true' : 'false'}
-            onClick={() => applyTheme(theme.value === 'light' ? 'dark' : 'light')}
-          >
-            <span>{T.shell.themeLight}</span>
-            <span class="meta">{theme.value === 'light' ? 'on' : 'off'}</span>
-          </button>
+          <fieldset class="mode-picker">
+            <legend class="meta">{T.shell.mode}</legend>
+            <div class="mode-choices">
+              {CHOICES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-pressed={choice.value === c ? 'true' : 'false'}
+                  onClick={() => chooseMode(c)}
+                >
+                  {T.shell.modes[c]}
+                </button>
+              ))}
+            </div>
+          </fieldset>
           <button type="button" onClick={() => void signOut()} aria-busy={leaving ? 'true' : undefined}>
             <span>{leaving ? T.shell.signingOut : T.shell.signOut}</span>
           </button>
@@ -292,12 +321,14 @@ function AccountMenu({ me }: { me: Me }) {
 
 // What waits for me to review: the proposals of the brains I curate; with one brain waiting it leads to
 // its inbox, with more to home, where each card says how many.
-function ToReview() {
+function ToReview({ brain }: { brain: BrainNav | null }) {
   const { path } = useLocation()
   const brains = brainsResource().data.value?.brains
   if (!brains) return null
   const { count, href } = toReview(brains)
   if (!count) return null
+  // In the one brain that holds all of them, its own Proposals item already says so: not twice.
+  if (brain && brains.find((b) => b.slug === brain.slug)?.stats.pendingProposals === count) return null
   return (
     <a class="rail-item to-review" href={href} aria-current={path === href ? 'page' : undefined}>
       <Icon name="review" />
@@ -389,34 +420,31 @@ export function Rail({
       onFocusIn={tips.moved}
     >
       <div class="rail-head">
-        {brain ? (
-          <button
-            type="button"
-            class="button quiet only-narrow"
-            aria-expanded={menu ? 'true' : 'false'}
-            onClick={onMenu}
-          >
-            {T.shell.menu}
-          </button>
-        ) : null}
+        <button
+          type="button"
+          class="button quiet only-narrow"
+          aria-expanded={menu ? 'true' : 'false'}
+          onClick={onMenu}
+        >
+          {T.shell.menu}
+        </button>
         <Brand />
       </div>
       <div class="rail-tools">
         <button
           type="button"
-          class="rail-item searchbox"
+          class="rail-item searchbox only-narrow"
           onClick={() => (searchOpen.value = true)}
           aria-keyshortcuts="Meta+K Control+K"
         >
           <Icon name="search" />
           <span class="rail-label">{T.shell.searchHint}</span>
-          <kbd class="rail-end">⌘K</kbd>
         </button>
         {brain ? <BrainSwitcher brain={brain} me={me} /> : null}
       </div>
       <BrainLinks brain={brain} />
       <div class="rail-foot">
-        <ToReview />
+        <ToReview brain={brain} />
         {me.account.canInvite ? (
           <a
             class="rail-item"

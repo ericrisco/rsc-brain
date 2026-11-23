@@ -1,81 +1,108 @@
-/* Brain's own tokens, over the shared ones (shared.css v2, loaded first): the dark terminal with neon (plan
-   canvas-ui S.0). A near-black blue ground, panels one step lighter, one monospaced face. Elevation is
-   lightness and a thin border; the accent marks selection, data and confirmation, never a button, a tab or
-   the navigation. Dark is the default; light is a choice of the person. */
-:root,
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --ground: oklch(0.145 0.015 262);
-  --surface: oklch(0.175 0.016 262);
-  --raised: oklch(0.225 0.018 262);
-  --text: oklch(0.94 0.006 260);
-  --muted: oklch(0.76 0.012 260);
-  --accent: oklch(0.82 0.16 156);
-  --rule: oklch(0.27 0.018 262);
-  --field-line: oklch(0.56 0.02 262);
-  --nav: oklch(0.78 0.01 260);
-  --primary-bg: oklch(0.94 0.006 260);
-  --primary-fg: oklch(0.145 0.015 262);
-  --scrim: oklch(0.08 0.012 262 / 0.75);
-  /* The graph's communities (v0.5.0): ten categorical colours told apart on the dark ground, the small
-     communities' shared grey and the pages without links' lighter one. */
-  --com-0: oklch(0.72 0.15 255);
-  --com-1: oklch(0.77 0.16 60);
-  --com-2: oklch(0.68 0.2 25);
-  --com-3: oklch(0.78 0.12 185);
-  --com-4: oklch(0.78 0.17 140);
-  --com-5: oklch(0.88 0.16 98);
-  --com-6: oklch(0.7 0.16 300);
-  --com-7: oklch(0.8 0.13 350);
-  --com-8: oklch(0.66 0.09 55);
-  --com-9: oklch(0.74 0.11 110);
-  --com-other: oklch(0.6 0.012 260);
-  --com-lone: oklch(0.8 0.01 260);
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-  --ground: oklch(0.975 0.004 95);
-  --surface: oklch(0.995 0.002 95);
-  --raised: oklch(0.935 0.005 260);
-  --text: oklch(0.2 0.012 260);
-  --muted: oklch(0.44 0.01 260);
-  --accent: oklch(0.5 0.13 156);
-  --rule: oklch(0.9 0.006 260);
-  --field-line: oklch(0.56 0.01 260);
-  --nav: oklch(0.42 0.01 260);
-  --primary-bg: oklch(0.2 0.012 260);
-  --primary-fg: oklch(0.985 0.003 95);
-  --scrim: oklch(0.2 0.01 260 / 0.4);
-  --com-0: oklch(0.52 0.16 255);
-  --com-1: oklch(0.6 0.17 55);
-  --com-2: oklch(0.55 0.2 25);
-  --com-3: oklch(0.55 0.1 185);
-  --com-4: oklch(0.55 0.15 140);
-  --com-5: oklch(0.62 0.13 90);
-  --com-6: oklch(0.5 0.17 300);
-  --com-7: oklch(0.6 0.18 350);
-  --com-8: oklch(0.48 0.08 55);
-  --com-9: oklch(0.52 0.1 110);
-  --com-other: oklch(0.62 0.01 260);
-  --com-lone: oklch(0.45 0.01 260);
-}
-
+/* Brain's own tokens, over the shared ones (shared.css, loaded first). The shared sheet holds the values of the
+   three modes; this one gives them the names Brain's sheets use, and adds what only Brain draws: the graph. */
 :root {
-  /* The whole interface is monospaced: the two old names both point at the shared stack. */
-  --sans: var(--font-mono);
+  --sans: var(--font-sans);
   --mono: var(--font-mono);
-  --topbar: 64px;
-  --gutter: 28px;
-  --gap: 16px;
-  /* The old names, kept as aliases of the shared ones (plan canvas-ui D10). */
-  --radius: var(--r-card);
-  --ok: var(--ok-fg);
-  --bad: var(--bad-fg);
-  --warn: var(--warn-fg);
-  --danger: var(--bad);
-  --warning: var(--warn);
-  --positive: var(--ok);
-  --control: 36px;
-  --field: 40px;
+
+  /* The names the screens use, as aliases of the shared ones. */
+  --radius: var(--radius-card);
+  --r-card: var(--radius-card);
+  --r-control: var(--radius-control);
+  --r-chip: var(--radius-chip);
+  --r-sheet: var(--radius-sheet);
+  --gutter: var(--pad);
+  --field: var(--control-height);
+  --topbar: var(--topbar-height);
+  --rail-w-open: var(--sidebar-width);
+  --rail-w-folded: var(--sidebar-folded);
+  --primary-bg: var(--primary);
+  --primary-fg: var(--primary-ink);
+  --danger: var(--negative);
+  --bad: var(--negative);
+  --ok: var(--positive);
+  --warn: var(--warning);
+  /* A field's edge: all that shows a box to type in, so it reads at 3:1 (WCAG 1.4.11). */
+  --field-line: var(--control-strong);
+  --nav: var(--muted);
+
+  /* The frame: the rail and the top bar share the ground, with no line between them. */
+  --rail-bg: var(--ground);
+  --rail-ink: var(--muted);
+  --rail-hover: var(--active);
+  --rail-line: var(--border);
+
+  /* The graph: a flat well, pages in a neutral grey, the pages without links lighter, the links paler still.
+     What is picked takes the accent. */
+  --edge: #9a9da1;
+  --graph-node: #6b6e72;
+  --graph-lone: #b4b7ba;
+  --graph-ring: 2.5;
+  /* The opt-in hologram uses a colour per community. */
+  --holo-com-0: oklch(0.52 0.16 255);
+  --holo-com-1: oklch(0.6 0.17 55);
+  --holo-com-2: oklch(0.55 0.2 25);
+  --holo-com-3: oklch(0.55 0.1 185);
+  --holo-com-4: oklch(0.55 0.15 140);
+  --holo-com-5: oklch(0.62 0.13 90);
+  --holo-com-6: oklch(0.5 0.17 300);
+  --holo-com-7: oklch(0.6 0.18 350);
+  --holo-com-8: oklch(0.48 0.08 55);
+  --holo-com-9: oklch(0.52 0.1 110);
+
+  /* The plate a light logo sits on, in every mode: a logo's tone does not follow the mode. */
+  --plate-dark: #131416;
+}
+
+/* Dark, on top of shared.css v4 (which raised the grounds, the edges and the controls for both repositories): what
+   only Brain draws or needs. The muted words, the neutral and the positive tints (a diff addition is the positive
+   tint), and the graph's quiet pages and links. Light and high contrast are as they were. Muted words reach 4.5:1
+   or more on every ground; the graph's quiet marks 4.5:1 on its well. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --muted: #b4b7bb;
+    --pill-neutral-bg: #3a3c3f;
+    --pill-neutral-ink: #e3e5e8;
+    --pill-positive-bg: #245c3a;
+    --pill-positive-ink: #d3f5e2;
+    --edge: #8d9197;
+    --graph-node: #c4c7cb;
+    --graph-lone: #8a8e94;
+  }
+}
+
+:root[data-theme="dark"] {
+  --muted: #b4b7bb;
+  --pill-neutral-bg: #3a3c3f;
+  --pill-neutral-ink: #e3e5e8;
+  --pill-positive-bg: #245c3a;
+  --pill-positive-ink: #d3f5e2;
+  --edge: #8d9197;
+  --graph-node: #c4c7cb;
+  --graph-lone: #8a8e94;
+  --holo-com-0: oklch(0.72 0.15 255);
+  --holo-com-1: oklch(0.77 0.16 60);
+  --holo-com-2: oklch(0.68 0.2 25);
+  --holo-com-3: oklch(0.78 0.12 185);
+  --holo-com-4: oklch(0.78 0.17 140);
+  --holo-com-5: oklch(0.88 0.16 98);
+  --holo-com-6: oklch(0.7 0.16 300);
+  --holo-com-7: oklch(0.8 0.13 350);
+  --holo-com-8: oklch(0.66 0.09 55);
+  --holo-com-9: oklch(0.74 0.11 110);
+}
+
+@media (prefers-contrast: more) {
+  :root:not([data-theme]) {
+    --edge: #595959;
+    --graph-node: #3d3d3d;
+    --graph-lone: #767676;
+    --graph-ring: 4;
+  }
+}
+
+:root[data-theme="contrast"] {
+  --edge: #595959;
+  --graph-node: #3d3d3d;
+  --graph-lone: #767676;
+  --graph-ring: 4;
 }

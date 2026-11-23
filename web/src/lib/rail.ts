@@ -1,6 +1,6 @@
-// The rail at the left of every signed-in screen (plan canvas-ui D3): folded to its icons (56px) until the
-// person opens it to show their names (220px); the choice is remembered in this browser only, like the
-// theme. The frame reads the signal as data-rail, which sets its width.
+// The rail at the left of every signed-in screen: open with the names of its sections (228px) the first time,
+// folded to its icons (56px) when the person folds it; the choice is remembered in this browser only, like the
+// mode. The frame reads the signal as data-rail, which sets its width.
 import { signal } from '@preact/signals'
 
 export type Rail = 'folded' | 'open'
@@ -18,13 +18,13 @@ function browserStore(): Store | null {
 
 export function readRail(store: Store | null): Rail {
   try {
-    return store?.getItem(RAIL_KEY) === 'open' ? 'open' : 'folded'
+    return store?.getItem(RAIL_KEY) === 'folded' ? 'folded' : 'open'
   } catch {
-    return 'folded'
+    return 'open'
   }
 }
 
-export const rail = signal<Rail>('folded')
+export const rail = signal<Rail>('open')
 
 // A tablet (768–1099px): the open rail covers the screen there, so it opens for the moment only, and is
 // never read from nor saved to the remembered choice (review R2).
@@ -37,7 +37,7 @@ export const isTablet = (): boolean => {
 
 type Where = { tablet?: boolean }
 
-// At start: the remembered choice, folded when there is none (always folded on a tablet).
+// At start: the remembered choice, open when there is none (always folded on a tablet).
 export function startRail(store: Store | null = browserStore(), where: Where = { tablet: isTablet() }): void {
   rail.value = where.tablet ? 'folded' : readRail(store)
 }

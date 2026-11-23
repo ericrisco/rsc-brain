@@ -15,7 +15,7 @@ import {
   type State,
 } from '../../web/src/graph/render.ts'
 
-type Op = { op: string; args: unknown[]; alpha: number; fill: string; stroke: string }
+type Op = { op: string; args: unknown[]; alpha: number; fill: string; stroke: string; blur: number }
 // A 2D context that records every call with the alpha and colours in force.
 function recorder() {
   const ops: Op[] = []
@@ -31,6 +31,7 @@ function recorder() {
           alpha: Number(t.globalAlpha ?? 1),
           fill: String(t.fillStyle ?? ''),
           stroke: String(t.strokeStyle ?? ''),
+          blur: Number(t.shadowBlur ?? 0),
         })
       }
     },
@@ -51,6 +52,7 @@ const palette: Palette = {
   com: ['#c00', '#0c0', '#00c', '#cc0', '#0cc', '#c0c', '#c80', '#08c', '#8c0', '#80c'],
   other: '#777',
   lone: '#555',
+  ring: 2.5,
 }
 // Four pages: 0–1–2 linked in a chain (community 0 and 1), 3 without links.
 const scene: Scene = {
@@ -194,6 +196,10 @@ describe('the painter of the graph', () => {
     const { ops, d } = paint()
     assert.equal(d?.reticles, undefined)
     assert.ok(!ops.some((o) => o.op === 'save'), 'no grid drawn')
+    assert.ok(
+      filled(ops).every((o) => o.blur === 0),
+      'no glow',
+    )
   })
 
   it('the hologram look adds a grid behind, a glow and a reticle round the hubs, and still writes no words', () => {
@@ -207,6 +213,10 @@ describe('the painter of the graph', () => {
     const d = r.paint(ctx)
     assert.deepEqual(hubs(hub, r.state), [1])
     assert.equal(d?.reticles, 1)
+    assert.ok(
+      filled(ops).some((o) => o.blur === HOLO.glow),
+      'the pages glow',
+    )
     // The grid sits behind: drawn before the first page.
     const grid = ops.findIndex((o) => o.op === 'save')
     const firstFill = ops.findIndex((o) => o.op === 'fill')

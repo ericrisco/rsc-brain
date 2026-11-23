@@ -57,11 +57,17 @@ export function JournalNav({ brain, correct = true }: { brain: BrainOne; correct
       ? [{ href: forgottenHref(s), label: j.forgotten, here: path === forgottenHref(s) }]
       : []),
   ]
+  // A session or an entry is in the journal, under Sessions: the row always says where it is.
+  const inside = !items.some((i) => i.here) && path.startsWith(`${base(s)}/`)
   return (
     <div class="journal-bar">
       <nav class="tabs" aria-label={j.nav}>
-        {items.map((i) => (
-          <a key={i.href} href={i.href} aria-current={i.here ? 'page' : undefined}>
+        {items.map((i, k) => (
+          <a
+            key={i.href}
+            href={i.href}
+            aria-current={i.here ? 'page' : inside && k === 0 ? 'true' : undefined}
+          >
             {i.label}
             {'count' in i && i.count ? (
               <>

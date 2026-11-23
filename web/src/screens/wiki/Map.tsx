@@ -5,11 +5,10 @@
 // and words live in the address. With many pages each group shows a few and opens whole.
 import { useState } from 'preact/hooks'
 import { useFresh } from '../../api/fresh.ts'
-import { familyOfType } from '../../graph/families.ts'
 import { filterMap, type MapGroup, mapTags, mapTypes, PAGE_STATUSES, PAGE_TYPES } from '../../lib/wiki.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
-import { PanelHead } from '../../ui/Panel.tsx'
+import { SectionHead } from '../../ui/Section.tsx'
 import { viewState } from '../../ui/state.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { pageHref, StatusTag, useBrain, useFilters, WikiHead } from './common.tsx'
@@ -165,15 +164,9 @@ export function WikiMap({ slug }: { slug: string }) {
         <Empty title={w.emptyTitle} filtered onClear={f.clear} />
       ) : (
         <div class="map">
-          {byType.map((x, k) => (
-            <section
-              key={x.type}
-              class="map-type panel pad"
-              data-c={familyOfType(x.type).colour}
-              aria-labelledby={`type-${x.type}`}
-            >
-              <PanelHead
-                n={k + 1}
+          {byType.map((x) => (
+            <section key={x.type} class="map-type card pad" aria-labelledby={`type-${x.type}`}>
+              <SectionHead
                 id={`type-${x.type}`}
                 title={w.typesPlural[x.type] ?? x.type}
                 meta={w.pages(x.groups.reduce((t, g) => t + g.pages.length, 0))}

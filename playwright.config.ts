@@ -21,6 +21,13 @@ export default defineConfig({
     reducedMotion: 'reduce',
     trace: 'retain-on-failure',
   },
+  // The timing tests (CA5 to CA7) run on their own, after every other test: measured while other browsers load
+  // the same machine, the graph's time says what the neighbours did (on a 2-core CI runner a graph that settles
+  // in 2.2 s alone read 3.3 to 3.5 s), not what the graph does. Their bounds stay as the spec has them.
+  projects: [
+    { name: 'web', testIgnore: /graph-perf\.spec\.ts/ },
+    { name: 'perf', testMatch: /graph-perf\.spec\.ts/, dependencies: ['web'], fullyParallel: false },
+  ],
   webServer: {
     command: 'node test/web/fixture/main.ts',
     url: `http://127.0.0.1:${PORT}/v1/health`,

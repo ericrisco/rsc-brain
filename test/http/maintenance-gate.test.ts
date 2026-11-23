@@ -463,7 +463,8 @@ describe('the maintenance gate', { skip: skipPg }, () => {
       assert.equal(res.status, 503, `${path}: ${html}`)
       assert.equal(res.headers.get('retry-after'), '120', path)
       assert.match(res.headers.get('content-type') ?? '', /text\/html/, path)
-      assert.match(html, /rsc-brain is updating\. Try again in 120 seconds\./, path)
+      // The installation's own name (the harness names it "Test"), not the product's (CA29).
+      assert.match(html, /Test is updating\. Try again in 120 seconds\./, path)
       const back = /<a href="([^"]+)"/.exec(html)?.[1]?.replace(/&amp;/g, '&') ?? ''
       assert.ok(back.startsWith('/oauth/authorize?'), `${path}: ${back}`)
       assert.equal(new URLSearchParams(back.split('?')[1]).get('client_id'), clientId, path)

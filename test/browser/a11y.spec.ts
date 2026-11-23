@@ -16,7 +16,7 @@ async function audit(page: Page, where: string) {
   expect(bad).toEqual([])
 }
 
-for (const theme of ['dark', 'light'] as const) {
+for (const theme of ['light', 'dark', 'contrast'] as const) {
   test(`signed-out screens, ${theme}`, async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-out')
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
@@ -48,7 +48,8 @@ for (const theme of ['dark', 'light'] as const) {
     await page.locator('canvas.graph-canvas').focus()
     await page.keyboard.press('Enter')
     await expect(page.getByRole('link', { name: 'Open page' })).toBeVisible()
-    // The Communities panel open, with its boxes, is audited with the rest.
+    // The Communities panel folds when the inspector opens; opened again, with its boxes, it is audited too.
+    await page.getByText('Communities', { exact: true }).click()
     await expect(page.getByRole('checkbox', { name: 'Select all' })).toBeVisible()
     await audit(page, `${theme} graph`)
     await page.getByRole('button', { name: 'List', exact: true }).click()
@@ -111,7 +112,7 @@ for (const theme of ['dark', 'light'] as const) {
 
 // The screens of PR18: home empty with its first steps, the overview of a new brain, people with a link
 // shown, «Connect your agent», and their dialogs (create a brain, withdraw an invitation).
-for (const theme of ['dark', 'light'] as const) {
+for (const theme of ['light', 'dark', 'contrast'] as const) {
   test(`home, overview and people (PR18), ${theme}`, async ({ page, context, baseURL }) => {
     // Six full axe audits in one walk: about 3 s alone, but past 30 s when eight workers share the
     // machine (seen in --repeat-each runs). The budget, not the page, is what ran out.
@@ -173,7 +174,7 @@ test('the web carries the security headers of plan §0', async ({ request }) => 
 
 // The wiki (PR19): the map, a page with a source open, its history with a comparison, the editor with
 // the `[[` list open and an edit conflict, the decisions and the log.
-for (const theme of ['dark', 'light'] as const) {
+for (const theme of ['light', 'dark', 'contrast'] as const) {
   test(`the wiki (PR19), ${theme}`, async ({ page, context, baseURL }) => {
     test.slow()
     const s = await scenario(context, baseURL as string, 'signed-in')

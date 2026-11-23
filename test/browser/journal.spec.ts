@@ -482,7 +482,7 @@ test.describe('Entries open from elsewhere', () => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/b/growth')
     await page
-      .locator('header')
+      .locator('.topbar')
       .getByRole('button', { name: /Search/ })
       .click()
     await page.getByLabel('Search for').fill('thirty')

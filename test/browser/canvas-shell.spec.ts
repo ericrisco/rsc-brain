@@ -1,7 +1,7 @@
-// Spec canvas-ui CA1 and CA9 (plan B.3, B7): at 1920×1080 every signed-in screen has the rail folded to
-// 56px and its content spans at least 90% of the width the rail leaves; opened, the rail is 220px and is
-// remembered; its names show as tooltips on keyboard focus and Esc hides them; the brain switcher works by
-// keyboard; nothing scrolls sideways at 1366×768, folded or open.
+// Spec canvas-ui CA1 and CA9, as the web redesign leaves them (CA31, CA34): at 1920×1080 every signed-in
+// screen has the rail open (228px) the first time and its content spans at least 90% of the width the sheet
+// gives; folded, the rail is 56px and that is remembered; its names show as tooltips on keyboard focus and
+// Esc hides them; the brain switcher works by keyboard; nothing scrolls sideways at 1366×768, folded or open.
 import type { Page } from '@playwright/test'
 import { expect, noSideScroll, scenario, test } from './fixture.ts'
 import { ROWS } from './screens.ts'
@@ -54,12 +54,20 @@ async function contentSpan(page: Page): Promise<{ span: number; left: number; ri
   })
 }
 
+// The width inside the sheet: its own width less its 24px padding on each side.
+async function sheetInner(page: Page): Promise<number> {
+  return page.locator('main#main').evaluate((el) => {
+    const cs = getComputedStyle(el)
+    return el.clientWidth - Number.parseFloat(cs.paddingLeft) - Number.parseFloat(cs.paddingRight)
+  })
+}
+
 async function railWidth(page: Page): Promise<number> {
   return page.locator('header.rail').evaluate((el) => el.getBoundingClientRect().width)
 }
 
 for (const row of SIGNED_IN) {
-  test(`CA1 at 1920×1080, ${row.name}: rail 56px and content over 90% of the rest`, async ({
+  test(`CA1 at 1920×1080, ${row.name}: rail 228px and content over 90% of the sheet`, async ({
     page,
     context,
     baseURL,
@@ -70,13 +78,14 @@ for (const row of SIGNED_IN) {
     if (row.seed) await row.seed(s)
     await expect(row.ready(page)).toBeVisible()
     await page.waitForLoadState('networkidle')
-    expect(await railWidth(page)).toBeCloseTo(56, 0)
+    expect(await railWidth(page)).toBeCloseTo(228, 0)
     const { span } = await contentSpan(page)
-    expect(span, `${row.name} spans ${Math.round(span)}px`).toBeGreaterThanOrEqual(0.9 * (WIDE.width - 56))
+    const room = await sheetInner(page)
+    expect(span, `${row.name} spans ${Math.round(span)}px of ${room}`).toBeGreaterThanOrEqual(0.9 * room)
   })
 }
 
-test('opened, the rail is 220px with the names, and stays open after a reload', async ({
+test('open at first, the rail is 228px with the names; folded it is 56px, and stays folded after a reload', async ({
   page,
   context,
   baseURL,
@@ -86,29 +95,25 @@ test('opened, the rail is 220px with the names, and stays open after a reload', 
   await page.goto('/b/growth')
   const nav = page.getByRole('navigation', { name: 'Sections of this brain' })
   await expect(nav.getByRole('link', { name: 'Overview' })).toBeVisible()
-  const toggle = page.getByRole('button', { name: 'Expand the side bar' })
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-  // Folded, a name is in the page for screen readers but not drawn.
-  expect((await nav.getByText('Wiki', { exact: true }).boundingBox())?.width ?? 0).toBeLessThanOrEqual(1)
-  await toggle.click()
   const fold = page.getByRole('button', { name: 'Collapse the side bar' })
   await expect(fold).toHaveAttribute('aria-expanded', 'true')
-  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
-  await expect(nav.getByText('Wiki', { exact: true })).toBeVisible()
+  expect(await railWidth(page)).toBeCloseTo(228, 0)
   expect((await nav.getByText('Wiki', { exact: true }).boundingBox())?.width ?? 0).toBeGreaterThan(20)
-  await page.reload()
-  await expect(nav.getByRole('link', { name: 'Overview' })).toBeVisible()
-  expect(await railWidth(page)).toBeCloseTo(220, 0)
-  await expect(page.getByRole('button', { name: 'Collapse the side bar' })).toHaveAttribute(
-    'aria-expanded',
-    'true',
-  )
-  // Closed again, and remembered folded.
-  await page.getByRole('button', { name: 'Collapse the side bar' }).click()
+  await fold.click()
+  const toggle = page.getByRole('button', { name: 'Expand the side bar' })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
+  // Folded, a name is in the page for screen readers but not drawn.
+  expect((await nav.getByText('Wiki', { exact: true }).boundingBox())?.width ?? 0).toBeLessThanOrEqual(1)
   await page.reload()
   await expect(nav.getByRole('link', { name: 'Overview' })).toBeVisible()
   expect(await railWidth(page)).toBeCloseTo(56, 0)
+  // Opened again, and remembered open.
+  await page.getByRole('button', { name: 'Expand the side bar' }).click()
+  await expect.poll(() => railWidth(page)).toBeCloseTo(228, 0)
+  await page.reload()
+  await expect(nav.getByRole('link', { name: 'Overview' })).toBeVisible()
+  expect(await railWidth(page)).toBeCloseTo(228, 0)
 })
 
 test('folded, a name shows as a tooltip on keyboard focus and on hover; Esc hides it', async ({
@@ -116,6 +121,7 @@ test('folded, a name shows as a tooltip on keyboard focus and on hover; Esc hide
   context,
   baseURL,
 }) => {
+  await context.addInitScript(() => localStorage.setItem('rscb.rail', 'folded'))
   await scenario(context, baseURL as string, 'signed-in')
   await page.setViewportSize(WIDE)
   await page.goto('/b/growth')
@@ -201,7 +207,7 @@ for (const state of ['folded', 'open'] as const) {
     context,
     baseURL,
   }) => {
-    test.slow()
+    test.setTimeout(240_000)
     await context.addInitScript((r) => localStorage.setItem('rscb.rail', r), state)
     const s = await scenario(context, baseURL as string, 'signed-in')
     await page.setViewportSize(SMALL)
@@ -210,7 +216,7 @@ for (const state of ['folded', 'open'] as const) {
       if (row.seed) await row.seed(s)
       await expect(row.ready(page)).toBeVisible()
       await noSideScroll(page)
-      expect(await railWidth(page)).toBeCloseTo(state === 'open' ? 220 : 56, 0)
+      expect(await railWidth(page)).toBeCloseTo(state === 'open' ? 228 : 56, 0)
       const toggle = page.locator('.rail-toggle')
       const box = await toggle.boundingBox()
       expect((box?.y ?? 9999) + (box?.height ?? 0), `${row.name}: the rail's foot fits`).toBeLessThanOrEqual(
@@ -255,7 +261,12 @@ test('on a tablet the open rail is for the moment: not remembered, closed by a m
   context,
   baseURL,
 }) => {
-  await context.addInitScript(() => localStorage.setItem('rscb.rail', 'open'))
+  await context.addInitScript(() => {
+    if (!sessionStorage.getItem('seeded')) {
+      localStorage.setItem('rscb.rail', 'open')
+      sessionStorage.setItem('seeded', '1')
+    }
+  })
   await scenario(context, baseURL as string, 'signed-in')
   await page.setViewportSize({ width: 900, height: 800 })
   await page.goto('/b/growth')
@@ -264,32 +275,32 @@ test('on a tablet the open rail is for the moment: not remembered, closed by a m
   expect(await railWidth(page), 'a remembered open rail is not brought back on a tablet').toBeCloseTo(56, 0)
   const expand = page.getByRole('button', { name: 'Expand the side bar' })
   await expand.click()
-  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  await expect.poll(() => railWidth(page)).toBeCloseTo(228, 0)
   await page.keyboard.press('Escape')
   await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
   await expand.click()
-  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  await expect.poll(() => railWidth(page)).toBeCloseTo(228, 0)
   await page.mouse.click(800, 400)
   await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
   await expand.click()
-  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  await expect.poll(() => railWidth(page)).toBeCloseTo(228, 0)
   await nav.getByRole('link', { name: 'Wiki' }).click()
   await expect(page).toHaveURL(/\/b\/growth\/wiki$/)
   await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
   // Review A6: Esc in a menu of the open rail closes the menu only; the rail stays open.
   await expand.click()
-  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  await expect.poll(() => railWidth(page)).toBeCloseTo(228, 0)
   const switcher = page.getByRole('button', { name: /Growth.*switch brain/ })
   await switcher.click()
   await expect(switcher).toHaveAttribute('aria-expanded', 'true')
   await page.keyboard.press('Escape')
   await expect(switcher).toHaveAttribute('aria-expanded', 'false')
-  expect(await railWidth(page), 'the rail stays open').toBeCloseTo(220, 0)
+  expect(await railWidth(page), 'the rail stays open').toBeCloseTo(228, 0)
   await page.keyboard.press('Escape')
   await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
   // Review A2: Tab out of the open rail (its last stop is the button that folds it) folds it.
   await expand.click()
-  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  await expect.poll(() => railWidth(page)).toBeCloseTo(228, 0)
   await page.getByRole('button', { name: 'Collapse the side bar' }).focus()
   await page.keyboard.press('Tab')
   await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('#rail')))).toBe(false)
@@ -304,11 +315,12 @@ test('on a tablet the open rail is for the moment: not remembered, closed by a m
 
 // Review R1: in a window under 760px tall the sections scroll inside the rail; the scroll must not cut off
 // the tooltips beside the rail, nor the bar that marks the current section at its left edge.
-test('at 1366×650 the folded rail scrolls its sections without cutting off a tooltip or the current bar', async ({
+test('at 1366×650 the folded rail scrolls its sections without cutting off a tooltip or the current pill', async ({
   page,
   context,
   baseURL,
 }) => {
+  await context.addInitScript(() => localStorage.setItem('rscb.rail', 'folded'))
   await scenario(context, baseURL as string, 'signed-in')
   await page.setViewportSize({ width: 1366, height: 650 })
   await page.goto('/b/growth/wiki')
@@ -324,11 +336,11 @@ test('at 1366×650 the folded rail scrolls its sections without cutting off a to
     const t = label.getBoundingClientRect()
     const l = link.getBoundingClientRect()
     const atTip = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2)
-    const atBar = document.elementFromPoint(l.left - 6.5, l.top + l.height / 2)
-    return { tip: Boolean(atTip && link.contains(atTip)), bar: Boolean(atBar && link.contains(atBar)) }
+    const atPill = document.elementFromPoint(l.left + 3, l.top + l.height / 2)
+    return { tip: Boolean(atTip && link.contains(atTip)), pill: Boolean(atPill && link.contains(atPill)) }
   })
   expect(seen.tip, 'the tooltip is drawn whole').toBe(true)
-  expect(seen.bar, 'the current bar is drawn').toBe(true)
+  expect(seen.pill, 'the current pill is drawn').toBe(true)
   // Review A6: the room the scroll box takes beside the rail lets the pointer through to the screen.
   await page.locator('main').click({ position: { x: 600, y: 10 } })
   const through = await wiki.evaluate((link) => {
@@ -340,13 +352,14 @@ test('at 1366×650 the folded rail scrolls its sections without cutting off a to
   expect(through, '150 px right of the rail is the screen').toBe(true)
 })
 
-// Review R5: inside a section (a page of the wiki under Wiki) the section is marked by the bar too, not by
-// the colour of its icon alone.
-test('folded, a section the screen is inside is marked by the bar, not by colour alone', async ({
+// Review R5, as the web redesign leaves it (CA12): inside a section (a page of the wiki under Wiki) the
+// section is marked by the grey pill and aria-current, never by the colour of its icon alone; no accent bar.
+test('folded, a section the screen is inside is marked by the grey pill, not by colour alone', async ({
   page,
   context,
   baseURL,
 }) => {
+  await context.addInitScript(() => localStorage.setItem('rscb.rail', 'folded'))
   await scenario(context, baseURL as string, 'signed-in')
   await page.setViewportSize(WIDE)
   await page.goto('/b/growth/pages/audience/retention')
@@ -354,19 +367,21 @@ test('folded, a section the screen is inside is marked by the bar, not by colour
     .getByRole('navigation', { name: 'Sections of this brain' })
     .getByRole('link', { name: 'Wiki' })
   await expect(wiki).toHaveAttribute('aria-current', 'true')
-  const bar = await wiki.evaluate((el) => {
-    const cs = getComputedStyle(el, '::before')
-    return { content: cs.content, width: cs.width }
-  })
-  expect(bar.content).not.toBe('none')
-  expect(bar.width).toBe('3px')
+  const look = await wiki.evaluate((el) => ({
+    bar: getComputedStyle(el, '::before').content,
+    ground: getComputedStyle(el).backgroundColor,
+    rail: getComputedStyle(el.closest('.rail') as Element).backgroundColor,
+  }))
+  expect(look.bar).toBe('none')
+  expect(look.ground).not.toBe(look.rail)
+  expect(look.ground).not.toBe('rgba(0, 0, 0, 0)')
 })
 
 // Review R3: the measure can fail. A screen whose content is held to 720px (a mutant) must read under 90%,
 // even when a line that only separates (a rule, the line under tabs) still spans the width: such a line
 // does not count as content.
 test('the width measure fails a screen held to 720px', async ({ page, context, baseURL }) => {
-  test.slow()
+  test.setTimeout(240_000)
   const s = await scenario(context, baseURL as string, 'signed-in')
   await page.setViewportSize(WIDE)
   for (const row of SIGNED_IN) {
@@ -384,7 +399,7 @@ test('the width measure fails a screen held to 720px', async ({ page, context, b
     })
     const { span } = await contentSpan(page)
     expect(span, `${row.name} held to 720px spans ${Math.round(span)}px`).toBeLessThan(
-      0.9 * (WIDE.width - 56),
+      0.9 * (await sheetInner(page)),
     )
   }
 })

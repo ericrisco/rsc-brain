@@ -504,7 +504,7 @@ function ForgetDialog({
         <p class="actions">
           <Button
             type="submit"
-            kind="primary"
+            kind="danger"
             pending={pending}
             pendingLabel={j.forgetting}
             blocked={blockedNow(pending)}

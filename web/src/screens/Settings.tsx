@@ -39,6 +39,7 @@ import {
 import { justDeleted, me, online } from '../session.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
+import { Dash } from '../ui/Dash.tsx'
 import { Dialog } from '../ui/Dialog.tsx'
 import { Field } from '../ui/Field.tsx'
 import { writeBlocked } from '../ui/state.ts'
@@ -84,11 +85,13 @@ function Part({
   return (
     <section class="settings-part" aria-labelledby={`${id}-title`}>
       {/* data-start: on a move between tabs the screen's own focus goes to the first part's heading. */}
-      <h2 id={`${id}-title`} class="part-heading" tabIndex={-1} data-start>
-        {title}
-      </h2>
-      {lead ? <p class="muted">{lead}</p> : null}
-      {children}
+      <div class="part-label">
+        <h2 id={`${id}-title`} class="part-heading" tabIndex={-1} data-start>
+          {title}
+        </h2>
+        {lead ? <p class="muted">{lead}</p> : null}
+      </div>
+      <div class="part-body">{children}</div>
     </section>
   )
 }
@@ -275,7 +278,7 @@ function MemberItem({
         <p>{S.demoteSelfLead(brain.name, pick)}</p>
         <div class="actions">
           <Button
-            kind="primary"
+            kind="danger"
             onClick={() => {
               setSelfDemote(false)
               void save()
@@ -750,7 +753,7 @@ function TextPart({
             {theirs ? (
               <Conflict>
                 <pre class="command">
-                  <code>{(guide ? theirs.guide : theirs.usageNote) || '—'}</code>
+                  <code>{(guide ? theirs.guide : theirs.usageNote) || <Dash />}</code>
                 </pre>
               </Conflict>
             ) : null}
@@ -1029,7 +1032,7 @@ function Archive({ brain }: { brain: BrainInfo }) {
         <FormAlert error={error} />
         <div class="actions">
           <Button
-            kind="primary"
+            kind="danger"
             pending={pending}
             pendingLabel={T.states.pending}
             blocked={blocked()}
@@ -1419,7 +1422,7 @@ function Delete({ brain }: { brain: BrainInfo }) {
           <div class="actions">
             <Button
               type="submit"
-              kind="primary"
+              kind="danger"
               pending={pending}
               pendingLabel={T.states.pending}
               blocked={blocked()}
