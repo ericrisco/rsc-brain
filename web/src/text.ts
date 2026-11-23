@@ -1650,6 +1650,7 @@ export const T = {
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',
     fitAll: 'Fit',
+    holoLook: 'Hologram look',
     keysHelp: 'Keys and gestures',
     legendSuperseded: 'Struck through and paler: superseded',
     // The strip over the canvas: what it is about, and how much it holds.

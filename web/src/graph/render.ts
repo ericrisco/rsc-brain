@@ -86,7 +86,12 @@ export type State = {
   seq: number
   // A test drives the browser (navigator.webdriver): the picture says a little more about itself.
   probe: boolean
+  // How the picture looks: plain (the default), or a hologram (a polar grid behind, glowing pages, a reticle
+  // round the hubs). The person's choice; the same items, lines, rings and dimming either way.
+  look?: Look
 }
+
+export type Look = 'plain' | 'holo'
 
 export type Drawn = {
   view: View
@@ -102,6 +107,8 @@ export type Drawn = {
   counts?: { lit: number; dim: number; lines: number }
   // For a test: the rings drawn, by what they mark, with their radius and whether they are dashed.
   rings?: { what: string; r: number; dashed: boolean; width: number }[]
+  // For a test: in the hologram look, how many reticles were drawn round the hubs.
+  reticles?: number
 }
 
 // How far Fit zooms in at most: a small wiki's pages are dots with room between them, not blobs.
@@ -110,6 +117,9 @@ const FIT_MAX = 3
 export const EDGE = { quiet: 0.28, lit: 0.9, behind: 0.06 }
 // How strong the pages are behind a pick, and behind the page under the pointer.
 export const DIM = { picked: 0.16, hover: 0.35 }
+// The hologram look: how strong the grid behind is, how far the pages glow, and how many of the best-linked
+// pages get a reticle (never one with fewer than HOLO.hubMin links).
+export const HOLO = { grid: 0.14, glow: 10, hubs: 24, hubMin: 3 }
 
 export class Renderer {
   scene: Scene | null = null
@@ -170,6 +180,9 @@ export class Renderer {
       }
     }
     const behind = hovered >= 0 ? DIM.hover : DIM.picked
+
+    const holo = st.look === 'holo'
+    if (holo) backdrop(ctx, sc, st, SX, SY, palette)
 
     // In focus: the two rings the hops sit on, faint.
     if (st.hop && st.focus >= 0 && st.nodes[st.focus]) {
@@ -238,6 +251,8 @@ export class Renderer {
 
     // Items: one path per colour and strength. A superseded page is drawn at half strength and struck through.
     const slots = palette.com.length + 2
+    const slotColour = (slot: number) =>
+      palette.com[slot] ?? (slot === palette.com.length ? palette.other : palette.lone)
     let litCount = 0
     let dimCount = 0
     for (let slot = 0; slot < slots; slot++) {
@@ -264,17 +279,47 @@ export class Renderer {
         }
         if (!any) continue
         // Bright behind a pick or the pointer: the page the picture is about and its neighbours, in the accent.
-        ctx.fillStyle =
-          lit && tier !== 2
-            ? palette.accent
-            : slot < palette.com.length
-              ? (palette.com[slot] as string)
-              : slot === palette.com.length
-                ? palette.other
-                : palette.lone
+        ctx.fillStyle = lit && tier !== 2 ? palette.accent : slotColour(slot)
         ctx.globalAlpha = tier === 0 ? 1 : tier === 1 ? 0.5 : behind
+        if (holo && tier === 0) {
+          ctx.shadowColor = ctx.fillStyle
+          ctx.shadowBlur = HOLO.glow
+        }
         ctx.fill()
+        if (holo) ctx.shadowBlur = 0
       }
+    }
+    // The hologram look: a reticle round the best-linked pages (and the groups), in their colour, its opening
+    // turned by the item so they do not all look alike. Behind a pick they dim with the rest.
+    let reticles = 0
+    if (holo) {
+      for (const i of hubs(sc, st)) {
+        const r = radius(i) * (isGroup(i) ? 1.5 : 1) + 5
+        const x = SX(i)
+        const y = SY(i)
+        const turn = (i * 2.399) % (Math.PI * 2)
+        ctx.strokeStyle = lit?.[i] ? palette.accent : slotColour(sc.colour[i] as number)
+        ctx.globalAlpha = lit && !lit[i] ? behind * 0.8 : 0.75
+        ctx.lineWidth = 1.1
+        ctx.beginPath()
+        for (let k = 0; k < 3; k++) {
+          const a = turn + (k * Math.PI * 2) / 3
+          ctx.moveTo(x + r * Math.cos(a), y + r * Math.sin(a))
+          ctx.arc(x, y, r, a, a + Math.PI * 0.42)
+        }
+        ctx.stroke()
+        // Four ticks outside, like a sight.
+        ctx.beginPath()
+        for (let k = 0; k < 4; k++) {
+          const a = turn + (k * Math.PI) / 2 + Math.PI / 4
+          ctx.moveTo(x + (r + 2) * Math.cos(a), y + (r + 2) * Math.sin(a))
+          ctx.lineTo(x + (r + 5) * Math.cos(a), y + (r + 5) * Math.sin(a))
+        }
+        ctx.globalAlpha *= 0.7
+        ctx.stroke()
+        reticles += 1
+      }
+      ctx.globalAlpha = 1
     }
     // The strike of superseded pages.
     ctx.beginPath()
@@ -330,6 +375,106 @@ export class Renderer {
       ms: performance.now() - started,
       seq: st.seq,
       ...(st.probe ? { counts: { lit: litCount, dim: dimCount, lines }, rings } : {}),
+      ...(st.probe && holo ? { reticles } : {}),
     }
   }
+}
+
+// The hologram look's hubs: the best-linked pages drawn (HOLO.hubs at most, each with HOLO.hubMin links or
+// more), and every group drawn.
+export function hubs(sc: Scene, st: State): number[] {
+  const groups: number[] = []
+  const pages: number[] = []
+  for (let i = 0; i < sc.n; i++) {
+    if (!st.nodes[i]) continue
+    if (sc.group[i] === 1) groups.push(i)
+    else if ((sc.degree[i] as number) >= HOLO.hubMin) pages.push(i)
+  }
+  pages.sort((a, b) => (sc.degree[b] as number) - (sc.degree[a] as number) || a - b)
+  return [...groups, ...pages.slice(0, HOLO.hubs)]
+}
+
+// The hologram look's ground: a polar grid round the middle of what is drawn (rings, spokes and the ticks of
+// a dial), faint, in the accent colour. Drawn under the lines; it carries no information.
+function backdrop(
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  sc: Scene,
+  st: State,
+  SX: (i: number) => number,
+  SY: (i: number) => number,
+  palette: Palette,
+): void {
+  let cx = 0
+  let cy = 0
+  let k = 0
+  for (let i = 0; i < sc.n; i++) {
+    if (!st.nodes[i]) continue
+    cx += SX(i)
+    cy += SY(i)
+    k += 1
+  }
+  if (k === 0) {
+    cx = st.width / 2
+    cy = st.height / 2
+  } else {
+    cx /= k
+    cy /= k
+  }
+  const R = Math.hypot(st.width, st.height) / 2
+  const step = Math.max(60, Math.min(st.width, st.height) / 7)
+  ctx.save()
+  ctx.strokeStyle = palette.accent
+  ctx.lineWidth = 1
+  // Paint the scan lines and corner marks on the same canvas as the grid. They stay
+  // behind the nodes and cannot cover the keyboard outline or intercept the pointer.
+  ctx.globalAlpha = 0.05
+  ctx.beginPath()
+  for (let y = 0.5; y < st.height; y += 3) {
+    ctx.moveTo(0, y)
+    ctx.lineTo(st.width, y)
+  }
+  ctx.stroke()
+  ctx.globalAlpha = 0.6
+  ctx.beginPath()
+  for (const dx of [1, -1]) {
+    for (const dy of [1, -1]) {
+      const x = dx === 1 ? 10 : st.width - 10
+      const y = dy === 1 ? 10 : st.height - 10
+      ctx.moveTo(x + dx * 28, y)
+      ctx.lineTo(x, y)
+      ctx.lineTo(x, y + dy * 28)
+    }
+  }
+  ctx.stroke()
+  ctx.globalAlpha = HOLO.grid
+  ctx.setLineDash([2, 5])
+  ctx.beginPath()
+  for (let r = step; r < R; r += step) {
+    ctx.moveTo(cx + r, cy)
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  }
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.globalAlpha = HOLO.grid * 0.6
+  ctx.beginPath()
+  for (let s = 0; s < 12; s++) {
+    const a = (s * Math.PI) / 6
+    ctx.moveTo(cx + step * 0.5 * Math.cos(a), cy + step * 0.5 * Math.sin(a))
+    ctx.lineTo(cx + R * Math.cos(a), cy + R * Math.sin(a))
+  }
+  ctx.stroke()
+  // The dial: a solid ring with a tick every 5°, longer every 30°.
+  const dial = step * 3
+  ctx.globalAlpha = HOLO.grid * 1.6
+  ctx.beginPath()
+  ctx.moveTo(cx + dial, cy)
+  ctx.arc(cx, cy, dial, 0, Math.PI * 2)
+  for (let d = 0; d < 360; d += 5) {
+    const a = (d * Math.PI) / 180
+    const len = d % 30 === 0 ? 9 : 4
+    ctx.moveTo(cx + dial * Math.cos(a), cy + dial * Math.sin(a))
+    ctx.lineTo(cx + (dial + len) * Math.cos(a), cy + (dial + len) * Math.sin(a))
+  }
+  ctx.stroke()
+  ctx.restore()
 }

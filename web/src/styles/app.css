@@ -3262,6 +3262,11 @@ label.op-head:hover {
   background: var(--raised);
 }
 
+.graph-tools .tool[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--raised);
+}
+
 .graph-screen .graph-canvas {
   border-radius: 0;
 }
