@@ -68,7 +68,8 @@ describe('deciding proposals with a key (v0.7)', { skip: skipPg }, () => {
   const webReview = async (id: string) =>
     (await w.callWeb(ericWeb, 'GET', `/v1/proposals/${id}/review`)).body as unknown as Review
   const review = async (id: string, key = writer.secret) => {
-    const r = await mcp(key, 'brain_review', { id })
+    // The whole pages, as the web reads them: the compact default is tested in test/mcp/contract.test.ts.
+    const r = await mcp(key, 'brain_review', { id, full: true })
     assert.equal(r.error, undefined, r.error)
     return r.result as unknown as Review
   }

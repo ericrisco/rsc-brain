@@ -1769,7 +1769,7 @@ const HAND: Record<string, Op> = {
   'GET /v1/search': {
     summary: 'Search entries and pages of the brains this key can read.',
     query: {
-      q: 'What to look for.',
+      q: 'What to look for (required).',
       brains: 'Comma-separated brains.',
       in: 'entries, pages or both.',
       types: 'Comma-separated entry types.',
@@ -1838,7 +1838,10 @@ const HAND: Record<string, Op> = {
   'GET /v1/proposals/{id}/review': {
     summary:
       'A proposal as a person reviews it in the web: each operation with the page before and after, what it depends on, and an old base in three versions. Any member reads it in the web; only a curator decides. A key reads it, and decides, only with the permission to write to the wiki (403 web_only otherwise).',
-    query: chunkQuery('review'),
+    query: {
+      ...chunkQuery('review'),
+      view: 'full (the default: whole pages before and after) or compact (a unified diff of each body and only the fields that change).',
+    },
     reply: { oneOf: [REVIEW, chunkSchema('review')] },
   },
   'POST /v1/proposals/{id}/approve': {
@@ -1900,7 +1903,7 @@ const HAND: Record<string, Op> = {
       'What a change would do, without doing it (anyone who may propose): the problems that would block it; and when there are none, the warnings on the wiki as it would be and the pages linked to what it touches.',
     body: obj(
       {
-        title: s('What it changes.'),
+        title: s('What it changes (optional here: a check writes nothing).'),
         reason: s('Why.'),
         ops: list({ type: 'object' }, 'The operations, as in a proposal.'),
         collected: list(s('Entry id.')),
@@ -1920,7 +1923,7 @@ const HAND: Record<string, Op> = {
     status: 201,
     body: obj(
       {
-        title: s('What it changes.'),
+        title: s('What it changes (optional here: a check writes nothing).'),
         reason: s('Why.'),
         ops: list({ type: 'object' }, 'The operations, as in a proposal.'),
         collected: list(s('Entry id.'), 'Entries read that add nothing new: they leave the uncompiled list.'),

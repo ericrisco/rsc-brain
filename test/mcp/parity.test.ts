@@ -231,7 +231,7 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
     // Spec v0.7: Eric's key may write to the wiki of "par", so it reads and decides its proposals.
     brain_review: {
       args: (s) => ({ id: t('review', s) }),
-      api: (s) => ['GET', `/v1/proposals/${t('review', s)}/review`],
+      api: (s) => ['GET', `/v1/proposals/${t('review', s)}/review?view=compact`],
       // A hash of the proposal, whose title names its side.
       drop: (r) => {
         delete r.fingerprint

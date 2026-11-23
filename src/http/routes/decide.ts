@@ -14,6 +14,7 @@ import {
   setWikiSettings,
 } from '../../domain/wiki/direct.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
+import { compactReview } from '../../domain/wiki/review.ts'
 import { chunkedReply } from '../chunked-reply.ts'
 import { bool, compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
@@ -29,9 +30,16 @@ function indices(b: Obj, key: string): number[] | undefined {
 }
 
 export const decideRoutes: Route[] = [
-  route('GET /v1/proposals/:id/review', async (r) => ({
-    body: chunkedReply('review', await reviewProposal(ctxOf(r), r.params.id as string), r.query, true),
-  })),
+  route('GET /v1/proposals/:id/review', async (r) => {
+    // The web reads the whole pages; an agent asks for the compact view (diffs and changed fields).
+    const view = r.query.get('view') ?? 'full'
+    if (view !== 'full' && view !== 'compact')
+      throw invalid('"view" is "full" or "compact".', 'Leave it out for the whole review.')
+    const review = await reviewProposal(ctxOf(r), r.params.id as string)
+    return {
+      body: chunkedReply('review', view === 'compact' ? compactReview(review) : review, r.query, true),
+    }
+  }),
   route('POST /v1/proposals/:id/approve', async (r) => {
     const b = obj(r.body)
     const corrections = b.corrections

@@ -5,6 +5,9 @@
 import { type Principal, roleIn } from '../auth/principal.ts'
 import { invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
+import { ENTRY_TYPES } from '../domain/entries.ts'
+import { OPS_SCHEMA } from '../domain/wiki/op-schema.ts'
+import { keyIdOf } from '../domain/wiki/writers.ts'
 
 type Json = Record<string, unknown>
 export type Call = {
@@ -21,6 +24,7 @@ export type Tool = {
   inputSchema: Json
   writes: boolean // needs a read + write key
   creates?: boolean // needs the right to create brains
+  wikiWriter?: boolean // needs a key a curator let write to the wiki directly
   annotations: { readOnlyHint: boolean; destructiveHint?: boolean; idempotentHint?: boolean }
   call: (a: Json, k: Kit) => Promise<Call>
 }
@@ -79,8 +83,15 @@ const query = (a: Json, keys: Record<string, string>) => {
   return out
 }
 
+// What an agent may save: every type the journal knows except "correction", which only people write
+// (saveEntry refuses it), so a curator's correction is never confused with an agent's note.
+export const AGENT_ENTRY_TYPES = ENTRY_TYPES.filter((t) => t !== 'correction')
+
 const ENTRY_FIELDS = {
-  type: str('decision, learning, discovery, attempt, preference, note or summary. Never "correction".'),
+  type: str(
+    `One of: ${AGENT_ENTRY_TYPES.join(', ')}. Never "correction": only people write corrections; save what a person corrects as a "learning" or "preference". A finding is a "learning" or a "fact".`,
+    { enum: [...AGENT_ENTRY_TYPES] },
+  ),
   title: str('A short title.'),
   content: str('The entry. Wrap private parts in <private>...</private>; never secrets.'),
   topic: str(
@@ -161,7 +172,7 @@ export const TOOLS: Tool[] = [
     name: 'mem_save',
     title: 'Save an entry',
     description:
-      'Writes to the journal: a decision with its why, a discovery, a failed attempt, a correction from the person (as "learning"). Returns a receipt with similar entries.',
+      'Writes to the journal: a decision with its why, a learning, a failed attempt, what the person corrected (as "learning"). Returns a receipt with similar entries.',
     inputSchema: obj({ brain: BRAIN, session: SESSION, ...ENTRY_FIELDS }, ['type', 'title', 'content']),
     writes: true,
     annotations: { readOnlyHint: false, idempotentHint: true },
@@ -463,12 +474,7 @@ export const TOOLS: Tool[] = [
         session: SESSION,
         title: str('What it changes, in one line.'),
         reason: str('Why.'),
-        ops: {
-          type: 'array',
-          items: { type: 'object' },
-          minItems: 1,
-          description: 'The operations (see the guide in brain_compile_pack).',
-        },
+        ops: OPS_SCHEMA,
         collected: {
           type: 'array',
           items: { type: 'string' },
@@ -498,19 +504,14 @@ export const TOOLS: Tool[] = [
         session: SESSION,
         title: str('What it changes, in one line.'),
         reason: str('Why.'),
-        ops: {
-          type: 'array',
-          items: { type: 'object' },
-          minItems: 1,
-          description: 'The operations, as for brain_propose or brain_write.',
-        },
+        ops: OPS_SCHEMA,
         collected: {
           type: 'array',
           items: { type: 'string' },
           description: 'Entry ids compiled with no change.',
         },
       },
-      ['title', 'ops'],
+      ['ops'],
     ),
     writes: false,
     annotations: { readOnlyHint: true },
@@ -531,12 +532,7 @@ export const TOOLS: Tool[] = [
         session: SESSION,
         title: str('What it changes, in one line.'),
         reason: str('Why.'),
-        ops: {
-          type: 'array',
-          items: { type: 'object' },
-          minItems: 1,
-          description: 'The operations (see the guide in brain_compile_pack).',
-        },
+        ops: OPS_SCHEMA,
         collected: {
           type: 'array',
           items: { type: 'string' },
@@ -547,6 +543,7 @@ export const TOOLS: Tool[] = [
       },
       ['title', 'ops'],
     ),
+    wikiWriter: true,
     writes: true,
     annotations: { readOnlyHint: false, idempotentHint: true },
     call: async (a, k) => ({
@@ -587,20 +584,22 @@ export const TOOLS: Tool[] = [
     name: 'brain_review',
     title: 'Review a proposal',
     description:
-      'A proposal as a curator reviews it: each operation with the page before and after, its reason and sources, dependencies, warnings and decision fingerprint. Large reviews return reviewChunk: append its text in offset order, call again with offset=next and snapshot until next is null, then parse the joined JSON and review it before deciding. A changed snapshot returns 409: restart. Only for a key allowed to write to the wiki.',
+      'A proposal as a curator reviews it: each operation with a unified diff of the page body and only the fields it changes (full: true for the whole pages before and after), its reason and sources, dependencies, warnings and decision fingerprint. Large reviews return reviewChunk: append its text in offset order, call again with offset=next and snapshot until next is null, then parse the joined JSON and review it before deciding. A changed snapshot returns 409: restart. Only for a key allowed to write to the wiki.',
     inputSchema: obj(
       {
         id: str('The proposal id.'),
+        full: { type: 'boolean', description: 'Send the whole pages instead of diffs and changed fields.' },
         ...chunkArgs('review'),
       },
       ['id'],
     ),
+    wikiWriter: true,
     writes: false,
     annotations: { readOnlyHint: true },
     call: async (a) => ({
       method: 'GET',
       path: `/v1/proposals/${enc(text(a, 'id', true) as string)}/review`,
-      query: query(a, chunkQuery),
+      query: { ...query(a, chunkQuery), view: a.full === true ? 'full' : 'compact' },
     }),
   },
   {
@@ -633,6 +632,7 @@ export const TOOLS: Tool[] = [
       },
       ['id', 'decision', 'fingerprint'],
     ),
+    wikiWriter: true,
     writes: true,
     annotations: { readOnlyHint: false, idempotentHint: true },
     call: async (a) => {
@@ -709,6 +709,17 @@ export function allowed(t: Tool, who: Principal): Refusal | null {
     }
   }
   return null
+}
+
+// The tools tools/list shows this key: what it may call, and the ones that need a curator's permission only
+// when a curator gave this key the permission to write to the wiki of some brain (brain_write, and reading
+// and deciding proposals as a curator does). Calling a hidden one still says what is missing.
+export async function listedTools(db: Db, who: Principal): Promise<Tool[]> {
+  const key = keyIdOf(who.credential)
+  const writer = key
+    ? Boolean(await db.one('SELECT 1 FROM wiki_writers WHERE key_id = $1 LIMIT 1', [key]))
+    : false
+  return TOOLS.filter((t) => allowed(t, who) === null && (!t.wikiWriter || writer))
 }
 
 // The brains this key can use, by name (the same narrowing as brain_list).
