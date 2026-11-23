@@ -132,22 +132,19 @@ export function firstParagraph(body: string): string {
   let comment = false
   for (const line of source.split(/\r?\n/)) {
     const trimmed = line.trim()
-    if (comment || trimmed.startsWith('<!--')) {
-      if (paragraph.length) break
-      comment = !trimmed.includes('-->')
-      continue
-    }
-    if (!trimmed || /^(?:#|\||---|\*\*\*)/.test(trimmed)) {
-      if (paragraph.length) break
-      quote = false
-      continue
-    }
-    if (trimmed.startsWith('>')) {
-      if (paragraph.length) break
-      quote = true
-    }
+    const inComment = comment || trimmed.startsWith('<!--')
+    const divider = !trimmed || /^(?:#|\||(?:-\s*){3,}$|(?:\*\s*){3,}$|(?:_\s*){3,}$)/.test(trimmed)
+    if (inComment) comment = !trimmed.includes('-->')
+    else if (divider) quote = false
+    else if (trimmed.startsWith('>')) quote = true
     // Markdown allows an unmarked line to continue a quote until the next block.
-    if (!quote) paragraph.push(trimmed)
+    if (!inComment && !divider && !quote) {
+      paragraph.push(trimmed)
+    } else if (paragraph.length) {
+      const text = paragraphText(paragraph.join(' '))
+      if (text) return text
+      paragraph.length = 0
+    }
   }
   return paragraphText(paragraph.join(' '))
 }

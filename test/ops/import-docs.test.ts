@@ -132,6 +132,15 @@ describe('reading a documentation folder (CA14, CI)', () => {
     assert.equal(plan.pages[0]?.summary, 'Use handle_ webhook here.')
   })
 
+  it('continues past a thematic break and an image with no visible text', async () => {
+    const plan = await planDocs(
+      memTree({
+        'wiki/image.md': '___\n![](diagram.png)\n\nActual introduction.',
+      }),
+    )
+    assert.equal(plan.pages[0]?.summary, 'Actual introduction.')
+  })
+
   it('redacts private text across paragraph boundaries before choosing the summary', async () => {
     const plan = await planDocs(
       memTree({
