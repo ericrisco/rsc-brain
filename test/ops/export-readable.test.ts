@@ -175,14 +175,40 @@ describe('the readable export (CA11, CA12)', { skip: skipPg }, () => {
           [slug],
         )
       ).map((l) => `${l.from} ${l.kind} ${l.to}`)
-    const before = await linkSet('vault')
-    assert.ok(before.some((l) => l.includes('depends-on')))
+    // What the export can carry: the links between its pages (a mention of an old address leads to the page now
+    // at it; a mention of a page that is not exported, or of nothing, is not a link of the vault).
+    const original = await linkSet('vault')
+    const typed = original.filter((l) => !l.includes(' mentions ') && !l.includes('b/old'))
+    assert.ok(typed.some((l) => l.includes('depends-on')))
+    let before: string[] | null = null
+    // The mentions of the bodies of the first export: the links written in the text, before what is generated.
+    const addressOf = (file: string) => file.replace(/^wiki\//, '').replace(/\.md$/, '')
+    const inBodiesSet = new Set<string>()
+    for (const [name, text] of files) {
+      if (!name.startsWith('wiki/')) continue
+      for (const l of linksIn(text.split('<!-- rsc-brain:generated -->')[0].split(/^---$/m)[2] as string)) {
+        const to = resolveIn(files, l.target)
+        if (to?.startsWith('wiki/') && to !== name)
+          inBodiesSet.add(`${addressOf(name)} mentions ${addressOf(to)}`)
+      }
+    }
+    const inBodies = [...inBodiesSet].sort()
     let bytes = got.bytes
     let last = files
     for (const slug of ['again', 'thrice']) {
       await w.call(eric.key, 'POST', '/v1/brains', { slug, name: slug, purpose: 'Round trip.' })
       await importTree({ db: w.db, clock: w.clock, who }, slug, treeFromZip(bytes), { from: 'round-trip' })
-      assert.deepEqual(await linkSet(slug), before, `links of ${slug}`)
+      const set = await linkSet(slug)
+      for (const l of typed) assert.ok(set.includes(l), `${slug} lost ${l}`)
+      // Nothing is added by the import: a page mentions what its body links to, and no more (the two pages
+      // that mention each other through "## Links" would show as an extra mention here).
+      assert.deepEqual(
+        set.filter((l) => l.includes(' mentions ')),
+        inBodies,
+        `mentions of ${slug}`,
+      )
+      if (before) assert.deepEqual(set, before, `links of ${slug}`)
+      before = set
       const next = await download(w, { session: web }, `/v1/brains/${slug}/export?format=readable`)
       assert.equal(next.status, 200)
       const now = filesOf(next.bytes)
