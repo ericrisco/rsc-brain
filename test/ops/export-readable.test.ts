@@ -186,7 +186,9 @@ describe('the readable export (CA11, CA12)', { skip: skipPg }, () => {
     const inBodiesSet = new Set<string>()
     for (const [name, text] of files) {
       if (!name.startsWith('wiki/')) continue
-      for (const l of linksIn(text.split('<!-- rsc-brain:generated -->')[0].split(/^---$/m)[2] as string)) {
+      for (const l of linksIn(
+        ((text.split('<!-- rsc-brain:generated -->')[0] as string).split(/^---$/m)[2] as string) ?? '',
+      )) {
         const to = resolveIn(files, l.target)
         if (to?.startsWith('wiki/') && to !== name)
           inBodiesSet.add(`${addressOf(name)} mentions ${addressOf(to)}`)
