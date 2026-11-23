@@ -397,6 +397,16 @@ export async function applyOps(
               .filter((s) => !drop.has(sourceKey(s))),
           )
           const dropLinks = new Set(o.dropLinks.map((l) => `${l.kind}>${l.to}`))
+          // y's known debates pass to x (not with x itself); the links y loses below take the old ones away.
+          await db.query(
+            `INSERT INTO wiki_debates (brain_id, page_a, page_b, acknowledged_by, acknowledged_at)
+             SELECT brain_id, least($2::text, CASE WHEN page_a = $1 THEN page_b ELSE page_a END),
+                    greatest($2::text, CASE WHEN page_a = $1 THEN page_b ELSE page_a END), acknowledged_by, acknowledged_at
+               FROM wiki_debates WHERE brain_id = $3 AND (page_a = $1 OR page_b = $1)
+                AND CASE WHEN page_a = $1 THEN page_b ELSE page_a END <> $2
+             ON CONFLICT DO NOTHING`,
+            [y.id, x.id, brainId],
+          )
           // y's typed links now leave from x, but those the operation drops.
           const yOut = await db.query(
             `SELECT l.kind, l.to_page, t.address FROM page_links l JOIN pages t ON t.id = l.to_page
@@ -423,6 +433,13 @@ export async function applyOps(
           await db.query('DELETE FROM page_links WHERE to_page = $1', [y.id])
           // Every address y had now leads to x, so [[y]] mentions resolve to x without touching bodies.
           await db.query('UPDATE page_addresses SET page_id = $2 WHERE page_id = $1', [y.id, x.id])
+          // A debate passed to x stays only while x has the contradicts link (the op may have dropped it).
+          await db.query(
+            `DELETE FROM wiki_debates d WHERE d.brain_id = $2 AND (d.page_a = $1 OR d.page_b = $1)
+               AND NOT EXISTS (SELECT 1 FROM page_links l WHERE l.kind = 'contradicts'
+                 AND ((l.from_page = d.page_a AND l.to_page = d.page_b) OR (l.from_page = d.page_b AND l.to_page = d.page_a)))`,
+            [x.id, brainId],
+          )
           await bump(String(x.id), 'body = $3', [o.body])
           await setMentions({ id: String(x.id), address: String(x.address) }, o.body)
           await revise(it, String(x.id), `merged "${y.address}" into it`)

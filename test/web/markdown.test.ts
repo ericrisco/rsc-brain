@@ -94,11 +94,15 @@ describe('a page body', () => {
       },
       { kind: 'mentions', address: 'papers/plain', state: 'ok', title: 'A plain title' },
       { kind: 'mentions', address: 'papers/lead', state: 'ok', title: ': odd' },
+      { kind: 'mentions', address: 'papers/reply', state: 'ok', title: 'Re: the plan' },
     ] as const
-    const html = renderMarkdown('[[papers/awq]] [[papers/plain]] [[papers/lead]] [[papers/awq|my alias]]', {
-      slug: 'growth',
-      links: [...titled],
-    })
+    const html = renderMarkdown(
+      '[[papers/awq]] [[papers/plain]] [[papers/lead]] [[papers/reply]] [[papers/awq|my alias]]',
+      {
+        slug: 'growth',
+        links: [...titled],
+      },
+    )
     assert.match(html, />AWQ<\/a>/)
     assert.match(
       html,
@@ -106,6 +110,7 @@ describe('a page body', () => {
     )
     assert.match(html, /title="papers\/plain">A plain title</)
     assert.match(html, />: odd</)
+    assert.match(html, />Re: the plan</)
     assert.match(html, />my alias</)
   })
 

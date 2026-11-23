@@ -98,6 +98,62 @@ describe('known debates and the import baseline', { skip: skipPg }, () => {
     assert.equal((await debate(ericWeb, true, 'papers/awq', 'papers/awq')).status, 400)
   })
 
+  it('a debate does not outlive its contradicts link, nor hide a later real contradiction', async () => {
+    assert.equal((await make('papers/zeta')).status, 201)
+    assert.equal(
+      (await make('papers/eta', { links: [{ kind: 'contradicts', to: 'papers/zeta' }] })).status,
+      201,
+    )
+    assert.equal((await debate(ericWeb, true, 'papers/eta', 'papers/zeta')).status, 200)
+    const change = (op: Record<string, unknown>) =>
+      w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
+    assert.equal(
+      (await change({ op: 'unlink', address: 'papers/eta', kind: 'contradicts', to: 'papers/zeta' })).status,
+      201,
+    )
+    assert.equal(
+      (await health()).debates.some((d) => d.a === 'papers/eta'),
+      false,
+    )
+    assert.equal(
+      (await change({ op: 'link', address: 'papers/zeta', kind: 'contradicts', to: 'papers/eta' })).status,
+      201,
+    )
+    const h = await health()
+    assert.equal(
+      h.conflicts.some((c) => c.a === 'papers/eta'),
+      true,
+    )
+    assert.equal(
+      h.debates.some((d) => d.a === 'papers/eta'),
+      false,
+    )
+  })
+
+  it('merging a page keeps its known debates on the page that survives', async () => {
+    assert.equal((await make('papers/zz')).status, 201)
+    assert.equal((await make('papers/xx')).status, 201)
+    assert.equal((await make('papers/yy', { links: [{ kind: 'contradicts', to: 'papers/zz' }] })).status, 201)
+    assert.equal((await debate(ericWeb, true, 'papers/yy', 'papers/zz')).status, 200)
+    const r = await w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', {
+      op: 'merge',
+      address: 'papers/xx',
+      from: 'papers/yy',
+      body: 'Merged.',
+      reason: 'same paper',
+    })
+    assert.equal(r.status, 201, r.text)
+    const h = await health()
+    assert.equal(
+      h.conflicts.some((c) => c.a === 'papers/xx' || c.b === 'papers/xx'),
+      false,
+    )
+    assert.equal(
+      h.debates.some((d) => d.a === 'papers/xx' && d.b === 'papers/zz'),
+      true,
+    )
+  })
+
   it('an import is a baseline: the cleanup is not due for 24 hours after it', async () => {
     assert.equal((await health()).maintenance.suggested, true)
     await w.db.query("UPDATE brains SET imported_at = $1, imported_from = 'a folder' WHERE slug = 'yt'", [

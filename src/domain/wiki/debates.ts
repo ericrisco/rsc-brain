@@ -16,14 +16,14 @@ export async function setDebate(
     const { brain, role } = await inBrain(c, { slug }, 'share')
     webOnly(c)
     await allow(c, 'wiki.decide', { role, brainStatus: brain.status }, brain.id)
-    const pages = await db.query<{ id: string; address: string }>(
-      `SELECT DISTINCT p.id, p.address FROM pages p JOIN page_addresses a ON a.page_id = p.id
-        WHERE p.brain_id = $1 AND a.address = ANY($2)`,
-      [brain.id, [o.a, o.b]],
-    )
-    const byAddress = (x: string) => pages.find((p) => p.address === x) ?? pages.find((p) => p.id === x)
-    const first = byAddress(o.a)
-    const second = byAddress(o.b)
+    // An address may be an old one: the page is what it resolves to.
+    const resolve = async (address: string) =>
+      db.one<{ id: string }>(
+        'SELECT page_id AS id FROM page_addresses WHERE brain_id = $1 AND address = $2',
+        [brain.id, address],
+      )
+    const first = await resolve(o.a)
+    const second = await resolve(o.b)
     if (!first || !second || first.id === second.id)
       throw invalid(
         'Name two different pages of this brain.',

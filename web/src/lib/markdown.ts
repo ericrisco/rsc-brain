@@ -27,10 +27,11 @@ const leaves = (href: string) => /^(https?:|mailto:)/i.test(href)
 export const pageHref = (slug: string, address: string) =>
   `/b/${encodeURIComponent(slug)}/pages/${address.split('/').map(encodeURIComponent).join('/')}`
 
-// A title up to its first ": " (the whole title when it has none, or when nothing would be left).
+// A title up to its first ": " (the whole title when it has none, or when the head is under 3 characters, as in "Re: …").
 export function headOfTitle(title: string): string {
   const at = title.indexOf(': ')
   const head = at > 0 ? title.slice(0, at).trim() : ''
+  if (head.length < 3) return title
   return head || title
 }
 
