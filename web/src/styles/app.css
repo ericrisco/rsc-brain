@@ -5049,46 +5049,6 @@ input[type="file"]:focus-visible {
 .com-dot-lone {
   background: var(--graph-lone);
 }
-.com-dot-0 {
-  background: var(--graph-c0);
-}
-
-.com-dot-1 {
-  background: var(--graph-c1);
-}
-
-.com-dot-2 {
-  background: var(--graph-c2);
-}
-
-.com-dot-3 {
-  background: var(--graph-c3);
-}
-
-.com-dot-4 {
-  background: var(--graph-c4);
-}
-
-.com-dot-5 {
-  background: var(--graph-c5);
-}
-
-.com-dot-6 {
-  background: var(--graph-c6);
-}
-
-.com-dot-7 {
-  background: var(--graph-c7);
-}
-
-.com-dot-8 {
-  background: var(--graph-c8);
-}
-
-.com-dot-9 {
-  background: var(--graph-c9);
-}
-
 .com-name {
   overflow: hidden;
   text-overflow: ellipsis;

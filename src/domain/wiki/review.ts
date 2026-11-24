@@ -241,15 +241,16 @@ export async function buildReview(ctx: Ctx, row: Row, curator: boolean): Promise
   const brainId = String(row.brain_id)
   const rows = await ctx.db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
   const ops = rows.map(proposalOpOf)
-  const plain = ops.map((o) => o.op)
+  // A purged operation retains only its kind and address; it has no changes or dependencies to preview.
+  const plain = row.purged_at ? [] : ops.map((o) => o.op)
   const deps = dependencies(plain)
   const decided = new Set(ops.filter((o) => o.status !== 'pending').map((o) => o.index))
   const warnings = row.status === 'pending' ? await warningsOf(ctx.db, brainId, plain, decided) : []
   const purges = await wikiPurges(ctx.db, brainId)
   const reviewed: ReviewedOp[] = []
   for (const o of ops) {
-    const before = await stateOf(ctx.db, brainId, o.op.address)
-    let after = afterOf(o.op, before)
+    const before = row.purged_at ? null : await stateOf(ctx.db, brainId, o.op.address)
+    let after = row.purged_at ? null : afterOf(o.op, before)
     if (o.op.op === 'revert' && before) {
       const r = await ctx.db.one('SELECT * FROM page_revisions WHERE page_id = $1 AND revision = $2', [
         before.pageId,

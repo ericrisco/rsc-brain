@@ -13,7 +13,6 @@ import { installation } from '../installation.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
 import { type Checked, checkChange } from './coherence.ts'
 import { mentionsOf, nearlySame, type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
-import { keyName } from './writers.ts'
 
 export const OLD_AFTER_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -59,13 +58,26 @@ export type Proposal = {
   maintenance: boolean
 }
 
+// Only the declared agent is a correction target. An unnamed submitter's token or app supplies a
+// display label, including for proposals submitted before the inbox showed key names.
+export const PROPOSAL_KEY_NAME = `(SELECT CASE WHEN c.kind = 'app' THEN g.client_name ELSE c.name END
+  FROM credentials c LEFT JOIN oauth_grants g ON g.id = c.grant_id AND g.account_id = c.account_id
+  WHERE p.purged_at IS NULL AND p.agent IS NULL AND c.id = p.credential_id AND c.account_id = p.author_id
+    AND c.kind IN ('token', 'app')) AS key_name`
+
+function displayAgent(agent: unknown, keyName: unknown): string | null {
+  if (agent != null) return String(agent)
+  if (keyName == null) return null
+  return redact(String(keyName)).text.slice(0, WIKI_LIMITS.agent) || null
+}
+
 export const proposalOf = (r: Row, now: Date): Proposal => ({
   id: String(r.id),
   brainId: String(r.brain_id),
   title: String(r.title),
   reason: String(r.reason),
   authorId: String(r.author_id),
-  agent: r.agent == null ? null : String(r.agent),
+  agent: displayAgent(r.agent, r.key_name),
   status: r.status as ProposalStatus,
   old: r.status === 'pending' && now.getTime() - (r.created_at as Date).getTime() > OLD_AFTER_MS,
   supersedes: r.supersedes_id == null ? null : String(r.supersedes_id),
@@ -84,13 +96,18 @@ export const proposalOf = (r: Row, now: Date): Proposal => ({
 export type NamedProposal = Proposal & { authorName: string; decidedByName: string | null }
 
 export async function named(db: Db, p: Proposal): Promise<NamedProposal> {
-  const ids = [p.authorId, ...(p.decidedBy ? [p.decidedBy] : [])]
-  const rows = await db.query<{ id: string; name: string }>(
-    'SELECT id, name FROM accounts WHERE id = ANY($1)',
-    [ids],
+  const row = await db.one<{ author_name: string; decider_name: string | null; key_name: string | null }>(
+    `SELECT a.name AS author_name, d.name AS decider_name, ${PROPOSAL_KEY_NAME}
+       FROM proposals p JOIN accounts a ON a.id = p.author_id LEFT JOIN accounts d ON d.id = p.decided_by
+      WHERE p.id = $1`,
+    [p.id],
   )
-  const nameOf = (id: string | null) => (id ? (rows.find((r) => r.id === id)?.name ?? '') : null)
-  return { ...p, authorName: nameOf(p.authorId) ?? '', decidedByName: nameOf(p.decidedBy) }
+  return {
+    ...p,
+    agent: displayAgent(p.agent, row?.key_name),
+    authorName: row?.author_name ?? '',
+    decidedByName: row?.decider_name ?? null,
+  }
 }
 
 export const proposalOpOf = (r: Row): ProposalOp => ({
@@ -412,15 +429,9 @@ export async function submitProposal(
   slug: string,
   input: ProposalInput,
 ): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] } & Checked> {
-  const { title, reason, collected, agent: named, ops, problems } = readPackage(ctx, input)
+  const { title, reason, collected, agent, ops, problems } = readPackage(ctx, input)
   const out = await ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
-    // An agent that names no one is known by the token or connected app it sent the proposal with, which a person
-    // named (the web names none; a service is already its own author).
-    let agent = named
-    if (!agent && (ctx.who.credential.kind === 'token' || ctx.who.credential.kind === 'app')) {
-      agent = redact(await keyName(db, ctx)).text.slice(0, WIKI_LIMITS.agent) || null
-    }
     const { brain, role } = await inBrain(c, { slug }, 'share')
     await allow(c, 'wiki.propose', { role, brainStatus: brain.status }, brain.id)
     const good = ops.filter((o): o is Op => o !== null)
@@ -455,9 +466,9 @@ export async function submitProposal(
     const now = ctx.clock()
     const id = newId('prp')
     const row = await db.one(
-      `INSERT INTO proposals (id, brain_id, title, reason, author_id, credential_id, agent, supersedes_id, collected, created_at,
+      `INSERT INTO proposals AS p (id, brain_id, title, reason, author_id, credential_id, agent, supersedes_id, collected, created_at,
          maintenance)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *, ${PROPOSAL_KEY_NAME}`,
       [
         id,
         brain.id,
@@ -600,7 +611,7 @@ export async function listProposals(
     filter += ` AND p.author_id = $${params.length}`
   }
   const rows = await ctx.db.query(
-    `SELECT p.*, (SELECT count(*)::int FROM proposal_ops o WHERE o.proposal_id = p.id) AS op_count,
+    `SELECT p.*, ${PROPOSAL_KEY_NAME}, (SELECT count(*)::int FROM proposal_ops o WHERE o.proposal_id = p.id) AS op_count,
             (SELECT name FROM accounts a WHERE a.id = p.author_id) AS author_name,
             (SELECT name FROM accounts a WHERE a.id = p.decided_by) AS decider_name
        FROM proposals p
@@ -670,7 +681,10 @@ export async function withdrawProposal(ctx: Ctx, id: string): Promise<Proposal> 
         'Nothing to do.',
       )
     }
-    const out = await db.one("UPDATE proposals SET status = 'withdrawn' WHERE id = $1 RETURNING *", [id])
+    const out = await db.one(
+      `UPDATE proposals AS p SET status = 'withdrawn' WHERE id = $1 RETURNING *, ${PROPOSAL_KEY_NAME}`,
+      [id],
+    )
     await emit(db, c, {
       brainId: String(row.brain_id),
       kind: 'proposal.withdrawn',

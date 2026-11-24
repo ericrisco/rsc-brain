@@ -58,7 +58,7 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
   const [asked, setAsked] = useState('')
   const [hits, setHits] = useState<Hit[] | null>(null)
   const [next, setNext] = useState<number | null>(null)
-  // What the last answer says of meaning search: absent when it is off (the words alone were searched).
+  // The server omits meaning when this request searched by words alone, including exact phrases.
   const [meaning, setMeaning] = useState<string | null>(null)
   const [error, setError] = useState<ApiError | null>(null)
   const [pending, setPending] = useState(false)
@@ -70,13 +70,14 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
   const shown = useRef<SearchForm | null>(null)
   // Each request is numbered: only the answer to the latest lands.
   const seq = useRef(0)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const open = searchOpen.value
   const here = brain?.slug ?? null
 
   const clear = () => {
     seq.current += 1
     shown.current = null
-    sent.current = ''
+    clearTimeout(timer.current)
     setHits(null)
     setNext(null)
     setMeaning(null)
@@ -94,8 +95,16 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
       const place = here ? 'brain' : 'all'
       setScope(place)
       const was = shown.current
-      if (was && (was.scope !== place || was.brain !== here)) clear()
-      return
+      // Restore a completed search only when its answer still matches the field and the opening scope.
+      if (was?.q !== q.trim() || was.scope !== place || was.brain !== here) {
+        setQ('')
+        clear()
+      }
+      setPending(false)
+      return () => {
+        clearTimeout(timer.current)
+        seq.current += 1
+      }
     }
     const back = opener.current
     opener.current = null
@@ -103,11 +112,8 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
       back.focus()
   }, [open, here])
 
-  // The words last sent, however they were sent: typing a pause after Enter does not send them twice.
-  const sent = useRef('')
   const ask = async (form: SearchForm, offset = 0) => {
     const mine = ++seq.current
-    if (!offset) sent.current = form.q
     setPending(true)
     setError(null)
     try {
@@ -131,27 +137,26 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
   }
 
   // The words in the field, where the dialog says, with the filters shown.
-  const run = () => {
-    const text = q.trim()
-    if (!text) return
-    void ask({ q: text, scope, brain: here, ...filters })
+  const run = (value = q, place = scope, criteria = filters) => {
+    clearTimeout(timer.current)
+    const text = value.trim()
+    if (text && searchOpen.value && online.value)
+      void ask({ q: text, scope: place, brain: here, ...criteria })
   }
 
-  // Search as you type: a short pause after the last key runs the words in the field (Enter runs them at once).
-  useEffect(() => {
-    if (!open || !online.value) return
-    const text = q.trim()
-    if (!text) {
-      // An emptied field forgets what was sent: the same words typed again are searched again.
-      sent.current = ''
+  const edit = (value: string) => {
+    setQ(value)
+    if (!value.trim()) {
+      clear()
       return
     }
-    // Checked when the pause ends: Enter pressed meanwhile has sent these words already.
-    const timer = setTimeout(() => {
-      if (sent.current !== text) run()
-    }, TYPING_PAUSE)
-    return () => clearTimeout(timer)
-  }, [q])
+    // Keep the visible results available for paging, but discard answers still on their way.
+    seq.current += 1
+    setPending(false)
+    setError(null)
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => run(value), TYPING_PAUSE)
+  }
 
   // More results of the search on screen.
   const more = () => {
@@ -167,20 +172,17 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
     list.current?.querySelectorAll<HTMLElement>('a.rt')[at]?.focus()
   }, [hits])
 
-  // Another place or filter: the search on screen runs again with it (the latest change wins).
+  // Changing the scope or filters submits the words in the field, even before the first answer.
   const change = (o: { scope?: 'brain' | 'all'; filters?: Filters }) => {
-    const nextScope = o.scope ?? scope
-    const nextFilters = o.filters ?? filters
-    if (o.scope) setScope(o.scope)
+    const place = o.scope ?? scope
+    let criteria = o.filters ?? filters
+    if (o.scope) setScope(place)
     if (o.filters) {
-      // A type the new «Show» does not offer goes.
-      const offered = typesFor(nextFilters.what)
-      const f = offered.includes(nextFilters.type) ? nextFilters : { ...nextFilters, type: '' }
-      setFilters(f)
-      if (shown.current) void ask({ ...shown.current, scope: nextScope, brain: here, ...f })
-      return
+      if (!typesFor(criteria.what).includes(criteria.type)) criteria = { ...criteria, type: '' }
+      setFilters(criteria)
     }
-    if (shown.current) void ask({ ...shown.current, scope: nextScope, brain: here, ...nextFilters })
+    clear()
+    run(q, place, criteria)
   }
 
   // Up and down move between the field and the results.
@@ -231,7 +233,7 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
                     autocomplete="off"
                     placeholder={s.placeholder}
                     aria-describedby="search-hint"
-                    onInput={(e) => setQ((e.currentTarget as HTMLInputElement).value)}
+                    onInput={(e) => edit(e.currentTarget.value)}
                     onKeyDown={(e) => {
                       // Esc goes back (spec B6 «Search»), even with text in the field, which a search field
                       // would otherwise only clear.
@@ -325,7 +327,7 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
             {hits && !error ? (
               <section aria-live="polite" aria-label={s.results(hits.length, next !== null)}>
                 {hits.length ? <p class="meta">{s.results(hits.length, next !== null)}</p> : null}
-                {meaning === null ? <p class="hint meaning-hint">{s.meaningOffHint}</p> : null}
+                {meaning === null ? <p class="hint meaning-hint">{s.wordsOnlyHint}</p> : null}
                 {hits.length ? null : (
                   <div class="state" data-state="filtered-empty">
                     <h3>{s.none(asked)}</h3>

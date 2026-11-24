@@ -13,7 +13,7 @@ import { installation } from './installation.ts'
 import { OPEN_CONFLICT } from './relations.ts'
 import { dayText } from './sessions.ts'
 import { wikiHealth } from './wiki/health.ts'
-import { proposalOf } from './wiki/proposals.ts'
+import { PROPOSAL_KEY_NAME, proposalOf } from './wiki/proposals.ts'
 
 export type BrainStats = {
   pages: number
@@ -177,7 +177,7 @@ export async function brainOverview(ctx: Ctx, slug: string) {
     [brain.id, now, tz, TODAY_SESSIONS],
   )
   const pending = await db.query(
-    `SELECT p.*, (SELECT count(*)::int FROM proposal_ops o WHERE o.proposal_id = p.id) AS op_count
+    `SELECT p.*, ${PROPOSAL_KEY_NAME}, (SELECT count(*)::int FROM proposal_ops o WHERE o.proposal_id = p.id) AS op_count
        FROM proposals p WHERE p.brain_id = $1 AND p.status = 'pending'
       ORDER BY p.created_at DESC, p.id DESC LIMIT $2`,
     [brain.id, PENDING_SHOWN],

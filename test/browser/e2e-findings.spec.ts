@@ -200,7 +200,7 @@ test('the meaning-search hint is hidden when the answer says meaning search is o
   const d = page.getByRole('dialog', { name: 'Search' })
   await d.getByLabel('Search for').fill('retention')
   await expect(d.getByRole('list', { name: 'Results' }).getByRole('listitem').first()).toBeVisible()
-  await expect(d.getByText(/Meaning search is off/)).toHaveCount(0)
+  await expect(d.getByText(/This search used words only/)).toHaveCount(0)
 })
 
 test('search runs as you type, with the arrows still moving through the results', async ({
@@ -223,8 +223,8 @@ test('search runs as you type, with the arrows still moving through the results'
   expect(asked).toEqual(['retention'])
   await d.getByLabel('Search for').press('ArrowDown')
   await expect(d.locator('a.rt').first()).toBeFocused()
-  // Meaning search is off in the fixture: the answer says so, for searches in another language.
-  await expect(d.getByText(/Meaning search is off/)).toBeVisible()
+  // The fixture used only words for this query.
+  await expect(d.getByText(/This search used words only/)).toBeVisible()
 })
 
 test('a curator marks a contradiction as a known debate; it leaves the problems and can be brought back', async ({

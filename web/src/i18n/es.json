@@ -1,5 +1,9 @@
 {
   "strings": {
+    "These two pages are not linked as contradicting each other.": "Estas dos páginas no están enlazadas como contradictorias.",
+    "Mark a debate only between pages with a \"contradicts\" link.": "Marca un debate solo entre páginas unidas por un enlace «contradicts».",
+    "Name two different pages of this brain.": "Indica dos páginas distintas de este cerebro.",
+    "Send the addresses of the two pages as \"a\" and \"b\".": "Envía las direcciones de las dos páginas en «a» y «b».",
     "Mode": "Modo",
     "System": "Sistema",
     "Light": "Claro",
@@ -1749,7 +1753,7 @@
     "Read the page as it will look": "Lee la página tal como se verá",
     "Hide the unchanged lines": "Ocultar las líneas sin cambios",
     "Results appear as you type. Up and down arrows move between results; Enter opens one; Esc goes back.": "Los resultados aparecen mientras escribes. Las flechas arriba y abajo se mueven entre resultados; Intro abre uno; Esc vuelve atrás.",
-    "Meaning search is off, so this search matches the words you typed. With it on, a search also finds pages in other languages.": "La búsqueda por significado está desactivada, así que esta búsqueda coincide con las palabras que escribiste. Con ella activada, también encuentra páginas en otros idiomas.",
+    "This search used words only. Searching by meaning can also find pages in other languages.": "Esta búsqueda solo usó palabras. La búsqueda por significado también puede encontrar páginas en otros idiomas.",
     "Search by meaning finds pages and entries about the same thing in other words, and in other languages. It sends their text to a provider.": "La búsqueda por significado encuentra páginas y entradas sobre lo mismo con otras palabras y en otros idiomas. Envía su texto a un proveedor."
   },
   "functions": {

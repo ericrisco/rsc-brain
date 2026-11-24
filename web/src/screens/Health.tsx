@@ -25,7 +25,7 @@ import { T } from '../text.ts'
 import { CopyButton } from '../ui/CopyButton.tsx'
 import { Dialog } from '../ui/Dialog.tsx'
 import { viewState } from '../ui/state.ts'
-import { Empty, ErrorState, Skeleton } from '../ui/states.tsx'
+import { Empty, ErrorState, FormAlert, Skeleton } from '../ui/states.tsx'
 import { curatorNames } from './journal/data.ts'
 import { useBrain } from './wiki/common.tsx'
 import { pageResource } from './wiki/data.ts'
@@ -207,6 +207,7 @@ export function HealthScreen({ slug }: { slug: string }) {
   useFresh(r)
   const [pair, setPair] = useState<[string, string] | null>(null)
   const [said, setSaid] = useState('')
+  const [debateError, setDebateError] = useState<ApiError | null>(null)
   const back = useRef<HTMLElement | null>(null)
   if (!brain) return gate
   const h = T.health
@@ -215,12 +216,14 @@ export function HealthScreen({ slug }: { slug: string }) {
   // A curator of an active brain says whether a contradiction is a debate on purpose (a person's call, in the web).
   const judge = brain.role === 'curator' && brain.status !== 'archived'
   const mark = async (p: [string, string], known: boolean) => {
+    setDebateError(null)
+    setSaid('')
     try {
       await api.call('markDebate', { path: { slug }, body: { a: p[0], b: p[1], known } })
       setSaid(known ? h.debateMarked : h.debateUnmarked)
       await r.reload()
     } catch (e) {
-      r.error.value = e as ApiError
+      setDebateError(e as ApiError)
     }
   }
   const data = r.data.value
@@ -241,6 +244,7 @@ export function HealthScreen({ slug }: { slug: string }) {
         {total ? <span class="tag warn">{h.found(total)}</span> : null}
       </div>
       <p class="lead screen-lead">{h.lead}</p>
+      <FormAlert error={debateError} focus={false} />
       {data?.maintenance.suggested ? (
         <div class="alert warn health-maintenance" role="note">
           <span class="kind">{T.kind.warning}</span>
@@ -262,7 +266,7 @@ export function HealthScreen({ slug }: { slug: string }) {
         </Empty>
       ) : items && data ? (
         <>
-          {can ? (
+          {total === 0 ? null : can ? (
             <div class="health-all">
               <CopyButton text={askAgent(slug, 'all', data)} label={h.askAll} />
               <span class="muted small">{h.askHow}</span>

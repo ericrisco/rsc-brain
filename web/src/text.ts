@@ -2386,8 +2386,8 @@ const english = {
     kind: { entry: 'Journal entry', page: 'Wiki page' } as Record<string, string>,
     in: (brain: string) => `in ${brain}`,
     hint: 'Results appear as you type. Up and down arrows move between results; Enter opens one; Esc goes back.',
-    meaningOffHint:
-      'Meaning search is off, so this search matches the words you typed. With it on, a search also finds pages in other languages.',
+    wordsOnlyHint:
+      'This search used words only. Searching by meaning can also find pages in other languages.',
     nothingTitle: 'There is nothing to search yet',
     nothingLead: 'Search looks through the brains you are in, and you are not in any yet.',
     scope: 'Where',

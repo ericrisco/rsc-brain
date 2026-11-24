@@ -138,6 +138,17 @@ test('CA14: the communities panel shows each cluster with the colour it has on t
   })
   expect(new Set(hued).size).toBe(hued.length)
   expect(hued.length).toBeGreaterThan(2)
+  await page.getByRole('button', { name: 'Hologram look' }).click()
+  const dot = page.locator('.graph-communities .com-dot-2')
+  const expected = await dot.evaluate((el) => {
+    const swatch = document.createElement('span')
+    swatch.style.backgroundColor = 'var(--holo-com-2)'
+    el.append(swatch)
+    const colour = getComputedStyle(swatch).backgroundColor
+    swatch.remove()
+    return colour
+  })
+  await expect(dot).toHaveCSS('background-color', expected)
 })
 
 test('CA14: a mode change repaints the graph at once, keeping the page picked', async ({

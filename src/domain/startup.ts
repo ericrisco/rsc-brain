@@ -5,15 +5,12 @@
 // Superseded, expired, forgotten, purged and retired things never enter.
 import { invalid } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
-import { redact } from '../privacy/redact.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { words } from './entries.ts'
 import { neighboursOf } from './search.ts'
 import { track } from './trail.ts'
 import { type Cleanup, cleanupDue } from './wiki/health.ts'
-import { WIKI_LIMITS } from './wiki/model.ts'
 import { pageRefs, settingsOf } from './wiki/pages.ts'
-import { keyName } from './wiki/writers.ts'
 
 export const CONTEXT = { default: 32_000, min: 4_000, max: 128_000 }
 
@@ -98,16 +95,9 @@ export async function startContext(
   const asked = o.max ?? CONTEXT.default
   const max = Math.min(CONTEXT.max, Math.max(CONTEXT.min, asked))
   if ((o.task ?? '').length > 2000) throw invalid('The task is longer than 2000 characters.', 'Summarise it.')
-  // A token or connected app that names no agent is known by its key name, as its proposals are, so a
-  // correction a curator sent back to it reaches it here.
-  const keyed =
-    ctx.who.credential.kind === 'token' || ctx.who.credential.kind === 'app'
-      ? redact(await keyName(ctx.db, ctx)).text.slice(0, WIKI_LIMITS.agent)
-      : null
   const agent = (
     o.agent ??
     (ctx.who.credential.kind === 'short' ? ctx.who.credential.agent : null) ??
-    keyed ??
     ''
   ).trim()
   const now = ctx.clock()

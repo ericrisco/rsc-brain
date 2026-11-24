@@ -2,6 +2,7 @@
 // which names the clusters the picture is coloured by and hides them, and the canvas while it loads.
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { type Communities, NO_LINKS, OTHER } from '../../graph/communities.ts'
+import { communityColourToken, graphLook } from '../../lib/graphLook.ts'
 import { formatNumber } from '../../locale.ts'
 import { T } from '../../text.ts'
 
@@ -36,7 +37,7 @@ export const hiddenKey = (c: Communities, i: number) => {
   return `c:${of}`
 }
 
-type Row = { key: string; name: string; count: number; colour: string }
+type Row = { key: string; name: string; count: number; colour: number | 'lone' | 'other' }
 
 // The communities drawn, the biggest first (as the picture is coloured), each with a box that shows or hides
 // it: a colour dot, its name and how many it holds. "Select all" shows or hides them all at once. A panel that
@@ -75,7 +76,7 @@ export function CommunitiesPanel({
           key: `c:${c.id}`,
           name: c.name,
           count: count.get(`c:${c.id}`) as number,
-          colour: `${c.colour}`,
+          colour: c.colour,
         })
     if (count.get('other'))
       out.push({
@@ -132,7 +133,15 @@ export function CommunitiesPanel({
                   checked={!hidden.has(r.key)}
                   onChange={(e) => set(r.key, (e.currentTarget as HTMLInputElement).checked)}
                 />
-                <span class={`com-dot com-dot-${r.colour}`} aria-hidden="true" />
+                <span
+                  class={`com-dot com-dot-${r.colour}`}
+                  style={
+                    typeof r.colour === 'number'
+                      ? { backgroundColor: `var(${communityColourToken(graphLook.value, r.colour)})` }
+                      : undefined
+                  }
+                  aria-hidden="true"
+                />
                 <span class="com-name">{r.name}</span>
                 <span class="com-count">{formatNumber(r.count)}</span>
               </label>

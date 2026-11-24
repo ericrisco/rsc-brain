@@ -159,6 +159,8 @@ async function after(db: Db, brainId: string, b: Before, touched: string[]): Pro
        JOIN pages p ON p.id = l.from_page JOIN pages q ON q.id = l.to_page
       WHERE l.kind = 'contradicts' AND (l.from_page = ANY($1) OR l.to_page = ANY($1))
         AND p.status IN ('current', 'stale') AND q.status IN ('current', 'stale')
+        AND NOT EXISTS (SELECT 1 FROM wiki_debates d WHERE d.brain_id = l.brain_id
+                         AND d.page_a = least(p.id, q.id) AND d.page_b = greatest(p.id, q.id))
       ORDER BY 1, 2`,
     [touched.filter((id) => live.has(id))],
   )

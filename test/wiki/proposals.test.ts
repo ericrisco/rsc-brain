@@ -463,6 +463,64 @@ describe('wiki proposals and reading', { skip: skipPg }, () => {
     assert.equal((viaWeb.body.proposal as { agent: string | null }).agent, null)
   })
 
+  it('pending proposals recover the redacted key label in the inbox and review; purged ones lose the label', async () => {
+    const brain = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'yt'")
+    assert.ok(brain)
+    const app = await w.app(ana.id, [brain.id], { client: `Studio ${GITHUB}` })
+    const curator = await w.web(eric.id)
+    const admin = await w.web((await w.person('Admin', { isAdmin: true })).id)
+    for (const [key, label] of [
+      [ana.key, 'test'],
+      [app, `Studio ${SECRET_MARK}`],
+      [factory.key, null],
+    ] as const) {
+      const submitted = await propose(key, { title: 'Notes', ops: [create('agent/notes')] })
+      assert.equal(submitted.status, 201, submitted.text)
+      const { id, agent } = submitted.body.proposal as { id: string; agent: string | null }
+      assert.equal(agent, label)
+      // This is the shape stored by the previous release for proposals with no explicit agent.
+      await w.db.query('UPDATE proposals SET agent = NULL WHERE id = $1', [id])
+      const listed = async () => {
+        const inbox = await w.callWeb(curator, 'GET', '/v1/brains/yt/proposals?status=all&limit=100')
+        assert.equal(inbox.status, 200, inbox.text)
+        return (inbox.body.items as { id: string; agent: string | null }[]).find((p) => p.id === id)?.agent
+      }
+      const reviewed = async () => {
+        const review = await w.callWeb(curator, 'GET', `/v1/proposals/${id}/review`)
+        assert.equal(review.status, 200, review.text)
+        return (review.body.proposal as { agent: string | null }).agent
+      }
+      assert.equal(await listed(), label)
+      assert.equal(await reviewed(), label)
+      const purged = await w.callWeb(admin, 'POST', `/v1/proposals/${id}/purge`, {
+        reason: 'Removed at author request.',
+      })
+      assert.equal(purged.status, 200, purged.text)
+      assert.equal(await listed(), null)
+      assert.equal(await reviewed(), null)
+    }
+  })
+
+  it('a returned proposal reaches the submitting account even when another person uses the same key name', async () => {
+    const submitted = await propose(ana.key, { title: 'Notes on filming', ops: [create('filming/notes')] })
+    assert.equal(submitted.status, 201, submitted.text)
+    const { id } = submitted.body.proposal as { id: string }
+    const curator = await w.web(eric.id)
+    const { body } = await w.callWeb(curator, 'GET', `/v1/proposals/${id}/review`)
+    const back = await w.callWeb(curator, 'POST', `/v1/proposals/${id}/return`, {
+      fingerprint: body.fingerprint,
+      comment: 'Include a shooting date.',
+    })
+    assert.equal(back.status, 200, back.text)
+    const context = async (key: string) => {
+      const result = await w.call(key, 'GET', '/v1/brains/yt/context')
+      assert.equal(result.status, 200, result.text)
+      return String(result.body.text)
+    }
+    assert.match(await context(ana.key), /Include a shooting date/)
+    assert.doesNotMatch(await context(eric.key), /Include a shooting date/)
+  })
+
   it('review: broken text, odd values, deep nesting and odd cursors are 400, never 500', async () => {
     const raw = (body: string) => w.call(factory.key, 'POST', '/v1/brains/yt/proposals', body)
     const op = (extra: string) =>

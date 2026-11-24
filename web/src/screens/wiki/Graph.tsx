@@ -29,7 +29,7 @@ import {
 } from '../../graph/model.ts'
 import type { DrawnMessage, FromWorker, ToWorker } from '../../graph/protocol.ts'
 import { type Look, NODE_R, type Palette, Renderer, type Scene, type State } from '../../graph/render.ts'
-import { graphLook, setGraphLook } from '../../lib/graphLook.ts'
+import { communityColourToken, graphLook, setGraphLook } from '../../lib/graphLook.ts'
 import { landing } from '../../lib/landing.ts'
 import { isField } from '../../lib/screen.ts'
 import { PAGE_STATUSES, PAGE_TYPES } from '../../lib/wiki.ts'
@@ -772,7 +772,7 @@ function palette(look: Look): Palette {
     edge: v('--edge'),
     // One hue per community (tokens.css, each mode its own set); the small ones share the neutral grey and the
     // pages without links a lighter one. The optional hologram keeps its own glow colours.
-    com: Array.from({ length: COLOURS }, (_, k) => v(look === 'holo' ? `--holo-com-${k}` : `--graph-c${k}`)),
+    com: Array.from({ length: COLOURS }, (_, k) => v(communityColourToken(look, k))),
     font: css.getPropertyValue('--font-sans').trim() || 'sans-serif',
     other: v('--graph-node'),
     lone: v('--graph-lone'),
