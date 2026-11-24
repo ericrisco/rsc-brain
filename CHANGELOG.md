@@ -4,6 +4,10 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.15
+
+- Fix web search, graph communities, proposal review and known debates (#72)
+
 ## v0.7.14
 
 - Lossless readable-export round trip, and redact a password said in a sentence (#71)
