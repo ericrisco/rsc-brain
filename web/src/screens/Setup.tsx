@@ -12,7 +12,7 @@ import { draft } from '../api/draft.ts'
 import { api } from '../api/index.ts'
 import { resetResources } from '../api/resource.ts'
 import { keyFile, keyFileName } from '../lib/backups.ts'
-import { branding, justSetUp, online } from '../session.ts'
+import { branding, justSetUp, keyPending, online } from '../session.ts'
 import { Door } from '../shell/Door.tsx'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
@@ -158,7 +158,8 @@ export function Setup() {
       setKeyName(name.trim())
       resetResources()
       setPassword('')
-      // The last step: the installation key, shown once (B7 PR30).
+      // The last step: the installation key, shown once (B7 PR30). Held from this moment, before it is drawn.
+      keyPending.value = true
       setStage('key')
     } catch (err) {
       const a = err as ApiError
@@ -379,7 +380,24 @@ function KeyStep({ name, onDone }: { name: string; onDone: () => void }) {
   useEffect(() => {
     document.querySelector<HTMLElement>('.key-step h1')?.focus()
   }, [k !== null, gone])
+  // From the moment the key is asked for (it is given once) until it is confirmed as saved, the person cannot leave: the app keeps this screen whatever the address
+  // says (app.tsx), and closing or reloading the tab asks first, since the key is shown only once.
+  useEffect(() => {
+    const held = !gone && !error && !saved
+    keyPending.value = held
+    if (!held) return
+    const ask = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', ask)
+    return () => {
+      window.removeEventListener('beforeunload', ask)
+      keyPending.value = false
+    }
+  }, [gone, error, saved])
   const finish = () => {
+    keyPending.value = false
     setK(null)
     onDone()
   }

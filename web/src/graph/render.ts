@@ -26,6 +26,8 @@ export type Palette = {
   lone: string
   // The width of the ring of the page picked (thicker in high contrast).
   ring: number
+  // The font of the labels (a CSS font family); the labels fall back to the browser's sans.
+  font?: string
 }
 
 export const NODE_R = 4
@@ -47,7 +49,15 @@ export type Scene = {
   edges: Uint32Array
   // Per item: its colour slot (communities.ts): an index in the palette's `com`, then other, then lone.
   colour: Uint8Array
+  // The names the picture may write beside the pages, the most linked first: `labelOf[k]` is an item's index,
+  // `labelText[k]` its name (already short). Empty when there is nothing to name.
+  labelOf?: Uint32Array
+  labelText?: string[]
 }
+
+// How many names the picture writes at a zoom: few when the whole wiki is in view, more as the person zooms in.
+// The names also keep clear of each other, so this is a ceiling, not a count.
+export const labelCap = (scale: number) => Math.min(300, Math.ceil(10 * Math.max(0.4, scale) ** 2))
 
 // What changes as the person looks.
 export type State = {
@@ -104,7 +114,7 @@ export type Drawn = {
   // The state this picture was drawn from (State.seq).
   seq: number
   // For a test: how many items and lines were drawn, at full strength and dimmed.
-  counts?: { lit: number; dim: number; lines: number }
+  counts?: { lit: number; dim: number; lines: number; named?: number }
   // For a test: the rings drawn, by what they mark, with their radius and whether they are dashed.
   rings?: { what: string; r: number; dashed: boolean; width: number }[]
   // For a test: in the hologram look, how many reticles were drawn round the hubs.
@@ -339,6 +349,49 @@ export class Renderer {
     }
     ctx.globalAlpha = 1
 
+    // Names: the most linked pages first, as many as the zoom allows, each clear of those already written.
+    let named = 0
+    if (sc.labelOf?.length && sc.labelText) {
+      const cap = labelCap(view.scale)
+      const size = 11
+      ctx.font = `${size}px ${palette.font ?? 'sans-serif'}, sans-serif`
+      ctx.textBaseline = 'middle'
+      ctx.textAlign = 'left'
+      ctx.lineJoin = 'round'
+      ctx.lineWidth = 3
+      ctx.strokeStyle = palette.ground
+      ctx.fillStyle = palette.text
+      ctx.globalAlpha = 1
+      const placed: number[] = []
+      for (let k = 0; k < sc.labelOf.length && named < cap; k++) {
+        const i = sc.labelOf[k] as number
+        if (!st.nodes[i] || (lit && !lit[i])) continue
+        const x = SX(i) + radius(i) + 3
+        const y = SY(i)
+        if (x < 0 || x > st.width || y < 0 || y > height) continue
+        const text = sc.labelText[k] as string
+        const w = ctx.measureText(text).width
+        // Never half off the edge of the picture.
+        if (x + w > st.width) continue
+        let clash = false
+        for (let p = 0; p < placed.length; p += 4)
+          if (
+            x < (placed[p + 2] as number) &&
+            x + w > (placed[p] as number) &&
+            y - size / 2 < (placed[p + 3] as number) &&
+            y + size / 2 > (placed[p + 1] as number)
+          ) {
+            clash = true
+            break
+          }
+        if (clash) continue
+        placed.push(x, y - size / 2, x + w, y + size / 2)
+        ctx.strokeText(text, x, y)
+        ctx.fillText(text, x, y)
+        named += 1
+      }
+    }
+
     // Rings: the page under the pointer (thin, light), the page in focus, the one picked (solid), and where the
     // keyboard is (dashed, further out): told apart by their shape, not their colour alone.
     const rings: { what: string; r: number; dashed: boolean; width: number }[] = []
@@ -374,7 +427,9 @@ export class Renderer {
       selected: at(st.selected),
       ms: performance.now() - started,
       seq: st.seq,
-      ...(st.probe ? { counts: { lit: litCount, dim: dimCount, lines }, rings } : {}),
+      ...(st.probe
+        ? { counts: { lit: litCount, dim: dimCount, lines, ...(sc.labelOf ? { named } : {}) }, rings }
+        : {}),
       ...(st.probe && holo ? { reticles } : {}),
     }
   }

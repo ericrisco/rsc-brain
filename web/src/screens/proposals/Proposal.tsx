@@ -13,6 +13,7 @@ import { draft } from '../../api/draft.ts'
 import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
 import { forget, invalidate } from '../../api/resource.ts'
+import { renderMarkdown } from '../../lib/markdown.ts'
 import {
   approveBody,
   approveKeyHold,
@@ -130,11 +131,14 @@ function PageDiff({
   b,
   level = 4,
   fresh = false,
+  slug,
 }: {
   a: PageState
   b: PageState
   level?: 4 | 5
   fresh?: boolean
+  // With a brain, an edited body also offers to be read as it will look.
+  slug?: string
 }) {
   const w = T.wiki
   const H = level === 4 ? 'h4' : 'h5'
@@ -180,7 +184,18 @@ function PageDiff({
         <div class="diff-part">
           <H>{w.parts.body}</H>
           {a.body ? (
-            <BodyDiff a={a.body} b={b.body ?? ''} />
+            <>
+              <BodyDiff a={a.body} b={b.body ?? ''} fold />
+              {slug && b.body ? (
+                <details class="whole">
+                  <summary class="whole-summary">{T.proposals.previewBody}</summary>
+                  <div
+                    class="prose"
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(b.body, { slug, links: [] }) }}
+                  />
+                </details>
+              ) : null}
+            </>
           ) : (
             <BodyLines lines={(b.body ?? '').split('\n').map((text) => ({ kind: 'added' as const, text }))} />
           )}
@@ -306,9 +321,12 @@ type CardProps = {
 const LONG = 700
 
 // A new page as it will read: its words as text (not a difference against nothing), a long text folded.
-function NewPage({ page }: { page: PageState }) {
+function NewPage({ page, slug }: { page: PageState; slug: string }) {
   const w = T.proposals
   const body = page.body ?? ''
+  const read = (text: string) => (
+    <div class="prose" dangerouslySetInnerHTML={{ __html: renderMarkdown(text, { slug, links: [] }) }} />
+  )
   return (
     <div class="op-new">
       {page.title ? <p class="new-title">{page.title}</p> : null}
@@ -320,14 +338,14 @@ function NewPage({ page }: { page: PageState }) {
       </p>
       {body.length > LONG ? (
         <>
-          <p class="plain-body">{`${body.slice(0, LONG).trimEnd()}…`}</p>
+          {read(`${body.slice(0, LONG).trimEnd()}…`)}
           <details class="whole">
             <summary class="whole-summary">{w.wholeText}</summary>
-            <p class="plain-body">{body}</p>
+            {read(body)}
           </details>
         </>
       ) : (
-        <p class="plain-body">{body}</p>
+        read(body)
       )}
     </div>
   )
@@ -446,12 +464,12 @@ function Card({
           {act && needsBase(o, choices) ? <p class="muted small">{w.staleNeeds}</p> : null}
         </div>
       ) : o.op.op === 'create' ? (
-        <NewPage page={shown} />
+        <NewPage page={shown} slug={slug} />
       ) : o.before === null && pending ? (
         <p class="muted">{bornBy !== null ? w.bornBy(bornBy + 1) : w.pageGone}</p>
       ) : (
         <div class="op-diff">
-          <PageDiff a={o.before ?? {}} b={shown} />
+          <PageDiff a={o.before ?? {}} b={shown} slug={slug} />
         </div>
       )}
       <Sources slug={slug} op={o.op} names={names} />

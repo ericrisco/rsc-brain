@@ -18,6 +18,7 @@ import {
   pickPair,
   sourceKey,
   stepActive,
+  withoutRedundantMentions,
   wordDiff,
 } from '../../web/src/lib/wiki.ts'
 
@@ -80,6 +81,20 @@ describe('the decisions', () => {
 })
 
 describe('the links of a page', () => {
+  it('a page with a typed link shows once, under its kind, not again under mentions', () => {
+    const shown = withoutRedundantMentions([
+      { kind: 'mentions', address: 'x' },
+      { kind: 'related', address: 'x' },
+      { kind: 'mentions', address: 'y' },
+      { kind: 'contradicts', address: 'z' },
+      { kind: 'mentions', address: 'z' },
+    ])
+    assert.deepEqual(
+      shown.map((l) => `${l.kind}:${l.address}`),
+      ['related:x', 'mentions:y', 'contradicts:z'],
+    )
+  })
+
   it('are grouped by kind, mentions first, each kind once', () => {
     const groups = groupLinks([
       { kind: 'related', address: 'x' },

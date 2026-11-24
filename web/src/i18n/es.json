@@ -1,5 +1,9 @@
 {
   "strings": {
+    "These two pages are not linked as contradicting each other.": "Estas dos páginas no están enlazadas como contradictorias.",
+    "Mark a debate only between pages with a \"contradicts\" link.": "Marca un debate solo entre páginas unidas por un enlace «contradicts».",
+    "Name two different pages of this brain.": "Indica dos páginas distintas de este cerebro.",
+    "Send the addresses of the two pages as \"a\" and \"b\".": "Envía las direcciones de las dos páginas en «a» y «b».",
     "Mode": "Modo",
     "System": "Sistema",
     "Light": "Claro",
@@ -1733,7 +1737,24 @@
     "Updating from the web is off on this installation.": "Las actualizaciones desde la web están desactivadas en esta instalación.",
     "There is no newer version to update to.": "Ya tienes la versión más reciente disponible.",
     "Use «Update» instead.": "Usa la opción «Actualizar».",
-    "It is too soon to try again.": "Aún es pronto para volver a intentarlo."
+    "It is too soon to try again.": "Aún es pronto para volver a intentarlo.",
+    "Import and export": "Importar y exportar",
+    "Two steps, then the installation key to keep: name the installation and say where people open it, then make your administrator account.": "Dos pasos y después la clave de la instalación que debes guardar: ponle nombre a la instalación e indica dónde la abre la gente; luego crea tu cuenta de administración.",
+    "Ongoing": "En curso",
+    "Written without opening a session, so no summary is expected.": "Escrito sin abrir una sesión, así que no se espera un resumen.",
+    "Mark as a known debate": "Marcar como debate conocido",
+    "Two pages that disagree on purpose are not a problem: it leaves this list and agents are not asked to settle it.": "Dos páginas que discrepan a propósito no son un problema: salen de esta lista y no se pide a los agentes que lo resuelvan.",
+    "Known debates": "Debates conocidos",
+    "Contradictions a curator marked as deliberate. They do not count as problems.": "Contradicciones que un curador marcó como deliberadas. No cuentan como problemas.",
+    "These two pages disagree on purpose.": "Estas dos páginas discrepan a propósito.",
+    "Treat as a contradiction again": "Volver a tratar como contradicción",
+    "Marked as a known debate.": "Marcado como debate conocido.",
+    "Back in the contradictions.": "De nuevo entre las contradicciones.",
+    "Read the page as it will look": "Lee la página tal como se verá",
+    "Hide the unchanged lines": "Ocultar las líneas sin cambios",
+    "Results appear as you type. Up and down arrows move between results; Enter opens one; Esc goes back.": "Los resultados aparecen mientras escribes. Las flechas arriba y abajo se mueven entre resultados; Intro abre uno; Esc vuelve atrás.",
+    "This search used words only. Searching by meaning can also find pages in other languages.": "Esta búsqueda solo usó palabras. La búsqueda por significado también puede encontrar páginas en otros idiomas.",
+    "Search by meaning finds pages and entries about the same thing in other words, and in other languages. It sends their text to a provider.": "La búsqueda por significado encuentra páginas y entradas sobre lo mismo con otras palabras y en otros idiomas. Envía su texto a un proveedor."
   },
   "functions": {
     "shell.yourRole": {
@@ -6051,6 +6072,19 @@
         {
           "from": "No ⟦a0⟧ proposals.",
           "to": "Ninguna propuesta con el estado «⟦a0⟧»."
+        }
+      ]
+    },
+    "proposals.unchangedLines": {
+      "args": ["n"],
+      "entries": [
+        {
+          "from": "Show 1 unchanged line",
+          "to": "Mostrar 1 línea sin cambios"
+        },
+        {
+          "from": "Show ⟦a0⟧ unchanged lines",
+          "to": "Mostrar ⟦a0⟧ líneas sin cambios"
         }
       ]
     }

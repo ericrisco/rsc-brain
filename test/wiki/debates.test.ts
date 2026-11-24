@@ -1,0 +1,360 @@
+// E2E findings 8a and 8b (health): two pages that contradict each other on purpose are marked as a known debate by a
+// curator in the web, and then leave the problems and the cleanup an agent is asked for; and a brain just filled by
+// an import is not told it was never cleaned.
+import assert from 'node:assert/strict'
+import { after, before, describe, it } from 'node:test'
+import { lastWrite } from '../../src/ops/backup/backup.ts'
+import { skipPg } from '../helpers/pg.ts'
+import { type World, world } from '../helpers/world.ts'
+
+type Pair = { a: string; b: string }
+type Health = {
+  conflicts: Pair[]
+  debates: Pair[]
+  maintenance: { suggested: boolean; lastAt: string | null }
+}
+
+describe('known debates and the import baseline', { skip: skipPg }, () => {
+  let w: World
+  let eric: { id: string; key: string }
+  let ana: { id: string; key: string }
+  let ericWeb: string
+  let anaWeb: string
+  const health = async () => (await w.call(eric.key, 'GET', '/v1/brains/yt/wiki/health')).body as Health
+  const make = (address: string, extra: Record<string, unknown> = {}) =>
+    w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', {
+      op: 'create',
+      address,
+      type: 'topic',
+      title: `Paper ${address}`,
+      summary: 's',
+      body: `Body of ${address}.`,
+      ...extra,
+    })
+  const debate = (session: string, known: boolean, a = 'papers/awq', b = 'papers/gptq') =>
+    w.callWeb(session, 'PUT', '/v1/brains/yt/wiki/debates', { a, b, known })
+
+  before(async () => {
+    w = await world()
+    eric = await w.person('Eric')
+    ana = await w.person('Ana')
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'yt', purpose: 'Our channel.' })
+    await w.member('yt', ana.id, 'contributor')
+    ericWeb = await w.web(eric.id)
+    anaWeb = await w.web(ana.id)
+    assert.equal((await make('papers/gptq')).status, 201)
+    assert.equal(
+      (await make('papers/awq', { links: [{ kind: 'contradicts', to: 'papers/gptq' }] })).status,
+      201,
+    )
+    assert.equal((await make('papers/solo', { links: [{ kind: 'related', to: 'papers/gptq' }] })).status, 201)
+  })
+  after(async () => w.close())
+
+  it('a contradiction is a problem until a curator marks it as a known debate; unmarking brings it back', async () => {
+    let h = await health()
+    assert.deepEqual(h.conflicts, [{ ...h.conflicts[0], a: 'papers/awq', b: 'papers/gptq' }])
+    assert.deepEqual(h.debates, [])
+    const r = await debate(ericWeb, true)
+    assert.equal(r.status, 200, r.text)
+    h = await health()
+    assert.deepEqual(
+      [h.conflicts.length, h.debates.map((d) => [d.a, d.b])],
+      [0, [['papers/awq', 'papers/gptq']]],
+    )
+    // Marking twice is once; the order of the pair does not matter.
+    assert.equal((await debate(ericWeb, true, 'papers/gptq', 'papers/awq')).status, 200)
+    assert.equal((await health()).debates.length, 1)
+    assert.equal((await debate(ericWeb, false)).status, 200)
+    h = await health()
+    assert.deepEqual([h.conflicts.length, h.debates.length], [1, 0])
+  })
+
+  it('a known debate does not make the wiki need a cleanup, and the agent is not told to settle it', async () => {
+    w.advance(25 * 3_600_000)
+    assert.equal((await health()).maintenance.suggested, true)
+    const context = async () =>
+      ((await w.call(ana.key, 'GET', '/v1/brains/yt/context')).body as { cleanup?: unknown }).cleanup ?? null
+    // Positive control: before the debate is marked, the agent is asked for a cleanup.
+    assert.notEqual(await context(), null)
+    await debate(ericWeb, true)
+    const h = await health()
+    assert.equal(h.maintenance.suggested, false)
+    assert.equal(await context(), null)
+    await debate(ericWeb, false)
+    assert.equal((await health()).maintenance.suggested, true)
+  })
+
+  it('only a curator, in the web, marks a debate, and only between pages that contradict each other', async () => {
+    assert.equal((await debate(anaWeb, true)).status, 403)
+    assert.equal(
+      (
+        await w.call(eric.key, 'PUT', '/v1/brains/yt/wiki/debates', {
+          a: 'papers/awq',
+          b: 'papers/gptq',
+          known: true,
+        })
+      ).body.error?.code,
+      'web_only',
+    )
+    assert.equal((await debate(ericWeb, true, 'papers/awq', 'papers/solo')).status, 400)
+    assert.equal((await debate(ericWeb, true, 'papers/awq', 'papers/nowhere')).status, 400)
+    assert.equal((await debate(ericWeb, true, 'papers/awq', 'papers/awq')).status, 400)
+  })
+
+  it('a debate does not outlive its contradicts link, nor hide a later real contradiction', async () => {
+    assert.equal((await make('papers/zeta')).status, 201)
+    assert.equal(
+      (await make('papers/eta', { links: [{ kind: 'contradicts', to: 'papers/zeta' }] })).status,
+      201,
+    )
+    assert.equal((await debate(ericWeb, true, 'papers/eta', 'papers/zeta')).status, 200)
+    const change = (op: Record<string, unknown>) =>
+      w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
+    assert.equal(
+      (await change({ op: 'unlink', address: 'papers/eta', kind: 'contradicts', to: 'papers/zeta' })).status,
+      201,
+    )
+    assert.equal(
+      (await health()).debates.some((d) => d.a === 'papers/eta'),
+      false,
+    )
+    assert.equal(
+      (await change({ op: 'link', address: 'papers/zeta', kind: 'contradicts', to: 'papers/eta' })).status,
+      201,
+    )
+    const h = await health()
+    assert.equal(
+      h.conflicts.some((c) => c.a === 'papers/eta'),
+      true,
+    )
+    assert.equal(
+      h.debates.some((d) => d.a === 'papers/eta'),
+      false,
+    )
+  })
+
+  it('merging a page keeps its known debates on the page that survives', async () => {
+    assert.equal((await make('papers/zz')).status, 201)
+    assert.equal((await make('papers/xx')).status, 201)
+    assert.equal((await make('papers/yy', { links: [{ kind: 'contradicts', to: 'papers/zz' }] })).status, 201)
+    assert.equal((await debate(ericWeb, true, 'papers/yy', 'papers/zz')).status, 200)
+    const r = await w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', {
+      op: 'merge',
+      address: 'papers/xx',
+      from: 'papers/yy',
+      body: 'Merged.',
+      reason: 'same paper',
+    })
+    assert.equal(r.status, 201, r.text)
+    const h = await health()
+    assert.equal(
+      h.conflicts.some((c) => c.a === 'papers/xx' || c.b === 'papers/xx'),
+      false,
+    )
+    assert.equal(
+      h.debates.some((d) => d.a === 'papers/xx' && d.b === 'papers/zz'),
+      true,
+    )
+  })
+
+  it('a debate survives a revert to a revision that still lists its contradicts link', async () => {
+    const change = (op: Record<string, unknown>) =>
+      w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
+    assert.equal((await make('papers/ww')).status, 201)
+    assert.equal((await make('papers/vv', { links: [{ kind: 'contradicts', to: 'papers/ww' }] })).status, 201)
+    assert.equal(
+      (await change({ op: 'edit', address: 'papers/vv', baseRevision: 1, body: 'Edited.' })).status,
+      201,
+    )
+    assert.equal((await debate(ericWeb, true, 'papers/vv', 'papers/ww')).status, 200)
+    assert.equal((await change({ op: 'revert', address: 'papers/vv', toRevision: 1 })).status, 201)
+    const h = await health()
+    assert.equal(
+      h.debates.some((d) => d.a === 'papers/vv' && d.b === 'papers/ww'),
+      true,
+    )
+    assert.equal(
+      h.conflicts.some((c) => c.a === 'papers/vv'),
+      false,
+    )
+  })
+
+  it('a revert drops the links the revision did not have and restores the ones it did', async () => {
+    const change = (op: Record<string, unknown>) =>
+      w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
+    const out = async (address: string) =>
+      (
+        (await w.call(eric.key, 'GET', `/v1/brains/yt/pages/${address}`)).body as {
+          links: { out: { kind: string; address: string }[] }
+        }
+      ).links.out
+        .map((l) => `${l.kind} ${l.address}`)
+        .sort()
+    assert.equal((await make('papers/r1')).status, 201)
+    assert.equal((await make('papers/r2')).status, 201)
+    // Revision 1 links r1; revision 2 swaps it for r2.
+    assert.equal((await make('papers/rv', { links: [{ kind: 'related', to: 'papers/r1' }] })).status, 201)
+    assert.equal(
+      (await change({ op: 'link', address: 'papers/rv', kind: 'related', to: 'papers/r2' })).status,
+      201,
+    )
+    assert.equal(
+      (await change({ op: 'unlink', address: 'papers/rv', kind: 'related', to: 'papers/r1' })).status,
+      201,
+    )
+    assert.deepEqual(await out('papers/rv'), ['related papers/r2'])
+    assert.equal((await change({ op: 'revert', address: 'papers/rv', toRevision: 1 })).status, 201)
+    assert.deepEqual(await out('papers/rv'), ['related papers/r1'])
+  })
+
+  it('with the contradiction written both ways, the debate stays until the last link goes', async () => {
+    const change = (op: Record<string, unknown>) =>
+      w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
+    assert.equal((await make('papers/bb')).status, 201)
+    assert.equal((await make('papers/aa', { links: [{ kind: 'contradicts', to: 'papers/bb' }] })).status, 201)
+    assert.equal(
+      (await change({ op: 'link', address: 'papers/bb', kind: 'contradicts', to: 'papers/aa' })).status,
+      201,
+    )
+    assert.equal((await debate(ericWeb, true, 'papers/aa', 'papers/bb')).status, 200)
+    assert.equal(
+      (await change({ op: 'unlink', address: 'papers/aa', kind: 'contradicts', to: 'papers/bb' })).status,
+      201,
+    )
+    assert.equal(
+      (await health()).debates.some((d) => d.a === 'papers/aa'),
+      true,
+    )
+    assert.equal(
+      (await change({ op: 'unlink', address: 'papers/bb', kind: 'contradicts', to: 'papers/aa' })).status,
+      201,
+    )
+    assert.equal(
+      (await health()).debates.some((d) => d.a === 'papers/aa'),
+      false,
+    )
+  })
+
+  it('a coherence check stops reporting a known debate and reports it again once unmarked', async () => {
+    const conflicts = async () => {
+      const result = await w.call(ana.key, 'POST', '/v1/brains/yt/wiki/check', {
+        title: 'Review the paper',
+        ops: [
+          { op: 'edit', address: 'papers/gptq', baseRevision: 1, summary: 'Updated.', reason: 'Review.' },
+        ],
+      })
+      assert.equal(result.status, 200, result.text)
+      assert.deepEqual(result.body.problems, [])
+      return (result.body.coherence as { code: string; addresses: string[] }[])
+        .filter((warning) => warning.code === 'open_conflict')
+        .map((warning) => warning.addresses.sort())
+    }
+    const pair = [['papers/awq', 'papers/gptq']]
+    assert.deepEqual(await conflicts(), pair)
+    assert.equal((await debate(ericWeb, true)).status, 200)
+    assert.deepEqual(await conflicts(), [])
+    assert.equal((await debate(ericWeb, false)).status, 200)
+    assert.deepEqual(await conflicts(), pair)
+  })
+
+  it('only contradictions kept from the merged page carry its debate mark', async () => {
+    const mergeLink = { kind: 'contradicts', to: 'papers/merge-other' }
+    const reciprocal = { kind: 'contradicts', to: 'papers/merge-both' }
+    assert.equal((await make('papers/merge-other')).status, 201)
+    assert.equal((await make('papers/merge-both')).status, 201)
+    assert.equal((await make('papers/merge-keep', { links: [mergeLink] })).status, 201)
+    assert.equal((await make('papers/merge-away', { links: [mergeLink, reciprocal] })).status, 201)
+    const change = (op: Record<string, unknown>) =>
+      w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', op)
+    assert.equal(
+      (await change({ op: 'link', address: reciprocal.to, kind: 'contradicts', to: 'papers/merge-away' }))
+        .status,
+      201,
+    )
+    for (const link of [mergeLink, reciprocal])
+      assert.equal((await debate(ericWeb, true, 'papers/merge-away', link.to)).status, 200)
+    const merged = await change({
+      op: 'merge',
+      address: 'papers/merge-keep',
+      from: 'papers/merge-away',
+      body: 'Merged.',
+      dropLinks: [mergeLink, reciprocal],
+      reason: 'Keep the independent contradiction.',
+    })
+    assert.equal(merged.status, 201, merged.text)
+    const h = await health()
+    assert.ok(h.conflicts.some((c) => c.a === 'papers/merge-keep' && c.b === mergeLink.to))
+    assert.ok(h.debates.some((d) => d.a === reciprocal.to && d.b === 'papers/merge-keep'))
+  })
+
+  it('marking a debate waits for a wiki writer and checks the link after the writer commits', async () => {
+    assert.equal((await make('papers/lock-to')).status, 201)
+    assert.equal(
+      (await make('papers/lock-from', { links: [{ kind: 'contradicts', to: 'papers/lock-to' }] })).status,
+      201,
+    )
+    let marking!: ReturnType<typeof debate>
+    await w.db.tx(async (db) => {
+      await db.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('wiki:' || id, 0)) FROM brains WHERE slug = 'yt'",
+      )
+      await db.query(
+        `DELETE FROM page_links WHERE from_page = (SELECT id FROM pages WHERE address = 'papers/lock-from')
+          AND kind = 'contradicts'`,
+      )
+      marking = debate(ericWeb, true, 'papers/lock-from', 'papers/lock-to')
+      const deadline = Date.now() + 5000
+      while (
+        !(await w.db.one(
+          `SELECT 1 FROM pg_locks WHERE database = (SELECT oid FROM pg_database WHERE datname = current_database())
+           AND locktype = 'advisory' AND NOT granted`,
+        ))
+      ) {
+        assert.ok(Date.now() < deadline, 'marking should wait on the wiki lock')
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    })
+    const result = await marking
+    assert.equal(result.status, 400, result.text)
+    assert.equal(
+      await w.db.one(
+        "SELECT 1 FROM wiki_debates WHERE (SELECT id FROM pages WHERE address = 'papers/lock-from') IN (page_a, page_b)",
+      ),
+      undefined,
+    )
+  })
+
+  it('an import is a baseline: the cleanup is not due for 24 hours after it', async () => {
+    assert.equal((await health()).maintenance.suggested, true)
+    await w.db.query("UPDATE brains SET imported_at = $1, imported_from = 'a folder' WHERE slug = 'yt'", [
+      w.clock(),
+    ])
+    assert.equal((await health()).maintenance.suggested, false)
+    w.advance(25 * 3_600_000)
+    assert.equal((await health()).maintenance.suggested, true)
+    const cleanup = (
+      (await w.call(ana.key, 'GET', '/v1/brains/yt/context')).body as {
+        cleanup?: { suggestion: string }
+      }
+    ).cleanup
+    assert.ok(cleanup)
+    assert.doesNotMatch(cleanup.suggestion, /never been cleaned/)
+    assert.match(cleanup.suggestion, /no cleanup since it was imported/)
+  })
+
+  it('restore impact records both debate changes and ignores repeated requests', async () => {
+    const before = await lastWrite(w.db)
+    assert.ok(before)
+    w.now = new Date(Math.max(w.now.getTime(), Date.parse(before)) + 1000)
+    for (const known of [true, false]) {
+      w.advance(1000)
+      const changedAt = w.clock().toISOString()
+      assert.equal((await debate(ericWeb, known)).status, 200)
+      assert.equal(await lastWrite(w.db), changedAt)
+      w.advance(1000)
+      assert.equal((await debate(ericWeb, known, 'papers/gptq', 'papers/awq')).status, 200)
+      assert.equal(await lastWrite(w.db), changedAt)
+    }
+  })
+})

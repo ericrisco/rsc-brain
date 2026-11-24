@@ -176,3 +176,40 @@ test('a reader is told to tell a curator, by name, instead of asking an agent', 
   await expect(page.getByRole('button', { name: /Ask an agent/ })).toHaveCount(0)
   await expect(page.getByText(/Fixing the wiki is for curators \(.+\)/).first()).toBeVisible()
 })
+
+test('a refused debate change is visible alongside the conflicts', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.route('**/wiki/debates', (route) =>
+    route.fulfill({
+      status: 400,
+      json: {
+        error: {
+          code: 'invalid',
+          message: 'These two pages are not linked as contradicting each other.',
+          howToProceed: 'Mark a debate only between pages with a "contradicts" link.',
+        },
+      },
+    }),
+  )
+  await page.goto(H)
+  const conflicts = page.getByRole('region', { name: 'Conflicts' })
+  await conflicts.getByRole('button', { name: 'Mark as a known debate' }).first().click()
+  await expect(page.getByRole('alert')).toContainText('These two pages are not linked')
+  await expect(conflicts.getByRole('listitem')).toHaveCount(2)
+  await page.getByRole('button', { name: /Account/ }).click()
+  await page.getByRole('button', { name: 'Spanish' }).click()
+  await expect(page.getByRole('alert')).toContainText('Estas dos páginas')
+})
+
+test('known debates remain visible when there is nothing to fix', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in', { health: 'empty' })
+  await page.route('**/wiki/health', async (route) => {
+    const res = await route.fetch()
+    const data = await res.json()
+    data.debates = [{ a: 'a', aTitle: 'A', b: 'b', bTitle: 'B' }]
+    await route.fulfill({ response: res, json: data })
+  })
+  await page.goto(H)
+  await expect(page.getByRole('region', { name: 'Known debates' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Ask an agent/ })).toHaveCount(0)
+})

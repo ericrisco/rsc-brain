@@ -37,6 +37,9 @@ export const me = () => resource<Me>('me', () => api.call<Me>('me', { quiet: tru
 
 // Set by the first-time setup when it worked, so home can confirm it ("Brain is set up.").
 export const justSetUp = signal(false)
+// True while the installation key of the first-time setup is on screen and not yet confirmed as saved: the
+// person stays there (it is shown once), whatever the address says.
+export const keyPending = signal(false)
 // Set by a restore from Admin › Backups & system: the sign-in page says «Restored. Everyone signs in again».
 export const justRestored = signal(false)
 

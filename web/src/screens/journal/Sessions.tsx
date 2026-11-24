@@ -17,6 +17,8 @@ import {
   type SessionFilters,
   sessionLabel,
   sessionQuery,
+  statusWord,
+  withoutSummaryNote,
 } from '../../lib/journal.ts'
 import { plainText } from '../../lib/markdown.ts'
 import { useLive } from '../../live/follow.ts'
@@ -169,7 +171,7 @@ function SessionItem({ slug, s }: { slug: string; s: SessionView }) {
     <li>
       <p class="list-title">
         <a href={sessionHref(slug, s.id)}>{sessionLabel(s)}</a>{' '}
-        <span class={`tag${SESSION_TONE[s.status] ?? ''}`}>{j.statuses[s.status] ?? s.status}</span>
+        <span class={`tag${SESSION_TONE[s.status] ?? ''}`}>{statusWord(s, j.statuses)}</span>
       </p>
       <p class="meta">
         {byline({ author: s.author, onBehalf: null, client: s.client, ref: null })} · {j.entriesIn(s.entries)}{' '}
@@ -184,7 +186,7 @@ function SessionItem({ slug, s }: { slug: string; s: SessionView }) {
       {summary ? (
         <p class="summary">{summary}</p>
       ) : (
-        <p class="muted small">{s.status === 'open' ? j.stillOpen : j.noSummary}</p>
+        <p class="muted small">{withoutSummaryNote(s, j.stillOpen, j.noSummary)}</p>
       )}
     </li>
   )

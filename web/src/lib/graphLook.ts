@@ -15,6 +15,9 @@ function chosen(): Look {
 
 export const graphLook = signal<Look>(typeof document === 'undefined' ? 'plain' : chosen())
 
+export const communityColourToken = (look: Look, index: number) =>
+  look === 'holo' ? `--holo-com-${index}` : `--graph-c${index}`
+
 // The person's choice: shown and remembered.
 export function setGraphLook(l: Look): void {
   graphLook.value = l

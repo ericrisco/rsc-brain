@@ -9,6 +9,8 @@ export type Health = {
   orphans: Ref[]
   broken: { from: string; fromTitle?: string; to: string }[]
   conflicts: { a: string; aTitle?: string; b: string; bTitle?: string }[]
+  // Contradictions a curator marked as a known debate: not problems, kept in a list of their own.
+  debates?: { a: string; aTitle?: string; b: string; bTitle?: string }[]
   stale: (Ref & { updatedAt: string; newEntries: number })[]
   unavailableSources: { address: string; title?: string; entryId: string; state: 'forgotten' | 'purged' }[]
   long: (Ref & { chars: number })[]
@@ -52,6 +54,8 @@ export type HealthItem = {
   text: string
   // Two pages to put side by side.
   compare: boolean
+  // The addresses of the two pages of a contradiction (to mark it as a known debate).
+  pair?: [string, string]
   // Where to read more about it (a stale page: the entries written since).
   more?: { label: string; href: string }
 }
@@ -82,6 +86,7 @@ export function healthItems(slug: string, h: Health): Record<SectionId, HealthIt
     conflicts: h.conflicts.map((x) => ({
       ...one(`${x.a}|${x.b}`, [page(slug, x.a, x.aTitle), page(slug, x.b, x.bTitle)], t.conflictText),
       compare: true,
+      pair: [x.a, x.b],
     })),
     orphans: h.orphans.map((x) => one(x.address, [page(slug, x.address, x.title)], t.orphanText)),
     stale: h.stale.map((x) =>
@@ -106,6 +111,17 @@ export function healthItems(slug: string, h: Health): Record<SectionId, HealthIt
       compare: true,
     })),
   }
+}
+
+// The known debates, in the same shape: two pages that disagree on purpose, shown to be looked at and unmarked.
+export function debateItems(slug: string, h: Health): HealthItem[] {
+  return (h.debates ?? []).map((x) => ({
+    key: `${x.a}|${x.b}`,
+    links: [page(slug, x.a, x.aTitle), page(slug, x.b, x.bTitle)],
+    text: T.health.debateText,
+    compare: true,
+    pair: [x.a, x.b],
+  }))
 }
 
 // One line per problem for the agent: addresses (checked to be addresses) and a short hint, never a title or

@@ -28,7 +28,7 @@ test.describe('exporting a brain', () => {
     baseURL,
   }) => {
     await scenario(context, baseURL as string, 'signed-in')
-    await page.goto('/b/growth/settings/archive')
+    await page.goto('/b/growth/settings/import')
     const p = part(page)
     await expect(p).toBeVisible()
     await expect(p.getByRole('radio', { name: /Readable/ })).toBeChecked()
@@ -54,10 +54,12 @@ test.describe('exporting a brain', () => {
     baseURL,
   }) => {
     await scenario(context, baseURL as string, 'signed-in')
-    await page.goto('/b/growth/settings/archive')
+    await page.goto('/b/growth/settings/import')
     const p = part(page)
-    // The screen's own arrival puts the keyboard on the first heading; only then does the person move on.
-    await expect(page.locator('#export-title')).toBeFocused()
+    // The screen's own arrival puts the keyboard on the first heading (Import's, now that Export sits beside it);
+    // only then does the person move on, to the Export part.
+    await expect(page.locator('.settings-tab h2').first()).toBeFocused()
+    await expect(p).toBeVisible()
     await p.getByRole('radio', { name: /Readable/ }).focus()
     await page.keyboard.press('ArrowDown')
     await expect(p.getByRole('radio', { name: /Faithful/ })).toBeChecked()
@@ -80,7 +82,7 @@ test.describe('exporting a brain', () => {
     baseURL,
   }) => {
     await scenario(context, baseURL as string, 'signed-in', { export: 'loading' })
-    await page.goto('/b/growth/settings/archive')
+    await page.goto('/b/growth/settings/import')
     const p = part(page)
     const downloading = page.waitForEvent('download')
     await p.getByRole('button', { name: 'Download the export' }).click()
@@ -97,7 +99,7 @@ test.describe('exporting a brain', () => {
     baseURL,
   }) => {
     await scenario(context, baseURL as string, 'signed-in', { export: 'error' })
-    await page.goto('/b/growth/settings/archive')
+    await page.goto('/b/growth/settings/import')
     const p = part(page)
     let saved = false
     page.on('download', () => {
@@ -114,7 +116,7 @@ test.describe('exporting a brain', () => {
 
   test('offline, the button says why it waits', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
-    await page.goto('/b/growth/settings/archive')
+    await page.goto('/b/growth/settings/import')
     // The screen is drawn first: offline before it loads is another state (the page's own).
     await expect(part(page).getByRole('button', { name: 'Download the export' })).toBeEnabled()
     await context.setOffline(true)
@@ -131,7 +133,7 @@ test.describe('exporting a brain', () => {
   }) => {
     await page.setViewportSize({ width: 320, height: 720 })
     await scenario(context, baseURL as string, 'signed-in')
-    await page.goto('/b/growth/settings/archive')
+    await page.goto('/b/growth/settings/import')
     await expect(part(page)).toBeVisible()
     await noSideScroll(page)
     await audit(page, 'export 320')

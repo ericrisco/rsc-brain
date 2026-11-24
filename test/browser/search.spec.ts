@@ -182,9 +182,17 @@ test('«Show more» pages the words that were searched, not what the field says 
   page.on('request', (r) => {
     if (r.url().includes('/v1/search')) asked.push(r.url())
   })
-  await d.getByLabel('Search for').fill('something else')
-  await d.getByRole('button', { name: 'Show more results' }).click()
-  await expect.poll(() => asked.length).toBe(1)
+  // New words and «Show more» in the same instant, before the typing pause can end.
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('#search-q')
+    if (!input) throw new Error('no field')
+    input.value = 'something else'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    const more = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Show more results')
+    more?.click()
+  })
+  await expect.poll(() => asked.length).toBeGreaterThanOrEqual(1)
+  // The first request is «Show more», for the words searched (typing then searches the new words by itself).
   expect(asked[0]).toContain('q=intro')
   expect(asked[0]).toContain('offset=20')
 })

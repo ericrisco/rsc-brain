@@ -10,7 +10,7 @@ import { useEffect } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import { useFresh } from '../../api/fresh.ts'
 import { renderMarkdown } from '../../lib/markdown.ts'
-import { groupLinks, groupReaders } from '../../lib/wiki.ts'
+import { groupLinks, groupReaders, withoutRedundantMentions } from '../../lib/wiki.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Dialog } from '../../ui/Dialog.tsx'
@@ -103,7 +103,7 @@ function LinkGroups({
       {links.length === 0 ? (
         <p class="muted small">{none}</p>
       ) : (
-        groupLinks(links).map((g) => (
+        groupLinks(withoutRedundantMentions(links)).map((g) => (
           <div key={g.kind} class="link-kind">
             <h4>{names[g.kind] ?? g.kind}</h4>
             <ul class="plain">
@@ -400,7 +400,10 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
           <SectionHead
             id="links-title"
             title={w.links}
-            meta={reading.links.out.length + reading.links.in.length}
+            meta={
+              withoutRedundantMentions(reading.links.out).length +
+              withoutRedundantMentions(reading.links.in).length
+            }
           />
           <LinkGroups
             slug={slug}

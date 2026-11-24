@@ -396,21 +396,32 @@ export async function applyOps(
               )
               .filter((s) => !drop.has(sourceKey(s))),
           )
-          const dropLinks = new Set(o.dropLinks.map((l) => `${l.kind}>${l.to}`))
-          // y's typed links now leave from x, but those the operation drops.
-          const yOut = await db.query(
-            `SELECT l.kind, l.to_page, t.address FROM page_links l JOIN pages t ON t.id = l.to_page
-            WHERE l.from_page = $1`,
-            [y.id],
-          )
-          for (const l of yOut) {
-            if (l.to_page === x.id || dropLinks.has(`${l.kind}>${l.address}`)) continue
+          // Remove excluded links before transferring debates. When the last direction goes, the
+          // unlink trigger clears y's mark even if x already had its own contradiction with that page.
+          if (o.dropLinks.length)
             await db.query(
-              `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
-             ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
-              [brainId, x.id, l.kind, l.to_page],
+              `DELETE FROM page_links l USING pages t WHERE l.from_page = $1 AND l.to_page = t.id
+                AND (l.kind, t.address) IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
+              [y.id, o.dropLinks.map((l) => l.kind), o.dropLinks.map((l) => l.to)],
             )
-          }
+          // y's known debates pass to x (not with x itself); the links y loses below take the old ones away.
+          await db.query(
+            `INSERT INTO wiki_debates (brain_id, page_a, page_b, acknowledged_by, acknowledged_at)
+             SELECT brain_id, least($2::text, CASE WHEN page_a = $1 THEN page_b ELSE page_a END),
+                    greatest($2::text, CASE WHEN page_a = $1 THEN page_b ELSE page_a END), acknowledged_by, acknowledged_at
+               FROM wiki_debates WHERE brain_id = $3 AND (page_a = $1 OR page_b = $1)
+                AND CASE WHEN page_a = $1 THEN page_b ELSE page_a END <> $2
+             ON CONFLICT DO NOTHING`,
+            [y.id, x.id, brainId],
+          )
+          // y's remaining typed links now leave from x.
+          await db.query(
+            `INSERT INTO page_links (brain_id, from_page, kind, to_page)
+             SELECT brain_id, $2, kind, to_page FROM page_links
+              WHERE from_page = $1 AND to_page IS NOT NULL AND to_page <> $2
+             ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
+            [y.id, x.id],
+          )
           await db.query('DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL', [y.id])
           // Links that went to y now lead to x.
           await db.query(
@@ -423,6 +434,13 @@ export async function applyOps(
           await db.query('DELETE FROM page_links WHERE to_page = $1', [y.id])
           // Every address y had now leads to x, so [[y]] mentions resolve to x without touching bodies.
           await db.query('UPDATE page_addresses SET page_id = $2 WHERE page_id = $1', [y.id, x.id])
+          // Older data may contain a mark without a link. Leave only actual debates on the survivor.
+          await db.query(
+            `DELETE FROM wiki_debates d WHERE d.brain_id = $2 AND (d.page_a = $1 OR d.page_b = $1)
+               AND NOT EXISTS (SELECT 1 FROM page_links l WHERE l.kind = 'contradicts'
+                 AND ((l.from_page = d.page_a AND l.to_page = d.page_b) OR (l.from_page = d.page_b AND l.to_page = d.page_a)))`,
+            [x.id, brainId],
+          )
           await bump(String(x.id), 'body = $3', [o.body])
           await setMentions({ id: String(x.id), address: String(x.address) }, o.body)
           await revise(it, String(x.id), `merged "${y.address}" into it`)
@@ -462,19 +480,27 @@ export async function applyOps(
             String(p.id),
             was.filter((s) => !('entryId' in s) || alive.has(s.entryId)),
           )
-          await db.query('DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL', [p.id])
+          // Only the links the revision does not list go, and only the missing ones come back: a link the page
+          // keeps is never deleted (a known debate rides on its contradicts link).
+          const want: { kind: LinkKind; to: string }[] = []
           for (const l of (old.links as { kind: LinkKind; to: string }[]) ?? []) {
             const t = await db.one(
               'SELECT p.id FROM page_addresses a JOIN pages p ON p.id = a.page_id WHERE a.brain_id = $1 AND a.address = $2',
               [brainId, l.to],
             )
-            if (t && t.id !== p.id) {
-              await db.query(
-                `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
+            if (t && t.id !== p.id) want.push({ kind: l.kind, to: String(t.id) })
+          }
+          await db.query(
+            `DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL
+               AND (kind, to_page) NOT IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
+            [p.id, want.map((l) => l.kind), want.map((l) => l.to)],
+          )
+          for (const l of want) {
+            await db.query(
+              `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
                ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
-                [brainId, p.id, l.kind, t.id],
-              )
-            }
+              [brainId, p.id, l.kind, l.to],
+            )
           }
           await setMentions({ id: String(p.id), address: String(p.address) }, String(old.body))
           await revise(it, String(p.id), `back to revision ${o.toRevision}`)

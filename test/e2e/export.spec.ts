@@ -60,7 +60,7 @@ test('a curator saves both exports from Settings, and they hold the brain', asyn
     })
     expect(r.status(), await r.text()).toBe(201)
   }
-  await page.goto(`/b/${slug}/settings/archive`)
+  await page.goto(`/b/${slug}/settings/import`)
   const part = page.getByRole('region', { name: 'Export', exact: true })
   const [readable] = await Promise.all([
     page.waitForEvent('download'),

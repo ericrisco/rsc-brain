@@ -5018,7 +5018,7 @@ input[type="file"]:focus-visible {
 
 .com-row {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 18px 10px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-height: 30px;
@@ -5039,6 +5039,16 @@ input[type="file"]:focus-visible {
   accent-color: var(--text);
 }
 
+.com-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--graph-node);
+}
+
+.com-dot-lone {
+  background: var(--graph-lone);
+}
 .com-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5322,4 +5332,11 @@ input[type="file"]:focus-visible {
     appearance: auto !important;
     background-image: none !important;
   }
+}
+
+/* A run of unchanged lines folded in a body's differences: one quiet button, the context kept around changes. */
+.diff-fold {
+  justify-self: start;
+  width: auto;
+  margin: 2px 0;
 }

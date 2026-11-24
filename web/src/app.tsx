@@ -38,7 +38,7 @@ import { WikiGraph } from './screens/wiki/Graph.tsx'
 import { WikiLog } from './screens/wiki/Log.tsx'
 import { WikiMap } from './screens/wiki/Map.tsx'
 import { screenKey, WikiPage } from './screens/wiki/Page.tsx'
-import { branding, installationName, isSignedOut, type Me, me } from './session.ts'
+import { branding, installationName, isSignedOut, keyPending, type Me, me } from './session.ts'
 import { Door } from './shell/Door.tsx'
 import { type BrainNav, Shell } from './shell/Shell.tsx'
 import { ErrorState, Skeleton } from './ui/states.tsx'
@@ -255,10 +255,22 @@ function Routes() {
     }
   }, [goTo.value])
   const setupRequired = b.data.value?.setupRequired === true
+  // The installation key of the setup is on screen and not yet saved: the person stays on it (it is shown once).
+  const held = keyPending.value
   useEffect(() => {
     if (setupRequired && path !== '/setup') route('/setup', true)
-  }, [setupRequired, path])
+    else if (held && path !== '/setup') route('/setup', true)
+  }, [setupRequired, held, path])
+  if (held) return <Setup />
   if (setupRequired && path !== '/setup') return null
+  // Whether the installation is set up is asked first: asking who is signed in before it is would only be
+  // refused (503 setup_required) and logged as an error.
+  if (path !== '/setup' && b.data.value === undefined && !b.error.value)
+    return (
+      <Door brand={false}>
+        <Skeleton rows={2} />
+      </Door>
+    )
   if (path === '/sign-in') return <SignIn />
   if (path === '/setup') return <Setup />
   if (path === '/invite') return <Invite />

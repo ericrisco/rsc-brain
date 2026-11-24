@@ -11,6 +11,7 @@ import {
   correctionAbout,
   dayOf,
   entryPowers,
+  isImplicit,
   journalDraftKey,
   mayDecide,
   mergeById,
@@ -18,6 +19,8 @@ import {
   relationWords,
   sessionLabel,
   sessionQuery,
+  statusWord,
+  withoutSummaryNote,
 } from '../../web/src/lib/journal.ts'
 import { plainText } from '../../web/src/lib/markdown.ts'
 
@@ -170,6 +173,14 @@ describe('sessions', () => {
   it('a session without a purpose says what it is', () => {
     assert.equal(sessionLabel({ purpose: 'Intros', day: null }), 'Intros')
     assert.equal(sessionLabel({ purpose: '', day: null }), 'Session with no purpose given')
+    // E2E finding 6: with no purpose, the first line of the summary names it.
+    assert.equal(
+      sessionLabel({ purpose: '', day: null, summary: '\n## Quantization papers read\n\nMore below.' }),
+      'Quantization papers read',
+    )
+    assert.equal(sessionLabel({ purpose: 'Intros', day: null, summary: 'Other words' }), 'Intros')
+    assert.match(sessionLabel({ purpose: '', day: null, summary: 'x'.repeat(200) }), /^x{89}…$/)
+    assert.equal(sessionLabel({ purpose: '', day: null, summary: '  ' }), 'Session with no purpose given')
   })
 
   // The final review of B6: one name for the session a key gets by writing without opening one.
@@ -327,5 +338,19 @@ describe('the words of a purged entry', () => {
     assert.match(w, /versions/)
     assert.match(w, /search/)
     assert.match(w, /quoted elsewhere/)
+  })
+})
+
+describe('sessions the web or a key opened by writing (e2e finding 6)', () => {
+  it('are ongoing, never open and waiting for a summary', () => {
+    const implicit = { status: 'open', day: '2026-10-29' }
+    assert.equal(isImplicit(implicit), true)
+    assert.equal(isImplicit({ status: 'open', day: null }), false)
+    assert.equal(isImplicit({ status: 'closed', day: '2026-10-29' }), false)
+    assert.equal(statusWord(implicit, { open: 'Open' }), 'Ongoing')
+    assert.equal(statusWord({ status: 'open', day: null }, { open: 'Open' }), 'Open')
+    assert.match(withoutSummaryNote(implicit, 'still open', 'closed'), /no summary is expected/)
+    assert.equal(withoutSummaryNote({ status: 'open', day: null }, 'still open', 'closed'), 'still open')
+    assert.equal(withoutSummaryNote({ status: 'closed', day: null }, 'still open', 'closed'), 'closed')
   })
 })

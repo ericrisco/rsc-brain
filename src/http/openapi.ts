@@ -857,6 +857,7 @@ const HAND: Record<string, Op> = {
           }),
         ),
         conflicts: list(pair),
+        debates: list(pair, 'Contradictions a curator marked as a known debate: not problems.'),
         stale: list(
           obj({
             address: s('The page.'),
@@ -1236,6 +1237,16 @@ const HAND: Record<string, Op> = {
     summary:
       'Take the permission back (a curator of the brain, from the web or a key): from the next request the key proposes again. What it wrote stays.',
     reply: obj({ removed: s('The key.') }),
+  },
+  'PUT /v1/brains/{slug}/wiki/debates': {
+    summary:
+      'Mark two pages that contradict each other on purpose as a known debate, or unmark them (a curator of the brain, in the rsc-brain web only). A known debate is no longer a health problem, and agents are not asked to settle it.',
+    body: obj({
+      a: s('The address of one page.'),
+      b: s('The address of the other; the two must be linked as "contradicts".'),
+      known: b('true marks the debate, false brings it back as a contradiction.'),
+    }),
+    reply: obj({ a: s('One page.'), b: s('The other.'), known: b('Whether it is a known debate now.') }),
   },
   'DELETE /v1/me/tokens/{id}': {
     summary: 'Revoke one of your tokens (the rsc-brain web only): it stops at its next request.',

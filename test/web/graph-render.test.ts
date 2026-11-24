@@ -9,6 +9,7 @@ import {
   EDGE,
   HOLO,
   hubs,
+  labelCap,
   type Palette,
   Renderer,
   type Scene,
@@ -105,7 +106,7 @@ const dots = (ops: Op[]) => ops.filter((o) => o.op === 'arc')
 const filled = (ops: Op[]) => ops.filter((o) => o.op === 'fill')
 
 describe('the painter of the graph', () => {
-  it('writes no words, at rest, under the pointer, picked or under the keyboard', () => {
+  it('writes no words when the scene names nothing, at rest, under the pointer, picked or under the keyboard', () => {
     for (const o of [{}, { hover: 1 }, { selected: 1 }, { active: 2, selected: 0 }]) {
       const { ops } = paint(o)
       assert.deepEqual(
@@ -126,6 +127,34 @@ describe('the painter of the graph', () => {
       paint().ops.map((o) => [o.op, o.args.map((a) => (typeof a === 'number' ? Math.round(a) : a))]),
       ops.map((o) => [o.op, o.args.map((a) => (typeof a === 'number' ? Math.round(a) : a))]),
     )
+  })
+
+  it('names the most linked pages, the more of them the closer the zoom, never over each other', () => {
+    const named = (scale: number, labelText = ['Hub', 'Side', 'Other']) => {
+      const r = new Renderer()
+      r.setScene({ ...scene, labelOf: Uint32Array.from([1, 0, 2]), labelText })
+      r.layout = new Float32Array([-60, 0, 0, 0, 60, 0, 0, 120])
+      r.state = state({ autoFit: false, view: { scale, tx: 400, ty: 200 } })
+      const { ctx, ops } = recorder()
+      r.paint(ctx)
+      return ops.filter((o) => o.op === 'fillText').map((o) => o.args[0])
+    }
+    // Far out: a few of the most linked, the first being the hub.
+    assert.ok(named(0.4).length <= labelCap(0.4))
+    assert.equal(named(0.4)[0], 'Hub')
+    assert.equal(labelCap(0.4) < labelCap(2), true)
+    assert.deepEqual(named(2), ['Hub', 'Side', 'Other'])
+    // Two names that would sit on top of each other: only the first is written.
+    const crowded = (() => {
+      const r = new Renderer()
+      r.setScene({ ...scene, labelOf: Uint32Array.from([1, 0]), labelText: ['Hub', 'Side'] })
+      r.layout = new Float32Array([0, 0, 1, 1, 60, 0, 0, 120])
+      r.state = state({ autoFit: false, view: { scale: 1, tx: 400, ty: 200 } })
+      const { ctx, ops } = recorder()
+      r.paint(ctx)
+      return ops.filter((o) => o.op === 'fillText').map((o) => o.args[0])
+    })()
+    assert.deepEqual(crowded, ['Hub'])
   })
 
   it('colours each page by its community; a page without links in its own colour', () => {

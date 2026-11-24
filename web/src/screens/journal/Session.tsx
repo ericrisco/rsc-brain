@@ -8,7 +8,7 @@ import type { ApiError } from '../../api/client.ts'
 import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
 import { resource } from '../../api/resource.ts'
-import { byline, mergeById, sessionLabel } from '../../lib/journal.ts'
+import { byline, isImplicit, mergeById, sessionLabel, withoutSummaryNote } from '../../lib/journal.ts'
 import { plainText } from '../../lib/markdown.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
@@ -101,7 +101,7 @@ export function JournalSession({ slug, id }: { slug: string; id: string }) {
         <h1 class="title">{sessionLabel(s)}</h1>
         {/* Open or closed; whether it closed with a summary is said once, under Summary. */}
         <span class={`tag${s.status === 'open' ? ' live' : ''}`}>
-          {s.status === 'open' ? j.statuses.open : j.statuses.closed}
+          {isImplicit(s) ? j.ongoing : s.status === 'open' ? j.statuses.open : j.statuses.closed}
         </span>
       </div>
       <JournalNav brain={brain} />
@@ -141,7 +141,7 @@ export function JournalSession({ slug, id }: { slug: string; id: string }) {
             ) : null}
           </>
         ) : (
-          <p class="muted">{s.status === 'open' ? j.stillOpen : j.noSummary}</p>
+          <p class="muted">{withoutSummaryNote(s, j.stillOpen, j.noSummary)}</p>
         )}
       </section>
       <section class="session-part" aria-labelledby="session-entries">

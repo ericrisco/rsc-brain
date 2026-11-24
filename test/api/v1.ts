@@ -157,6 +157,7 @@ export const V1 = [
   'PUT /v1/admin/settings',
   'PUT /v1/brains/{slug}/members/{account}',
   'PUT /v1/brains/{slug}/notify',
+  'PUT /v1/brains/{slug}/wiki/debates',
   'PUT /v1/brains/{slug}/wiki/settings',
   'PUT /v1/brains/{slug}/wiki/writers/{keyId}',
 ]
