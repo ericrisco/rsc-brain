@@ -4,6 +4,14 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.14
+
+- Lossless readable-export round trip, and redact a password said in a sentence (#71)
+
+## v0.7.13
+
+- MCP: validate tool arguments, one list of entry types, documented ops, compact review, tools by permission (#70)
+
 ## v0.7.12
 
 - Add Spanish localization and fix sidebar overflow (#63)
