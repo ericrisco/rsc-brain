@@ -217,7 +217,14 @@ test('search runs as you type, with the arrows still moving through the results'
   page.on('request', (r) => {
     if (r.url().includes('/v1/search')) asked.push(new URL(r.url()).searchParams.get('q') ?? '')
   })
-  await d.getByLabel('Search for').pressSequentially('retention', { delay: 20 })
+  await page.clock.install({ time: new Date('2026-11-24T12:00:00Z') })
+  await page.clock.pauseAt(new Date('2026-11-24T12:01:00Z'))
+  const field = d.getByLabel('Search for')
+  for (const letter of 'retention') {
+    await field.press(letter)
+    await page.clock.runFor(20)
+  }
+  await page.clock.runFor(200)
   await expect(d.getByRole('list', { name: 'Results' }).getByRole('listitem').first()).toBeVisible()
   // One search for the whole word, not one per key.
   expect(asked).toEqual(['retention'])
