@@ -31,6 +31,8 @@ export type WikiPage = {
   revision: number
   createdAt: string
   updatedAt: string
+  // Only a person in the web or a key with the wiki write permission writes it (spec learning-memory A3).
+  protected: boolean
 }
 
 export const pageOf = (r: Row): WikiPage => ({
@@ -47,6 +49,7 @@ export const pageOf = (r: Row): WikiPage => ({
   revision: Number(r.revision),
   createdAt: (r.created_at as Date).toISOString(),
   updatedAt: (r.updated_at as Date).toISOString(),
+  protected: Boolean(r.protected),
 })
 
 // The page an address leads to, through any address it ever had.
@@ -418,7 +421,7 @@ export type LogLine = {
   maintenance: boolean
 }
 
-export const LOG_KINDS = ['proposal', 'direct', 'revert', 'purge', 'write'] as const
+export const LOG_KINDS = ['proposal', 'direct', 'revert', 'purge', 'write', 'undo', 'protect'] as const
 export type LogKind = (typeof LOG_KINDS)[number]
 
 // The log, newest first; by kind of change and by a page it touched, when asked.
@@ -478,7 +481,12 @@ export type WikiSettings = {
   approvalsSince: number
   // How long each type of entry lasts without use, in days (null: never), as in force (spec learning-memory B2).
   entryLifetimes: Lifetimes
+  // Agents' changes apply at once («auto») or wait for a curator («ask_first», v0.7.15) (spec learning-memory A4).
+  writeMode: WriteMode
 }
+
+export const WRITE_MODES = ['auto', 'ask_first'] as const
+export type WriteMode = (typeof WRITE_MODES)[number]
 
 export const DEFAULT_GUIDE = `How to compile this brain's journal into its wiki.
 
@@ -505,6 +513,7 @@ export async function settingsOf(db: Db, brainId: string): Promise<WikiSettings>
     maintenanceEvery: r ? Number(r.maintenance_every) : 20,
     approvalsSince: r ? Number(r.approvals_since) : 0,
     entryLifetimes: lifetimesOf(r?.entry_lifetimes),
+    writeMode: r?.write_mode === 'ask_first' ? 'ask_first' : 'auto',
   }
 }
 

@@ -4,12 +4,21 @@
 // current version comes back (CA10). Also the curator's settings: the compile guide and the map intro.
 import { conflict, invalid } from '../../core/errors.ts'
 import { redact } from '../../privacy/redact.ts'
+import { audit } from '../audit.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
 import { DEFAULT_LIFETIMES, type Lifetimes, lifetimesOf } from '../lapse.ts'
 import { lockMeaning } from '../meaning.ts'
 import { applyOps, type Revised } from './apply.ts'
 import { type Problem, readOp } from './model.ts'
-import { DEFAULT_GUIDE, getPage, type PageReading, settingsOf, type WikiSettings } from './pages.ts'
+import {
+  DEFAULT_GUIDE,
+  getPage,
+  type PageReading,
+  settingsOf,
+  type WikiSettings,
+  WRITE_MODES,
+  type WriteMode,
+} from './pages.ts'
 import { problemsOf } from './proposals.ts'
 import { webOnly } from './review.ts'
 
@@ -77,6 +86,8 @@ export type SettingsInput = {
   maintenanceEvery?: number
   // Some types, each days or null for never (spec learning-memory B2); the others keep what they have.
   entryLifetimes?: Partial<Lifetimes>
+  // «auto» or «ask_first» (spec learning-memory A4); each change is an audit line.
+  writeMode?: WriteMode
 }
 
 // The fields a person edits (not the count of approvals, which moves by itself).
@@ -89,6 +100,7 @@ export const SETTINGS_FIELDS = [
   'longChars',
   'maintenanceEvery',
   'entryLifetimes',
+  'writeMode',
 ] as const
 export type SettingsField = (typeof SETTINGS_FIELDS)[number]
 
@@ -156,6 +168,11 @@ export async function setWikiSettings(
   range(s.staleDays, 'staleDays', 1, 3650)
   range(s.longChars, 'longChars', 1000, 100_000)
   range(s.maintenanceEvery, 'maintenanceEvery', 1, 1000)
+  if (s.writeMode !== undefined && !(WRITE_MODES as readonly string[]).includes(s.writeMode))
+    throw invalid(
+      '"writeMode" is "auto" (apply agents\' changes at once) or "ask_first" (they wait for a curator).',
+      'Fix "writeMode".',
+    )
   return ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
     const { brain, role } = await inBrain(c, { slug }, 'share')
@@ -195,6 +212,7 @@ export async function setWikiSettings(
     set('stale_days', s.staleDays)
     set('long_chars', s.longChars)
     set('maintenance_every', s.maintenanceEvery)
+    set('write_mode', s.writeMode)
     // The types sent replace their value; the others keep theirs.
     if (s.entryLifetimes !== undefined) {
       values.push(JSON.stringify(s.entryLifetimes))
@@ -206,11 +224,24 @@ export async function setWikiSettings(
     if (sets.length === 0)
       throw invalid(
         'Nothing to change.',
-        'Send guide, mapIntro, usageNote, meaningExcluded, staleDays, longChars, maintenanceEvery or entryLifetimes.',
+        'Send guide, mapIntro, usageNote, meaningExcluded, staleDays, longChars, maintenanceEvery, entryLifetimes or writeMode.',
       )
     // Waits for any vector being stored for this brain, so none lands after the exclusion.
     if (s.meaningExcluded !== undefined) await lockMeaning(db, brain.id)
+    const modeBefore = s.writeMode === undefined ? undefined : (await settingsOf(db, brain.id)).writeMode
     await db.query(`UPDATE wiki_settings SET ${sets.join(', ')} WHERE brain_id = $1`, values)
+    // A change of mode is written down (spec learning-memory A4, pack B7): who, when, to what.
+    if (s.writeMode !== undefined && s.writeMode !== modeBefore)
+      await audit(db, {
+        at: ctx.clock(),
+        actorId: ctx.who.accountId,
+        credentialId: ctx.who.credential.id,
+        action: 'wiki.mode',
+        brainId: brain.id,
+        target: slug,
+        outcome: 'ok',
+        detail: s.writeMode,
+      })
     // Excluding a brain from meaning search deletes its vectors now; nothing more of it is sent (CA8).
     if (s.meaningExcluded === true)
       await db.query('DELETE FROM meaning_vectors WHERE brain_id = $1', [brain.id])

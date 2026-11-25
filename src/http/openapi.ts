@@ -95,6 +95,10 @@ const WIKI_SETTINGS = obj({
     description:
       'How long each type of entry lasts without use, in days, as in force in this brain: {"step": 7, …}; null: never. A date set by hand on an entry wins; pinned entries and entries cited by a current page do not lapse.',
   },
+  writeMode: s(
+    'When agents change the wiki: auto (they apply at once and a curator reviews them later) or ask_first (they wait for a curator).',
+    { enum: ['auto', 'ask_first'] },
+  ),
   entryLifetimesDefault: {
     type: 'object',
     description:
@@ -596,21 +600,27 @@ const PAGE_TYPE = s('topic, entity, decision, guide, agent, source or overview.'
 const PAGE_STATUS = s('current, stale, superseded or retired.', {
   enum: ['current', 'stale', 'superseded', 'retired'],
 })
-const WIKI_PAGE = obj({
-  id: s('Page id.'),
-  brainId: s('Its brain.'),
-  address: s('Its current address.'),
-  type: PAGE_TYPE,
-  title: s('Title.'),
-  summary: s('One sentence.'),
-  body: s('Markdown; [[address]] mentions another page.'),
-  tags: list(s('Tag.')),
-  status: PAGE_STATUS,
-  supersededBy: nul(s('The page that replaces it, when superseded.')),
-  revision: n('Its current revision: edit against it.'),
-  createdAt: s('When.', { format: 'date-time' }),
-  updatedAt: s('When it last changed.', { format: 'date-time' }),
-})
+const WIKI_PAGE = obj(
+  {
+    id: s('Page id.'),
+    brainId: s('Its brain.'),
+    address: s('Its current address.'),
+    type: PAGE_TYPE,
+    title: s('Title.'),
+    summary: s('One sentence.'),
+    body: s('Markdown; [[address]] mentions another page.'),
+    tags: list(s('Tag.')),
+    status: PAGE_STATUS,
+    supersededBy: nul(s('The page that replaces it, when superseded.')),
+    revision: n('Its current revision: edit against it.'),
+    createdAt: s('When.', { format: 'date-time' }),
+    updatedAt: s('When it last changed.', { format: 'date-time' }),
+    protected: b(
+      "Protected by a curator: only a person in the web or a key with the wiki write permission writes it; other keys' changes to it wait for a person.",
+    ),
+  },
+  ['protected'],
+)
 const LINK_VIEW = obj({
   kind: s('mentions, related, depends-on, contradicts, supersedes, part-of or example-of.'),
   address: s('The other page.'),
@@ -910,7 +920,7 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/wiki/log': {
     summary: 'One line per change applied to the wiki, newest first.',
     query: {
-      kind: 'proposal, direct, revert, purge or write.',
+      kind: 'proposal, direct, revert, purge, write, undo or protect.',
       page: 'Only lines that touched this address.',
       cursor: 'The "next" of the previous page.',
       limit: 'Lines per answer.',
@@ -923,8 +933,8 @@ const HAND: Record<string, Op> = {
           actorId: s('Who.'),
           actorName: s('Their name.'),
           kind: s(
-            'proposal (approved), direct (by hand in the web), revert, purge, or write (written directly by a key with the permission).',
-            { enum: ['proposal', 'direct', 'revert', 'purge', 'write'] },
+            'proposal (approved), direct (by hand in the web), revert, purge, write (written directly by a key with the permission), undo (a change undone from Review later) or protect (a page protected or unprotected).',
+            { enum: ['proposal', 'direct', 'revert', 'purge', 'write', 'undo', 'protect'] },
           ),
           proposalId: nul(s('The proposal it applied.')),
           summary: s('What changed.'),
@@ -2420,6 +2430,9 @@ const HAND: Record<string, Op> = {
         staleDays: n('Days after which a page with new entries counts as stale (1–3650).'),
         longChars: n('Characters after which a page counts as long (1000–100000).'),
         maintenanceEvery: n('Kept for API v1 (1–1000); since v0.6 it decides nothing.'),
+        writeMode: s('auto or ask_first. Each change is an audit line (wiki.mode).', {
+          enum: ['auto', 'ask_first'],
+        }),
         entryLifetimes: {
           type: 'object',
           description:
@@ -2436,6 +2449,7 @@ const HAND: Record<string, Op> = {
         'longChars',
         'maintenanceEvery',
         'entryLifetimes',
+        'writeMode',
       ],
     ),
     reply: {
@@ -2445,6 +2459,12 @@ const HAND: Record<string, Op> = {
         unchanged: b('Only a base was sent and it still holds: nothing was changed.'),
       },
     },
+  },
+  'PUT /v1/brains/{slug}/protection/{address}': {
+    summary:
+      "Protect a page or take the protection off (curators, in the rsc-brain web). On a protected page only a person in the web or a key with the wiki write permission writes; other keys' changes to it wait for a person. Each change is a line in the wiki log (protect), not a revision; asking for what it already is changes nothing. 403 protect_web_only with a key.",
+    body: obj({ protected: b('true to protect, false to unprotect.') }),
+    reply: PAGE_READING,
   },
   'POST /v1/brains/{slug}/members': {
     summary: 'Add a person or service account that already has an account (curators, or the administration).',

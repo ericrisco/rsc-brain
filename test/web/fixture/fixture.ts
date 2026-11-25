@@ -3037,6 +3037,7 @@ const settingsView = (x: FxSettings) => ({
   // Spec learning-memory B2: the lifetimes of each type (the web edits them with T010).
   entryLifetimes: { ...ENTRY_LIFETIMES },
   entryLifetimesDefault: { ...ENTRY_LIFETIMES },
+  writeMode: 'auto',
 })
 const ENTRY_LIFETIMES = {
   decision: null,

@@ -15,6 +15,8 @@ import {
   type SettingsField,
   setWikiSettings,
 } from '../../domain/wiki/direct.ts'
+import type { WriteMode } from '../../domain/wiki/pages.ts'
+import { setProtection } from '../../domain/wiki/protect.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
 import { compactReview } from '../../domain/wiki/review.ts'
 import { chunkedReply } from '../chunked-reply.ts'
@@ -127,8 +129,21 @@ export const decideRoutes: Route[] = [
           longChars: int(b, 'longChars'),
           maintenanceEvery: int(b, 'maintenanceEvery'),
           entryLifetimes: b.entryLifetimes === undefined ? undefined : readLifetimes(b.entryLifetimes),
+          writeMode: str(b, 'writeMode') as WriteMode | undefined,
         }),
       ),
+    }
+  }),
+  // Spec learning-memory A3: a curator, in the web, protects a page or takes the protection off.
+  route('PUT /v1/brains/:slug/protection/*address', async (r) => {
+    const b = obj(r.body)
+    if (typeof b.protected !== 'boolean')
+      throw invalid(
+        '"protected" is true or false.',
+        'Send "protected": true to protect the page, false to unprotect it.',
+      )
+    return {
+      body: await setProtection(ctxOf(r), r.params.slug as string, r.params.address as string, b.protected),
     }
   }),
   route('POST /v1/brains/:slug/wiki/maintenance-asked', async (r) => ({
