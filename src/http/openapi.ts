@@ -1966,7 +1966,7 @@ const HAND: Record<string, Op> = {
   },
   'POST /v1/wiki/changes/{id}/undo': {
     summary:
-      'Undo a change of «Review later» (curators in the web, or a key with the permission to write to the wiki), whole or the parts in "parts": each page goes back exactly as it was (a page it created is retired). 400 missing_dependencies when a part that stays needs one undone; 409 undo_conflict with "pages" when a page was written again since (send "overwrite" with their addresses); a part whose revision before was purged is skipped. Undoing twice answers alreadyUndone. A "comment" becomes a correction for whoever made the change.',
+      'Undo a change of «Review later» (curators in the web, or a key with the permission to write to the wiki), whole or the parts in "parts": each page goes back exactly as it was (a page it created is retired). 400 missing_dependencies when a part that stays needs one undone; 409 undo_conflict with "pages" when a page was written again since (send "overwrite" with their addresses), and with "addresses" when another page took an address it would give back (overwrite does not take it); 409 undo_purged when a revision it would go back to was purged (nothing is undone). Parts of the proposal still waiting that need an undone part are discarded with it ("discarded"). Undoing twice answers alreadyUndone. A "comment" becomes a correction for whoever made the change.',
     body: obj(
       {
         parts: list(n('Part number.'), 'Undo only these parts.'),
@@ -1982,7 +1982,10 @@ const HAND: Record<string, Op> = {
           {
             change: CHANGE,
             undone: list(obj({ address: s('The page.'), revision: n('Its revision now.') })),
-            skipped: list(obj({ address: s('The page.'), reason: s('purged.') })),
+            discarded: list(
+              n('Operation.'),
+              'Parts of the proposal still waiting that needed an undone part: discarded.',
+            ),
             correction: s('The correction left for whoever made the change.'),
           },
           ['correction'],

@@ -38,6 +38,12 @@ export type RestoreOp = {
   addressesBefore: string[]
   addressesAdded: string[]
   linksInBefore: { fromPage: string; kind: LinkKind }[]
+  // Every page of the change, and the links into its other pages before it (a merge moved them here): only links
+  // those made or moved are taken back; a link a later write made stays (review round 1, U1).
+  changePages: string[]
+  movedIn: { fromPage: string; kind: LinkKind }[]
+  // A merge took this page in: the links into it that the merge deleted come back.
+  merged: boolean
   note: string
 }
 export type ApplyItem = { op: Op | RestoreOp; index?: number; corrected?: boolean; baseReviewed?: boolean }
@@ -552,11 +558,12 @@ export async function applyOps(
           // Its address rows: those it had come back to it (a merge gave them to another page); those the change
           // added go.
           for (const a of o.addressesBefore) {
-            await db.query('UPDATE page_addresses SET page_id = $3 WHERE brain_id = $1 AND address = $2', [
-              brainId,
-              a,
-              id,
-            ])
+            // Only from a page of the change (a merge): an address another page took since is a conflict undo.ts
+            // refused before getting here (review round 1, U4).
+            await db.query(
+              'UPDATE page_addresses SET page_id = $3 WHERE brain_id = $1 AND address = $2 AND page_id = ANY($4)',
+              [brainId, a, id, o.changePages],
+            )
             await db.query(
               `INSERT INTO page_addresses (brain_id, address, page_id, created_at) VALUES ($1, $2, $3, $4)
                ON CONFLICT DO NOTHING`,
@@ -618,20 +625,43 @@ export async function applyOps(
                ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
               [brainId, id, l.kind, l.to],
             )
-          // The typed links into it, as they were (a merge moved them to another page, or added new ones).
-          const into = o.linksInBefore.filter((l) => l.fromPage !== id)
-          await db.query(
-            `DELETE FROM page_links WHERE to_page = $1
-               AND (from_page, kind) NOT IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
-            [id, into.map((l) => l.fromPage), into.map((l) => l.kind)],
-          )
-          for (const l of into)
+          // The typed links into it, by difference (review round 1, U1): a link the change made into it (from one of its
+          // pages, or moved here by a merge) goes; a link the change took away (from one of its pages, or moved to
+          // another of its pages by a merge) comes back. A link a later write made or took away is left as it is.
+          const key = (l: { fromPage: string; kind: string }) => `${l.fromPage} ${l.kind}`
+          const ours = new Set(o.changePages)
+          const linkedBefore = new Set(o.linksInBefore.filter((l) => l.fromPage !== id).map(key))
+          const moved = new Set(o.movedIn.map(key))
+          const linkedNow = (
+            await db.query<{ from_page: string; kind: LinkKind }>(
+              'SELECT from_page, kind FROM page_links WHERE to_page = $1',
+              [id],
+            )
+          ).map((l) => ({ fromPage: l.from_page, kind: l.kind }))
+          const has = new Set(linkedNow.map(key))
+          for (const l of linkedNow) {
+            if (linkedBefore.has(key(l))) continue
+            if (!ours.has(l.fromPage) && !moved.has(key(l))) continue
+            await db.query('DELETE FROM page_links WHERE from_page = $1 AND kind = $2 AND to_page = $3', [
+              l.fromPage,
+              l.kind,
+              id,
+            ])
+          }
+          for (const l of o.linksInBefore) {
+            if (l.fromPage === id || has.has(key(l))) continue
+            const redirected = await db.one(
+              'SELECT 1 FROM page_links WHERE from_page = $1 AND kind = $2 AND to_page = ANY($3)',
+              [l.fromPage, l.kind, o.changePages],
+            )
+            if (!ours.has(l.fromPage) && !redirected && !o.merged) continue
             await db.query(
               `INSERT INTO page_links (brain_id, from_page, kind, to_page)
                SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM pages WHERE id = $2)
                ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
               [brainId, l.fromPage, l.kind, id],
             )
+          }
           await setMentions({ id, address: String(o.addressBefore ?? row.address) }, String(was.body))
           await revise(it, id, o.note)
           break

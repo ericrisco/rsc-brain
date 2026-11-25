@@ -377,6 +377,16 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     }
     const plain = ops.map((o) => o.op)
     const deps = dependencies(plain)
+    // A part whose dependency was undone cannot apply any more (review round 1, U3).
+    for (const i of approve) {
+      const gone = (deps[i] ?? []).filter((j) => ops[j]?.status === 'undone')
+      if (gone.length)
+        throw conflict(
+          'dependency_undone',
+          `Operation ${i} needs ${gone.map((j) => `operation ${j}`).join(', ')}, which was undone.`,
+          'Return it; its author proposes it again if it still holds.',
+        )
+    }
     const missing = approve.flatMap((i) => {
       // What applied already is there; only a part that still waits can be missing.
       const needs = (deps[i] ?? []).filter((j) => !approve.includes(j) && all.includes(j))

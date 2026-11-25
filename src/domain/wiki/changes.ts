@@ -247,7 +247,10 @@ export type ChangePart = {
 // The parts of a change and what each needs to stay (plan §2.5): a part needs the parts of the same operation (a merge,
 // a «supersedes» link: one gesture, several pages), the parts that created a page it links to, and — for a proposal —
 // the parts of the operations its own operation needed (dependencies of a proposal).
-export async function partsOf(db: Db, row: Row): Promise<(ChangePart & { pageId: string })[]> {
+export async function partsOf(
+  db: Db,
+  row: Row,
+): Promise<(ChangePart & { pageId: string; opIndex: number | null })[]> {
   const rows = await db.query('SELECT * FROM wiki_change_parts WHERE change_id = $1 ORDER BY part', [row.id])
   const ops =
     row.proposal_id == null
@@ -308,7 +311,7 @@ export async function partsOf(db: Db, row: Row): Promise<(ChangePart & { pageId:
       )
       .map((b) => b.part.part)
   }
-  return built.map((b) => b.part)
+  return built.map((b) => ({ ...b.part, opIndex: b.opIndex }))
 }
 
 // A change as the tray shows it, read again.
@@ -320,7 +323,10 @@ export async function getChange(ctx: Ctx, id: string): Promise<{ change: ChangeV
   const { row, brain, role } = await changeOf(ctx, id)
   await mayRead(ctx, brain, role)
   const view = (await ctx.db.one(`${VIEW} WHERE c.id = $1`, [id])) as Row
-  return { change: viewOf(view), parts: (await partsOf(ctx.db, row)).map(({ pageId: _p, ...p }) => p) }
+  return {
+    change: viewOf(view),
+    parts: (await partsOf(ctx.db, row)).map(({ pageId: _p, opIndex: _o, ...p }) => p),
+  }
 }
 
 // Keep (spec A2): a person curator, in the web, has seen the change. Its pages count as reviewed up to the revision that

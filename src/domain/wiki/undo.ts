@@ -5,7 +5,9 @@
 //   - By parts, dependencies hold: a part another part that stays needs is not undone alone (400 missing_dependencies).
 //   - A page written again since is a conflict (409 undo_conflict): a person resends with «overwrite» for those pages;
 //     what came after stays in the history (CA-A10).
-//   - A revision before that was purged is not put back: that part is skipped, with the reason.
+//   - A revision before that was purged cannot be put back: the undo is refused whole (409 undo_purged), never split.
+//   - An address another page took since is a conflict too, which «overwrite» does not force: it stays with that page.
+//   - Parts of the proposal still waiting that need an undone part are discarded with it ("discarded").
 //   - Twice: 200 {alreadyUndone: true}, nothing changes (CA-A21); a request key returns the same answer.
 //   - A comment becomes a correction for whoever made the change (CA-A25), redacted, as when a proposal is returned.
 import { createHash } from 'node:crypto'
@@ -15,7 +17,8 @@ import { redact } from '../../privacy/redact.ts'
 import { allow, type Ctx, personInWeb } from '../context.ts'
 import { type ApplyItem, applyOps, type RestoreOp } from './apply.ts'
 import { type ChangeView, changeOf, partsOf, recordChange, teach, viewOfChange } from './changes.ts'
-import { WIKI_LIMITS } from './model.ts'
+import { type Op, WIKI_LIMITS } from './model.ts'
+import { dependencies } from './review.ts'
 import { hasPermission } from './writers.ts'
 
 export type UndoInput = { parts?: number[]; comment?: string; overwrite?: string[]; requestKey?: string }
@@ -23,7 +26,7 @@ export type Undone =
   | {
       change: ChangeView
       undone: { address: string; revision: number }[]
-      skipped: { address: string; reason: 'purged' }[]
+      discarded: number[]
       correction?: string
     }
   | { alreadyUndone: true }
@@ -34,7 +37,7 @@ type Stored =
   | {
       changeId: string
       undone: { address: string; revision: number }[]
-      skipped: { address: string; reason: 'purged' }[]
+      discarded: number[]
       correction?: string
     }
 
@@ -143,8 +146,40 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
         )
       ).map((p) => [p.id, p]),
     )
-    // Written again since: a person decides (CA-A10).
+    const partPages = new Set(parts.map((p) => p.pageId))
+    // A revision before that was purged: the whole undo is refused, so a merge is never split (review round 1, U2).
+    const purged: string[] = []
+    for (const p of todo) {
+      const r = rows.get(p.part) as Row
+      if (r.created) continue
+      const before = await db.one<{ purged: boolean }>(
+        'SELECT purged_at IS NOT NULL AS purged FROM page_revisions WHERE page_id = $1 AND revision = $2',
+        [p.pageId, r.revision_before],
+      )
+      if (!before || before.purged) purged.push(p.address)
+    }
+    if (purged.length)
+      throw conflict(
+        'undo_purged',
+        `Text was purged from what ${purged.map((a) => `"${a}"`).join(', ')} was before this change, so it cannot be put back. Nothing was undone.`,
+        'Edit the pages by hand to what they should say, or leave the change as it is.',
+      )
+    // Written again since: a person decides (CA-A10). An address another page took since stays with it: overwrite does
+    // not take it away (review round 1, U4).
     const overwrite = new Set(input.overwrite ?? [])
+    const taken: { address: string; heldBy: string }[] = []
+    for (const p of todo) {
+      const r = rows.get(p.part) as Row
+      if (r.created) continue
+      for (const a of (r.addresses_before as string[]) ?? []) {
+        const h = await db.one<{ id: string; address: string }>(
+          `SELECT p.id, p.address FROM page_addresses a JOIN pages p ON p.id = a.page_id
+            WHERE a.brain_id = $1 AND a.address = $2`,
+          [brain.id, a],
+        )
+        if (h && h.id !== p.pageId && !partPages.has(h.id)) taken.push({ address: a, heldBy: h.address })
+      }
+    }
     const conflicts = todo.flatMap((p) => {
       const now = pages.get(p.pageId)
       if (!now || Number(now.revision) <= p.revisionAfter) return []
@@ -153,42 +188,49 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
         { address: now.address, changeRevision: p.revisionAfter, currentRevision: Number(now.revision) },
       ]
     })
-    if (conflicts.length) {
+    if (conflicts.length || taken.length) {
       const err = conflict(
         'undo_conflict',
-        `Some pages were written again after this change: ${conflicts.map((x) => `"${x.address}" (revision ${x.changeRevision}, now ${x.currentRevision})`).join(', ')}. Nothing was undone.`,
-        'Look at what came after. To undo over it, send again with "overwrite": the addresses of those pages (what came after stays in the history); or undo only other parts.',
+        [
+          conflicts.length
+            ? `Some pages were written again after this change: ${conflicts.map((x) => `"${x.address}" (revision ${x.changeRevision}, now ${x.currentRevision})`).join(', ')}.`
+            : '',
+          taken.length
+            ? `Another page holds an address this change would give back: ${taken.map((x) => `"${x.address}" (now the page "${x.heldBy}")`).join(', ')}.`
+            : '',
+          'Nothing was undone.',
+        ]
+          .filter(Boolean)
+          .join(' '),
+        taken.length
+          ? 'An address another page took stays with it: move or retire that page first, by hand, then undo again.'
+          : 'Look at what came after. To undo over it, send again with "overwrite": the addresses of those pages (what came after stays in the history); or undo only other parts.',
       )
-      err.extra = { pages: conflicts }
+      err.extra = { pages: conflicts, ...(taken.length ? { addresses: taken } : {}) }
       throw err
     }
-    // A revision before that was purged cannot be put back.
-    const skipped: { address: string; reason: 'purged' }[] = []
     const items: ApplyItem[] = []
     const restore: { part: number; op: RestoreOp; lost: boolean }[] = []
+    const allLinksIn = new Map(
+      parts.map((p) => [
+        p.pageId,
+        ((rows.get(p.part) as Row).links_in_before as RestoreOp['linksInBefore']) ?? [],
+      ]),
+    )
     for (const p of todo) {
       const r = rows.get(p.part) as Row
-      if (!r.created) {
-        const before = await db.one<{ purged: boolean }>(
-          'SELECT purged_at IS NOT NULL AS purged FROM page_revisions WHERE page_id = $1 AND revision = $2',
-          [p.pageId, r.revision_before],
-        )
-        if (!before || before.purged) {
-          skipped.push({ address: p.address, reason: 'purged' })
-          continue
-        }
-      }
       const addressesBefore = (r.addresses_before as string[]) ?? []
-      // A page whose addresses another page now holds (a merge) goes first, so the others' links find it again.
+      // A page whose addresses another page of the change now holds (a merge) goes first, so the others' links find it.
       const held = addressesBefore.length
         ? await db.one<{ n: number }>(
             'SELECT count(*)::int AS n FROM page_addresses WHERE brain_id = $1 AND address = ANY($2) AND page_id <> $3',
             [brain.id, addressesBefore, p.pageId],
           )
         : { n: 0 }
+      const lost = (held?.n ?? 0) > 0
       restore.push({
         part: p.part,
-        lost: (held?.n ?? 0) > 0,
+        lost,
         op: {
           op: 'restore',
           address: pages.get(p.pageId)?.address ?? p.address,
@@ -201,20 +243,24 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
           supersededByBefore: r.superseded_by_before == null ? null : String(r.superseded_by_before),
           addressesBefore,
           addressesAdded: (r.addresses_added as string[]) ?? [],
-          linksInBefore: (r.links_in_before as RestoreOp['linksInBefore']) ?? [],
+          linksInBefore: allLinksIn.get(p.pageId) ?? [],
+          changePages: [...partPages],
+          movedIn: [...allLinksIn].filter(([page]) => page !== p.pageId).flatMap(([, l]) => l),
+          merged: lost,
           note: `undo of change ${id}`,
         },
       })
     }
     restore.sort((a, b) => Number(b.lost) - Number(a.lost))
     for (const r of restore) items.push({ op: r.op, index: r.part })
-    if (items.length === 0) return done({ changeId: id, undone: [], skipped })
     const title = await titleOf(c, row)
+    // The parts of the proposal: those undone, and those still waiting that need one of them (review round 1, U3).
+    const discarded = row.proposal_id ? await discardWith(c, String(row.proposal_id), todo) : []
     const all = parts.filter((p) => p.state === 'applied').length === restore.length
     const applied = await applyOps(c, db, brain.id, items, {
       kind: 'undo',
       ...(row.proposal_id ? { proposalId: String(row.proposal_id) } : {}),
-      summary: `${all ? 'Undone' : 'Partly undone'}: ${title}`,
+      summary: `${all ? 'Undone' : 'Partly undone'}: ${title}${discarded.length ? ` (${discarded.length} waiting part${discarded.length === 1 ? '' : 's'} discarded)` : ''}`,
       reason: comment ?? '',
     })
     const last = new Map(applied.revised.map((r) => [r.pageId, r]))
@@ -268,8 +314,51 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
       )
       correction = receipt.entryId
     }
-    return done({ changeId: id, undone, skipped, ...(correction ? { correction } : {}) })
+    return done({ changeId: id, undone, discarded, ...(correction ? { correction } : {}) })
   })
+}
+
+// The operations of the proposal behind the parts undone are «undone»; a part of it still waiting that needs one of them
+// (directly or through others) cannot apply any more, so it is discarded with the undo, «undone» too (review round 1,
+// U3). Returns the discarded parts.
+async function discardWith(
+  ctx: Ctx,
+  proposalId: string,
+  todo: { opIndex?: number | null }[],
+): Promise<number[]> {
+  const db = ctx.db
+  const rows = await db.query<{ idx: number; op: Op; status: string }>(
+    'SELECT idx, op, status FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx',
+    [proposalId],
+  )
+  const undone = new Set(todo.flatMap((p) => (p.opIndex == null ? [] : [p.opIndex])))
+  for (const i of undone)
+    await db.query(
+      "UPDATE proposal_ops SET status = 'undone' WHERE proposal_id = $1 AND idx = $2 AND status = 'applied'",
+      [proposalId, i],
+    )
+  const deps = dependencies(rows.map((r) => r.op))
+  const gone = new Set(undone)
+  const out: number[] = []
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const r of rows) {
+      const i = Number(r.idx)
+      if (r.status !== 'pending' || gone.has(i)) continue
+      if ((deps[i] ?? []).some((j) => gone.has(j))) {
+        gone.add(i)
+        out.push(i)
+        grew = true
+      }
+    }
+  }
+  if (out.length)
+    await db.query("UPDATE proposal_ops SET status = 'undone' WHERE proposal_id = $1 AND idx = ANY($2)", [
+      proposalId,
+      out,
+    ])
+  return out.sort((a, b) => a - b)
 }
 
 // What the change was called: its proposal's title, or its log line (a direct write: «Written directly by …: …»).

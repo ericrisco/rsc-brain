@@ -351,7 +351,7 @@ describe('undo, exact, whole or in parts (spec learning-memory A2)', { skip: ski
     assert.match(e.title, /Direct one/)
   })
 
-  it('a revision before that was purged is not put back: the part is skipped, with the reason', async () => {
+  it('a revision before that was purged cannot be put back: the undo is refused whole (review round 1, U2)', async () => {
     await plant('gone')
     const c = await propose([
       { op: 'edit', address: 'gone', baseRevision: 1, body: 'Later.', reason: 'Later.' },
@@ -361,9 +361,8 @@ describe('undo, exact, whole or in parts (spec learning-memory A2)', { skip: ski
       [await pageId('gone')],
     )
     const r = await undo(c.undo)
-    assert.equal(r.status, 200, r.text)
-    assert.deepEqual(r.body.undone, [])
-    assert.deepEqual(r.body.skipped, [{ address: 'gone', reason: 'purged' }])
+    assert.equal(r.status, 409, r.text)
+    assert.equal(r.body.error?.code, 'undo_purged')
     assert.equal(await revisionOf('gone'), 2)
   })
 
