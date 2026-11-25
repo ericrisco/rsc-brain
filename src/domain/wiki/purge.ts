@@ -493,9 +493,18 @@ export async function purgeProposal(
           WHERE proposal_id = $1`,
         [id],
       )
-      await db.query("UPDATE wiki_log SET summary = '[purged proposal]' WHERE proposal_id = $1", [id])
-      // The comment of an undo of a change it made (plan §8.3 H4); its log lines carry the proposal and went above.
+      // Every log line tied to it: its own, applying it at once, and undoing what it changed — the «why» of an undo is
+      // the curator's comment (spec learning-memory A2; plan §8.3 H4, review round 1 of T008).
+      await db.query(
+        `UPDATE wiki_log SET summary = '[purged proposal]', reason = NULL
+          WHERE proposal_id = $1
+             OR change_id IN (SELECT c.id FROM wiki_changes c WHERE c.proposal_id = $1)
+             OR id IN (SELECT c.undo_log_id FROM wiki_changes c WHERE c.proposal_id = $1)`,
+        [id],
+      )
       await db.query('UPDATE wiki_changes SET comment = NULL WHERE proposal_id = $1', [id])
+      // The revisions an undo of it made keep the comment as their reason.
+      await db.query("UPDATE page_revisions SET reason = NULL WHERE proposal_id = $1 AND kind = 'undo'", [id])
       // The corrections a return left in the journal quote it: they go too.
       for (const e of await db.query(
         "SELECT id FROM entries WHERE brain_id = $1 AND type = 'correction' AND $2 = ANY(refs) AND state <> 'purged'",

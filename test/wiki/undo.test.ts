@@ -316,6 +316,23 @@ describe('undo, exact, whole or in parts (spec learning-memory A2)', { skip: ski
       [c.undo],
     )
     assert.equal(after?.comment, null)
+    // The comment is nowhere after the purge (review round 1 of T008): the log line of the undo (its «why» too), the
+    // revisions it made, the activity, the receipts and the correction it left.
+    const left = await w.db.query<{ at: string }>(
+      `SELECT 'wiki_log' AS at FROM wiki_log WHERE concat_ws(' ', summary, reason) LIKE '%Zanzibarite%'
+       UNION ALL SELECT 'page_revisions' FROM page_revisions WHERE concat_ws(' ', reason, note) LIKE '%Zanzibarite%'
+       UNION ALL SELECT 'wiki_changes' FROM wiki_changes WHERE comment LIKE '%Zanzibarite%'
+       UNION ALL SELECT 'events' FROM events WHERE label LIKE '%Zanzibarite%'
+       UNION ALL SELECT 'request_keys' FROM request_keys WHERE receipt::text LIKE '%Zanzibarite%'
+       UNION ALL SELECT 'entries' FROM entries WHERE concat_ws(' ', title, content) LIKE '%Zanzibarite%'
+       UNION ALL SELECT 'entry_revisions' FROM entry_revisions WHERE concat_ws(' ', title, content) LIKE '%Zanzibarite%'`,
+    )
+    assert.deepEqual(
+      left.map((x) => x.at),
+      [],
+    )
+    const log = await w.call(cora.key, 'GET', '/v1/brains/un/wiki/log?kind=undo')
+    assert.doesNotMatch(log.text, /Zanzibarite/)
   })
 
   it('M7: a comment on a direct write teaches the key’s owner, titled from its log line', async () => {
