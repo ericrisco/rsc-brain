@@ -90,6 +90,16 @@ const WIKI_SETTINGS = obj({
     'Kept for API v1: since v0.6 a cleanup is suggested daily, not every so many approvals.',
   ),
   approvalsSince: n('Kept for API v1: approvals since a curator last asked for maintenance.'),
+  entryLifetimes: {
+    type: 'object',
+    description:
+      'How long each type of entry lasts without use, in days, as in force in this brain: {"step": 7, …}; null: never. A date set by hand on an entry wins; pinned entries and entries cited by a current page do not lapse.',
+  },
+  entryLifetimesDefault: {
+    type: 'object',
+    description:
+      'The same, as rsc-brain sets it: step 7, attempt 14, summary and note 30, learning 60, the rest never.',
+  },
 })
 const MEMBER_SET = obj({
   accountId: s('Account id.'),
@@ -229,33 +239,42 @@ const SESSION = obj({
   lastActivityAt: s('Last write.', { format: 'date-time' }),
   closedAt: nul(s('When.', { format: 'date-time' })),
 })
-const ENTRY = obj({
-  id: s('Entry id (ent_…).'),
-  brainId: s('Its brain.'),
-  sessionId: s('Its session.'),
-  type: s('decision, learning, attempt, correction, preference, fact, step, summary or note.'),
-  topic: nul(s('Topic key, for what evolves.')),
-  title: s('Title.'),
-  content: s('The entry, already redacted.'),
-  appliesTo: nul(s('The agent, account or label it applies to.')),
-  tags: list(s('A tag.')),
-  refs: list(
-    s('A file, link or id; a correction written in the web names "page:<address>" or "entry:<id>".'),
-  ),
-  authorId: s('The account that wrote it.'),
-  onBehalfId: nul(s('The person a service relayed it for.')),
-  ref: nul(s('The external reference stamped by the short key that wrote it.')),
-  revision: n('Its revision, for corrections against it.'),
-  repeatCount: n('How many times it was saved.'),
-  pinned: b('Always in the start context (curators pin).'),
-  reviewAfter: nul(s('After this, it is to review.', { format: 'date-time' })),
-  expiresAt: nul(s('After this, it leaves the default context.', { format: 'date-time' })),
-  state: s('active, forgotten or purged.'),
-  supersededBy: nul(s('The entry that supersedes it.')),
-  compiled: b('A wiki proposal gathered it.'),
-  createdAt: s('When.', { format: 'date-time' }),
-  updatedAt: s('When it last changed.', { format: 'date-time' }),
-})
+const ENTRY = obj(
+  {
+    id: s('Entry id (ent_…).'),
+    brainId: s('Its brain.'),
+    sessionId: s('Its session.'),
+    type: s('decision, learning, attempt, correction, preference, fact, step, summary or note.'),
+    topic: nul(s('Topic key, for what evolves.')),
+    title: s('Title.'),
+    content: s('The entry, already redacted.'),
+    appliesTo: nul(s('The agent, account or label it applies to.')),
+    tags: list(s('A tag.')),
+    refs: list(
+      s('A file, link or id; a correction written in the web names "page:<address>" or "entry:<id>".'),
+    ),
+    authorId: s('The account that wrote it.'),
+    onBehalfId: nul(s('The person a service relayed it for.')),
+    ref: nul(s('The external reference stamped by the short key that wrote it.')),
+    revision: n('Its revision, for corrections against it.'),
+    repeatCount: n('How many times it was saved.'),
+    pinned: b('Always in the start context (curators pin).'),
+    reviewAfter: nul(s('After this, it is to review.', { format: 'date-time' })),
+    expiresAt: nul(s('After this, it leaves the default context.', { format: 'date-time' })),
+    lapsesAt: nul(
+      s(
+        "When it leaves search and context: the date set by hand, else its type's lifetime from when it was written (or its topic revised); null when it does not lapse. Only when an entry is read alone.",
+        { format: 'date-time' },
+      ),
+    ),
+    state: s('active, forgotten or purged.'),
+    supersededBy: nul(s('The entry that supersedes it.')),
+    compiled: b('A wiki proposal gathered it.'),
+    createdAt: s('When.', { format: 'date-time' }),
+    updatedAt: s('When it last changed.', { format: 'date-time' }),
+  },
+  ['lapsesAt'],
+)
 const NAMED = obj({ id: s('Account id.'), name: s('Name.') })
 // An entry as a person reads it (the journal in the web, B6 PR20): who wrote it and with what, and, for a
 // forgotten one (only curators see it), who forgot it, when and why.
@@ -2401,6 +2420,11 @@ const HAND: Record<string, Op> = {
         staleDays: n('Days after which a page with new entries counts as stale (1–3650).'),
         longChars: n('Characters after which a page counts as long (1000–100000).'),
         maintenanceEvery: n('Kept for API v1 (1–1000); since v0.6 it decides nothing.'),
+        entryLifetimes: {
+          type: 'object',
+          description:
+            'Some types of entry, each with its days without use (1–3650) or null for never: {"note": 90}. The types not sent keep theirs. Lapsed entries leave search and context; search can still ask for them (include=expired).',
+        },
       },
       [
         'revision',
@@ -2411,6 +2435,7 @@ const HAND: Record<string, Op> = {
         'staleDays',
         'longChars',
         'maintenanceEvery',
+        'entryLifetimes',
       ],
     ),
     reply: {

@@ -3034,7 +3034,21 @@ const settingsView = (x: FxSettings) => ({
   longChars: x.longChars,
   maintenanceEvery: x.maintenanceEvery,
   approvalsSince: x.approvalsSince,
+  // Spec learning-memory B2: the lifetimes of each type (the web edits them with T010).
+  entryLifetimes: { ...ENTRY_LIFETIMES },
+  entryLifetimesDefault: { ...ENTRY_LIFETIMES },
 })
+const ENTRY_LIFETIMES = {
+  decision: null,
+  learning: 60,
+  attempt: 14,
+  correction: null,
+  preference: null,
+  fact: null,
+  step: 7,
+  summary: 30,
+  note: 30,
+}
 
 // Another curator changes the settings of a brain meanwhile (the conflict of a save).
 export function settingsBehind(s: Scen, slug: string, change: Partial<FxSettings>): void {

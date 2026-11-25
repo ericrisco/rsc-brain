@@ -11,6 +11,7 @@ import { normalize, redactAll } from '../privacy/redact.ts'
 import { clientNow } from './clients.ts'
 import { allow, type Ctx, inBrain } from './context.ts'
 import { emit } from './events.ts'
+import { lapsesAt } from './lapse.ts'
 import { dayText, ownsSession, sessionFor, touch } from './sessions.ts'
 import { track } from './trail.ts'
 import { pageNotFound } from './wiki/pages.ts'
@@ -329,7 +330,7 @@ async function write(
     const revision = Number(existingTopic.revision) + 1
     await db.query(
       `UPDATE entries SET type = $2, title = $3, content = $4, applies_to = $5, tags = $6, refs = $7,
-              revision = $8, norm_hash = $9, review_after = $10, expires_at = $11, updated_at = $12,
+              revision = $8, norm_hash = $9, review_after = $10, expires_at = $11, updated_at = $12, lapse_from = $12,
               session_id = $13, credential_id = $14, on_behalf_id = $15, stamped_ref = $16, client = $17
         WHERE id = $1`,
       [
@@ -643,6 +644,9 @@ export type Entry = {
   pinned: boolean
   reviewAfter: string | null
   expiresAt: string | null
+  // When it leaves search and context (spec learning-memory B2): the date set by hand, or its type's lifetime from
+  // when it was written; null when it does not lapse. Only where it is read alone.
+  lapsesAt?: string | null
   state: 'active' | 'forgotten' | 'purged'
   supersededBy: string | null
   compiled: boolean
@@ -864,13 +868,18 @@ export async function getEntry(
   id: string,
   o: { history?: boolean } = {},
 ): Promise<{ entry: Entry & Byline; session: SessionRef; relations: EntryRelation[]; history?: Revision[] }> {
-  const row = await ctx.db.one('SELECT * FROM entries WHERE id = $1', [id])
+  const row = await ctx.db.one(`SELECT e.*, ${lapsesAt('e')} AS lapses_at FROM entries e WHERE e.id = $1`, [
+    id,
+  ])
   if (!row) throw notFound('entry')
   const { role } = await inBrain(ctx, { id: String(row.brain_id) }).catch(() => {
     throw notFound('entry')
   })
   if (row.state === 'forgotten' && role !== 'curator') throw notFound('entry')
-  const entry = withByline(entryOf(row), (await bylines(ctx.db, [id])).get(id))
+  const entry = withByline(
+    { ...entryOf(row), lapsesAt: iso(row.lapses_at) },
+    (await bylines(ctx.db, [id])).get(id),
+  )
   const relations = row.state === 'purged' ? [] : await relationsOf(ctx.db, id, role === 'curator')
   const session = (await sessionRefs(ctx.db, [entry.sessionId])).get(entry.sessionId) as SessionRef
   // A purged entry's mark is shown, but its id never goes back into the trail (CA13).

@@ -15,6 +15,7 @@ import {
 import { listBrains } from './brains.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { ENTRY_TYPES, words } from './entries.ts'
+import { lifetimesByBrain, notLapsed, notLapsedIn } from './lapse.ts'
 import { meaningMatches } from './meaning.ts'
 import { track } from './trail.ts'
 import { ADDRESS, LINK_KINDS, PAGE_TYPES, type PageStatus } from './wiki/model.ts'
@@ -421,7 +422,14 @@ async function entryCandidates(
       : "e.state = 'active'",
   )
   if (!include.has('superseded')) conditions.push('e.superseded_by IS NULL')
-  if (!include.has('expired')) conditions.push(`(e.expires_at IS NULL OR e.expires_at > ${p(ctx.clock())})`)
+  // Spec learning-memory B2: lapsed by its type's lifetime or a date set by hand (CA-B6, B9).
+  if (!include.has('expired')) {
+    const lifetimes = await lifetimesByBrain(
+      ctx.db,
+      targets.map((t) => t.id),
+    )
+    conditions.push(notLapsedIn('e', ctx.clock(), lifetimes, p))
+  }
   if (r.types?.length) conditions.push(`e.type = ANY(${p(r.types)}::text[])`)
   if (r.tags?.length) conditions.push(`e.tags @> ${p(r.tags)}::text[]`)
   if (prefix !== undefined) {
@@ -624,7 +632,7 @@ async function describe(
     `SELECT 'entry' AS kind, e.id, NULL AS address, e.type, e.title, b.slug,
             CASE WHEN e.state = 'forgotten' THEN 'forgotten'
                  WHEN e.superseded_by IS NOT NULL THEN 'superseded'
-                 WHEN e.expires_at IS NOT NULL AND e.expires_at <= ${at} THEN 'expired'
+                 WHEN NOT ${notLapsed('e', at)} THEN 'expired'
                  ELSE 'active' END AS state,
             ${empty ? 'left(e.content, 200)' : headline("e.title || ' — ' || e.content", tsq)} AS snippet
        FROM entries e JOIN brains b ON b.id = e.brain_id WHERE e.id = ANY(${ids}::text[])

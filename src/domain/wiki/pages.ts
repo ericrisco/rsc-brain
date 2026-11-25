@@ -4,6 +4,7 @@
 import { AppError, invalid } from '../../core/errors.ts'
 import type { Db, Row } from '../../db/db.ts'
 import { type Ctx, inBrain } from '../context.ts'
+import { type Lifetimes, lifetimesOf, notLapsed } from '../lapse.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
 import { checkFilters } from './graph.ts'
 import type { LinkKind, PageStatus, PageType, Source } from './model.ts'
@@ -167,7 +168,7 @@ async function correctionsOf(ctx: Ctx, page: { id: string; brainId: string }): P
     `SELECT e.id, e.title, e.applies_to, e.created_at, a.id AS a_id, a.name AS a_name
        FROM entries e JOIN accounts a ON a.id = e.author_id
       WHERE e.brain_id = $1 AND e.type = 'correction' AND e.state = 'active' AND e.superseded_by IS NULL
-        AND (e.expires_at IS NULL OR e.expires_at > $2) AND e.refs && $3::text[]
+        AND ${notLapsed('e', '$2')} AND e.refs && $3::text[]
       ORDER BY e.created_at DESC, e.id LIMIT 20`,
     [page.brainId, ctx.clock(), await pageRefs(ctx.db, page.brainId, [page.id])],
   )
@@ -475,6 +476,8 @@ export type WikiSettings = {
   longChars: number
   maintenanceEvery: number
   approvalsSince: number
+  // How long each type of entry lasts without use, in days (null: never), as in force (spec learning-memory B2).
+  entryLifetimes: Lifetimes
 }
 
 export const DEFAULT_GUIDE = `How to compile this brain's journal into its wiki.
@@ -501,6 +504,7 @@ export async function settingsOf(db: Db, brainId: string): Promise<WikiSettings>
     longChars: r ? Number(r.long_chars) : 20_000,
     maintenanceEvery: r ? Number(r.maintenance_every) : 20,
     approvalsSince: r ? Number(r.approvals_since) : 0,
+    entryLifetimes: lifetimesOf(r?.entry_lifetimes),
   }
 }
 

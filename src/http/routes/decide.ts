@@ -4,6 +4,7 @@
 // not change.
 
 import { invalid } from '../../core/errors.ts'
+import { readLifetimes } from '../../domain/lapse.ts'
 import { setDebate } from '../../domain/wiki/debates.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
 import {
@@ -125,6 +126,7 @@ export const decideRoutes: Route[] = [
           staleDays: int(b, 'staleDays'),
           longChars: int(b, 'longChars'),
           maintenanceEvery: int(b, 'maintenanceEvery'),
+          entryLifetimes: b.entryLifetimes === undefined ? undefined : readLifetimes(b.entryLifetimes),
         }),
       ),
     }
@@ -184,7 +186,9 @@ function baseOf(v: unknown): Partial<Record<SettingsField, unknown>> | undefined
   const out: Partial<Record<SettingsField, unknown>> = {}
   for (const [k, x] of Object.entries(v)) {
     if (!(SETTINGS_FIELDS as readonly string[]).includes(k)) throw bad()
-    if (x !== null && !['string', 'number', 'boolean'].includes(typeof x)) throw bad()
+    // The lifetimes are read as a whole: {type: days or null} (spec learning-memory B2).
+    const lifetimes = k === 'entryLifetimes' && x !== null && typeof x === 'object' && !Array.isArray(x)
+    if (x !== null && !lifetimes && !['string', 'number', 'boolean'].includes(typeof x)) throw bad()
     out[k as SettingsField] = x
   }
   return out

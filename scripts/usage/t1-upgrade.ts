@@ -80,14 +80,14 @@ try {
       summary: 'How billing runs.',
       body: 'Nightly.',
     },
-    (b) => ({ revision: (b.page as { revision: number }).revision }),
+    (b) => ({ revision: (b.page as { page: { revision: number } }).page.revision }),
   )
   await call(
     curator,
     'PATCH',
     '/v1/brains/demo/pages/billing',
     { baseRevision: 1, body: 'Nightly, at 02:00.', reason: 'The hour.' },
-    (b) => ({ revision: (b.page as { revision: number }).revision }),
+    (b) => ({ revision: (b.page as { page: { revision: number } }).page.revision }),
   )
   const prop = await call(
     tok(contributor),

@@ -7,6 +7,7 @@ import { invalid } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { words } from './entries.ts'
+import { lifetimesByBrain, notLapsedIn, sqlLiteral } from './lapse.ts'
 import { neighboursOf } from './search.ts'
 import { track } from './trail.ts'
 import { type Cleanup, cleanupDue } from './wiki/health.ts'
@@ -31,9 +32,6 @@ export type ContextItem = {
 }
 type Item = { id: string; block: string; lines?: string[]; about?: Omit<ContextItem, 'section'> }
 type Section = { name: string; title?: string; items: Item[] }
-
-const VIGENT =
-  "e.state = 'active' AND e.superseded_by IS NULL AND (e.expires_at IS NULL OR e.expires_at > $2)"
 
 // Text that imitates the delimiters cannot open or close a block.
 export const neutralize = (s: string) => s.replaceAll('<<<', '‹‹‹').replaceAll('>>>', '›››')
@@ -102,6 +100,15 @@ export async function startContext(
   ).trim()
   const now = ctx.clock()
   const p = [brain.id, now]
+  // Active, not superseded, not lapsed (spec learning-memory B2); $1 is the brain, $2 the time of the request. The
+  // limit of each type goes into the SQL as a date, so the queries keep their parameters.
+  const VIGENT = `e.state = 'active' AND e.superseded_by IS NULL AND ${notLapsedIn(
+    'e',
+    now,
+    await lifetimesByBrain(ctx.db, [brain.id]),
+    (v) => (v === now ? '$2' : sqlLiteral(v)),
+    'ARRAY[$1]',
+  )}`
 
   const taskWords = words(o.task ?? '')
   const relevantIds: string[] = taskWords.length
