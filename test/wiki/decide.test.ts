@@ -54,7 +54,7 @@ describe('wiki decisions in the web', { skip: skipPg }, () => {
     ).map((x) => x.id)
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     eva = await w.person('Eva')
     ana = await w.person('Ana')

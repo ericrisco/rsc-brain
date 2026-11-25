@@ -14,6 +14,7 @@ import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import pg from 'pg'
+import { MODERN } from '../../src/mcp/server.ts'
 
 const run = promisify(execFile)
 export const ROOT = new URL('../..', import.meta.url).pathname
@@ -77,6 +78,48 @@ export function api(base: string) {
       `> ${method} ${path}${as} -> ${res.status}${error ? ` ${error}` : ''}${shown === undefined ? '' : ` ${JSON.stringify(shown)}`}`,
     )
     return { status: res.status, body: parsed, text }
+  }
+}
+
+// A caller of /mcp, as an MCP client: one tools/call with a token. Prints the tool and what `show` picks of its result.
+export function mcp(base: string) {
+  let n = 0
+  return async (
+    who: { token: string; name?: string },
+    name: string,
+    args: Record<string, unknown>,
+    show: (b: Record<string, unknown>) => unknown = () => undefined,
+  ): Promise<{ error?: string; result?: Record<string, unknown> }> => {
+    n += 1
+    const res = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${who.token}`,
+        'content-type': 'application/json',
+        'mcp-protocol-version': MODERN,
+        'mcp-method': 'tools/call',
+        'mcp-name': name,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: n,
+        method: 'tools/call',
+        params: { name, arguments: args, _meta: { 'io.modelcontextprotocol/protocolVersion': MODERN } },
+      }),
+    })
+    const body = (await res.json()) as { result?: { isError: boolean; content: Array<{ text: string }> } }
+    const text = body.result?.content[0]?.text ?? JSON.stringify(body)
+    const out = body.result?.isError || !body.result ? { error: text } : { result: JSON.parse(text) }
+    let shown: unknown
+    try {
+      shown = out.result ? show(out.result) : String(out.error).slice(0, 200)
+    } catch {
+      shown = Object.keys(out.result ?? {})
+    }
+    say(
+      `> mcp ${name} as ${who.name ?? 'token'} -> ${out.error ? 'error' : 'ok'}${shown === undefined ? '' : ` ${JSON.stringify(shown)}`}`,
+    )
+    return out
   }
 }
 

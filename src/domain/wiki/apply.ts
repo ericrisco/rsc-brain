@@ -36,6 +36,21 @@ export type ApplyMeta = {
 }
 export type Revised = { index?: number; pageId: string; address: string; revision: number }
 
+// What a page was before a call changed it, taken the first time the call locks it (spec learning-memory A2, plan §2.4):
+// what an exact undo puts back. A merge moves addresses and incoming links of other pages without a revision there,
+// and a revision does not keep the status, so they are kept here. Never the text of a page: that stays in
+// page_revisions, where a purge reaches it. `revision` is null for a page the call created.
+export type PageBefore = {
+  pageId: string
+  revision: number | null
+  address: string
+  status: string | null
+  supersededBy: string | null
+  addresses: string[]
+  linksIn: { fromPage: string; kind: LinkKind }[]
+  created: boolean
+}
+
 // The order operations apply in: the proposal's own, except that an operation using an address
 // another operation brings into being (a page it creates, the new address of a move) goes after it, so
 // a link listed before the page it points at still applies. Approval grouping (dependencies) is a
@@ -103,7 +118,7 @@ export async function applyOps(
   brainId: string,
   items: ApplyItem[],
   meta: ApplyMeta,
-): Promise<{ revised: Revised[]; pages: string[]; logId: string }> {
+): Promise<{ revised: Revised[]; pages: string[]; logId: string; before: PageBefore[] }> {
   // One writer per brain's wiki at a time: approvals, direct edits and reverts queue here.
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`wiki:${brainId}`])
   const now = ctx.clock()
@@ -115,6 +130,29 @@ export async function applyOps(
   // Each page's revision before this call: an edit's baseRevision is checked against it, not against
   // what earlier operations of the same approval made of the page (a move, then an edit of it).
   const startRevision = new Map<string, number>()
+  const before: PageBefore[] = []
+  const snapped = new Set<string>()
+  const snapshot = async (r: Row) => {
+    const id = String(r.id)
+    const addresses = await db.query<{ address: string }>(
+      'SELECT address FROM page_addresses WHERE page_id = $1 ORDER BY address',
+      [id],
+    )
+    const linksIn = await db.query<{ from_page: string; kind: LinkKind }>(
+      'SELECT from_page, kind FROM page_links WHERE to_page = $1 ORDER BY from_page, kind',
+      [id],
+    )
+    before.push({
+      pageId: id,
+      revision: Number(r.revision),
+      address: String(r.address),
+      status: String(r.status),
+      supersededBy: r.superseded_by == null ? null : String(r.superseded_by),
+      addresses: addresses.map((a) => a.address),
+      linksIn: linksIn.map((l) => ({ fromPage: l.from_page, kind: l.kind })),
+      created: false,
+    })
+  }
   // Creates that link each other (an index and its pages, which point back with part-of) have no order in
   // which every link finds its page, yet the proposal was accepted because each page "is created here". A
   // create's link to an address its dependency group still brings into being waits for that group,
@@ -133,6 +171,10 @@ export async function applyOps(
       [brainId, address],
     )
     if (r && !startRevision.has(String(r.id))) startRevision.set(String(r.id), Number(r.revision))
+    if (r && !snapped.has(String(r.id))) {
+      snapped.add(String(r.id))
+      await snapshot(r)
+    }
     return r ?? fail(it, `there is no page at "${address}".`)
   }
   const checkEntries = async (it: ApplyItem, sources: Source[]) => {
@@ -274,6 +316,17 @@ export async function applyOps(
             'INSERT INTO page_addresses (brain_id, address, page_id, created_at) VALUES ($1,$2,$3,$4)',
             [brainId, o.address, id, now],
           )
+          snapped.add(id)
+          before.push({
+            pageId: id,
+            revision: null,
+            address: o.address,
+            status: null,
+            supersededBy: null,
+            addresses: [],
+            linksIn: [],
+            created: true,
+          })
           await addSources(id, o.sources)
           await setMentions({ id, address: o.address }, o.body)
           for (const l of o.links) {
@@ -553,5 +606,5 @@ export async function applyOps(
     targetId: meta.proposalId ?? null,
     label: meta.summary,
   })
-  return { revised, pages, logId }
+  return { revised, pages, logId, before }
 }

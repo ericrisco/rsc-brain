@@ -200,6 +200,7 @@ export const wikiRoutes: Route[] = [
         supersedes: str(b, 'supersedes', { max: 40 }),
         agent: str(b, 'agent'),
         maintenance: bool(b, 'maintenance'),
+        requestKey: str(b, 'requestKey'),
       }),
     )
     return { status: 201, body: out }

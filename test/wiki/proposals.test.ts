@@ -68,7 +68,7 @@ describe('wiki proposals and reading', { skip: skipPg }, () => {
   }
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     ana = await w.person('Ana')
     reader = await w.person('Reader')

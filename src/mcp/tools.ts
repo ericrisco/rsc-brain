@@ -482,6 +482,7 @@ export const TOOLS: Tool[] = [
         },
         supersedes: str('The id of a pending proposal of yours that this one replaces.'),
         maintenance: { type: 'boolean', description: 'This is a cleanup of the wiki (a maintenance pass).' },
+        requestKey: str('Any unique text: repeating the call with the same key returns the same receipt.'),
       },
       ['title', 'ops'],
     ),
@@ -490,7 +491,7 @@ export const TOOLS: Tool[] = [
     call: async (a, k) => ({
       method: 'POST',
       path: `/v1/brains/${enc(await k.brain(a))}/proposals`,
-      body: pick(a, ['title', 'reason', 'ops', 'collected', 'supersedes', 'maintenance']),
+      body: pick(a, ['title', 'reason', 'ops', 'collected', 'supersedes', 'maintenance', 'requestKey']),
     }),
   },
   {

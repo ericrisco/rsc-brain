@@ -60,7 +60,7 @@ describe('the faithful export and the export route (CA13 shape, CA15)', { skip: 
   const all = (files: Map<string, string>) => [...files.values()].join('\n')
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     rita = await w.person('Rita')
     carl = await w.person('Carl')

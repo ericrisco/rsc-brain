@@ -109,7 +109,7 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
   let bWeb: string
 
   before(async () => {
-    a = await world()
+    a = await world({ askFirst: true })
     b = await world({ secret: 'another-installation-secret-of-32-characters-at-least' })
     const person = async (w: World, name: string, email: string, o: Json = {}) => {
       const p = await w.person(name, { email, ...o })

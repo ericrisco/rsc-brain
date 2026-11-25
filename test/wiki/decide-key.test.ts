@@ -86,7 +86,7 @@ describe('deciding proposals with a key (v0.7)', { skip: skipPg }, () => {
     )
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     ana = await w.person('Ana')
     factory = await w.service('RSC Factory')

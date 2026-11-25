@@ -103,7 +103,7 @@ describe('the consumer contract of rsc-factory', { skip: skipPg }, () => {
     w.call(key, 'POST', `/v1/brains/${slug}/corrections/relay`, body)
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     factory = await w.service('rsc-factory', { canInvite: true })
     const e = await w.person('Eric')
     eric = { ...e, email: await emailOf(e.id) }

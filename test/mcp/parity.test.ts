@@ -260,7 +260,7 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
   }
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     stranger = await w.person('Stranger')
     readOnly = await w.token(eric.id, { perm: 'read' })

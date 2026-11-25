@@ -41,7 +41,7 @@ describe('the daily cleanup suggestion (v0.6)', { skip: skipPg }, () => {
   const linkOp = (to: string) => ({ op: 'link', address: 'hooks', kind: 'related', to, reason: 'Tidy.' })
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     ana = await w.person('Ana')
     rita = await w.person('Rita')

@@ -220,12 +220,13 @@ export async function checkChange(
   db: Db,
   brainId: string,
   ops: Op[],
-  o: { keep: false } | { keep: true; meta: ApplyMeta },
+  // `indices`: the index of each operation in the request it came from (a proposal applies some of its parts).
+  o: { keep: false } | { keep: true; meta: ApplyMeta; indices?: number[] },
 ): Promise<Checked & { applied?: Awaited<ReturnType<typeof applyOps>> }> {
   if (ops.length === 0 || addressesOf(ops).size === 0) return NONE
   const s = await settingsOf(db, brainId)
   const b = await before(db, brainId, ops, s.staleDays, ctx.clock())
-  const items = ops.map((op, index) => ({ op, index, baseReviewed: !o.keep }))
+  const items = ops.map((op, i) => ({ op, index: o.keep ? (o.indices?.[i] ?? i) : i, baseReviewed: !o.keep }))
   if (o.keep) {
     const applied = await applyOps(ctx, db, brainId, items, o.meta)
     return { ...(await after(db, brainId, b, [...new Set(applied.revised.map((r) => r.pageId))])), applied }

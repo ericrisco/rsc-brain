@@ -53,7 +53,7 @@ describe('coherence warnings and neighbours (v0.6)', { skip: skipPg }, () => {
       .sort((a, b) => String(a).localeCompare(String(b)))
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     ana = await w.person('Ana')
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'yt', purpose: 'Our channel.' })

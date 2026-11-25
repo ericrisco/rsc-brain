@@ -2,22 +2,31 @@
 // arrival: blocking problems refuse it with the full list; the rest travels as warnings, worked out
 // again whenever it is read (a source forgotten after sending shows up for the curator). Only people,
 // in the web, decide (decide.ts); here agents send, read, withdraw and replace their own.
+import { createHash } from 'node:crypto'
 import { AppError, conflict, invalid, notFound } from '../../core/errors.ts'
 import { newId } from '../../core/ids.ts'
 import type { Db, Row } from '../../db/db.ts'
 import { send } from '../../mail/mail.ts'
 import { redact } from '../../privacy/redact.ts'
-import { allow, type Ctx, inBrain } from '../context.ts'
+import { allow, type Ctx, inBrain, personInWeb } from '../context.ts'
 import { emit } from '../events.ts'
 import { installation } from '../installation.ts'
+import { vigentEntry } from '../lapse.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
-import { type Checked, checkChange } from './coherence.ts'
+import type { PageBefore, Revised } from './apply.ts'
+import { type Checked, checkChange, checksNow } from './coherence.ts'
 import { mentionsOf, nearlySame, type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
+import { getPage, settingsOf, type WikiPage } from './pages.ts'
+import { classify, type Facts, type Held, type HoldReason, holdDetail, type Returned } from './parts.ts'
+import { hasPermission, keyName } from './writers.ts'
 
 export const OLD_AFTER_MS = 30 * 24 * 60 * 60 * 1000
 
 export type Warning = { op: number | null; code: string; message: string }
 
+// Spec learning-memory A1 (plan §8.3 M2): «applied», every part applied at once; «partially_applied», some parts wait for
+// a person; «stale», every part came back to redo. «pending» is all of it waiting (or a brain that asks first);
+// approved, returned and partially_approved come after a person decides what waits, as before.
 export type ProposalStatus =
   | 'pending'
   | 'approved'
@@ -25,11 +34,18 @@ export type ProposalStatus =
   | 'returned'
   | 'withdrawn'
   | 'superseded'
+  | 'applied'
+  | 'partially_applied'
+  | 'stale'
 
 export type ProposalOp = {
   index: number
   op: Op
-  status: 'pending' | 'approved' | 'returned'
+  status: 'pending' | 'approved' | 'returned' | 'applied' | 'stale' | 'undone'
+  // Why a pending part waits (spec learning-memory A1); null for a part sent before, or not waiting.
+  holdReason: HoldReason | null
+  // The revision of the page when a part came back for being written on an old one.
+  staleCurrent: number | null
   correctedBy: string | null
   baseReviewedBy: string | null
   appliedPage: string | null
@@ -114,6 +130,8 @@ export const proposalOpOf = (r: Row): ProposalOp => ({
   index: Number(r.idx),
   op: r.op as Op,
   status: r.status as ProposalOp['status'],
+  holdReason: r.hold_reason == null ? null : (r.hold_reason as HoldReason),
+  staleCurrent: r.stale_current == null ? null : Number(r.stale_current),
   correctedBy: r.corrected_by == null ? null : String(r.corrected_by),
   baseReviewedBy: r.base_reviewed_by == null ? null : String(r.base_reviewed_by),
   appliedPage: r.applied_page == null ? null : String(r.applied_page),
@@ -367,6 +385,8 @@ export type ProposalInput = {
   agent?: string
   // A maintenance pass: the cleanup of the wiki (spec v0.6).
   maintenance?: boolean
+  // Spec learning-memory CA-A11: a retry with the same key gets the same receipt and applies nothing twice.
+  requestKey?: string
 }
 
 const loadOps = async (db: Db, id: string): Promise<ProposalOp[]> =>
@@ -424,16 +444,147 @@ export function readPackage(ctx: Ctx, input: ProposalInput, what = 'A proposal')
   return { title, reason, collected, agent, ops, problems }
 }
 
-export async function submitProposal(
-  ctx: Ctx,
-  slug: string,
-  input: ProposalInput,
-): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] } & Checked> {
+// The facts classify() needs (plan §2.1, §2.2), read under the wiki's lock: the brain's mode, whether this caller may
+// write protected pages, which pages the parts name (any address they had) and their revisions, which of those — and
+// of the pages linking into a page a merge takes in — are protected, and which a person's correction points at: a live
+// correction names the page in its refs ("page:<address>", by any address of the page) or is a source of the page.
+export async function factsOf(ctx: Ctx, brainId: string, ops: Op[]): Promise<Facts> {
+  const db = ctx.db
+  const s = await settingsOf(db, brainId)
+  const known = await knownAddresses(db, brainId, ops)
+  const current = new Map([...known].map(([a, k]) => [a, { pageId: k.pageId, revision: k.revision }]))
+  const linksInto = new Map<string, { pageId: string; address: string }[]>()
+  for (const o of ops) {
+    if (o.op !== 'merge') continue
+    const y = known.get(o.from)
+    if (!y) continue
+    const rows = await db.query<{ id: string; address: string }>(
+      `SELECT DISTINCT p.id, p.address FROM page_links l JOIN pages p ON p.id = l.from_page
+        WHERE l.to_page = $1 ORDER BY p.address`,
+      [y.pageId],
+    )
+    linksInto.set(
+      o.from,
+      rows.map((r) => ({ pageId: r.id, address: r.address })),
+    )
+  }
+  const ids = [
+    ...new Set([
+      ...[...current.values()].map((c) => c.pageId),
+      ...[...linksInto.values()].flat().map((p) => p.pageId),
+    ]),
+  ]
+  const flags =
+    ids.length === 0
+      ? []
+      : await db.query<{ id: string; protected: boolean; corrected: boolean }>(
+          `SELECT p.id, p.protected,
+                  (EXISTS (SELECT 1 FROM page_addresses a JOIN entries e
+                              ON e.brain_id = a.brain_id AND e.refs @> ARRAY['page:' || a.address]
+                            WHERE a.page_id = p.id AND e.type = 'correction' AND ${vigentEntry('e', '$2::timestamptz')})
+                   OR EXISTS (SELECT 1 FROM page_sources ps JOIN entries e ON e.id = ps.entry_id
+                               WHERE ps.page_id = p.id AND e.type = 'correction' AND ${vigentEntry('e', '$2::timestamptz')}))
+                  AS corrected
+             FROM pages p WHERE p.id = ANY($1)`,
+          [ids, ctx.clock()],
+        )
+  return {
+    mode: s.writeMode,
+    canWrite: personInWeb(ctx) || (await hasPermission(db, brainId, ctx.who.credential, true)),
+    protectedPages: new Set(flags.filter((f) => f.protected).map((f) => f.id)),
+    correctedPages: new Set(flags.filter((f) => f.corrected).map((f) => f.id)),
+    current,
+    linksInto,
+  }
+}
+
+// R1 (spec learning-memory): what the answer to a proposal says, part by part.
+export type ReceiptPage = { page: string; revision: number; change: 'created' | 'updated' }
+export type Receipt = {
+  status: 'applied' | 'held' | 'returned'
+  review: 'pending-review' | null
+  pages: ReceiptPage[]
+  undo: string | null
+  held: Held[]
+  returned: (Returned & { current: WikiPage | null })[]
+}
+
+// What a retry with the same request key gets again, as stored: ids, addresses, revisions and reason codes only — never
+// a title or the text of a page (plan §8.3 H4). The proposal, its parts and the pages are read again as they are.
+type Stored = {
+  proposalId: string
+  status: Receipt['status']
+  review: Receipt['review']
+  pages: (ReceiptPage & { pageId: string })[]
+  undo: string | null
+  held: { op: number; address: string; reason: HoldReason }[]
+  returned: Returned[]
+}
+
+const sha = (x: string) => createHash('sha256').update(x).digest('hex')
+
+// The pages a call changed, once each, at the revision it left them, and whether it created them.
+export function pagesOf(revised: Revised[], before: PageBefore[]): (ReceiptPage & { pageId: string })[] {
+  const last = new Map<string, Revised>()
+  for (const r of revised) last.set(r.pageId, r)
+  const created = new Set(before.filter((b) => b.created).map((b) => b.pageId))
+  return [...last.values()].map((r) => ({
+    pageId: r.pageId,
+    page: r.address,
+    revision: r.revision,
+    change: created.has(r.pageId) ? 'created' : 'updated',
+  }))
+}
+
+type Submitted = { proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] } & Checked & Receipt
+
+export async function submitProposal(ctx: Ctx, slug: string, input: ProposalInput): Promise<Submitted> {
   const { title, reason, collected, agent, ops, problems } = readPackage(ctx, input)
+  if (input.requestKey !== undefined && (!input.requestKey.trim() || input.requestKey.length > 200)) {
+    throw invalid('A request key has 1 to 200 characters.', 'Use a fresh random id per request, e.g. a UUID.')
+  }
   const out = await ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
     const { brain, role } = await inBrain(c, { slug }, 'share')
     await allow(c, 'wiki.propose', { role, brainStatus: brain.status }, brain.id)
+    // Same key, same request: the same receipt (CA-A11). Two retries racing are serialised here, as a write's are.
+    let keyHash: string | null = null
+    let requestHash: string | null = null
+    if (input.requestKey !== undefined) {
+      keyHash = sha(input.requestKey)
+      requestHash = sha(
+        JSON.stringify([
+          'wiki.propose',
+          brain.id,
+          title,
+          reason,
+          ops,
+          collected,
+          input.supersedes ?? null,
+          Boolean(input.maintenance),
+          agent,
+        ]),
+      )
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `${ctx.who.credential.id}:${keyHash}`,
+      ])
+      const seen = await db.one<{ request_hash: string; receipt: Stored }>(
+        'SELECT request_hash, receipt FROM request_keys WHERE credential_id = $1 AND key = $2',
+        [ctx.who.credential.id, keyHash],
+      )
+      if (seen) {
+        if (seen.request_hash !== requestHash)
+          throw conflict(
+            'request_key_reused',
+            'This request key was already used for a different request.',
+            'Use a new request key for a new proposal; reuse a key only to retry the very same request.',
+          )
+        return { brain, again: seen.receipt as Stored, answer: null, notify: 0 }
+      }
+    }
+    // The wiki's lock before anything is checked or classified (plan §8.3 M1): two proposals on the same revision are
+    // serialised, and the second sees the page the first left (CA-A20).
+    await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`wiki:${brain.id}`])
     const good = ops.filter((o): o is Op => o !== null)
     problems.push(...(await problemsOf(db, brain.id, ops, collected)))
     let replaced: Row | undefined
@@ -463,12 +614,19 @@ export async function submitProposal(
       err.problems = problems
       throw err
     }
+    // The warnings of every part, on the wiki as it was when the proposal came (as before).
+    const warnings = await warningsOf(db, brain.id, good)
+    const parts = classify(good, await factsOf(c, brain.id, good))
+    const applying = parts.apply.length > 0
+    const waiting = parts.held.length > 0
+    const status: ProposalStatus =
+      applying && waiting ? 'partially_applied' : waiting ? 'pending' : applying ? 'applied' : 'stale'
     const now = ctx.clock()
     const id = newId('prp')
-    const row = await db.one(
-      `INSERT INTO proposals AS p (id, brain_id, title, reason, author_id, credential_id, agent, supersedes_id, collected, created_at,
-         maintenance)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *, ${PROPOSAL_KEY_NAME}`,
+    await db.query(
+      `INSERT INTO proposals (id, brain_id, title, reason, author_id, credential_id, agent, supersedes_id, collected, created_at,
+         maintenance, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         id,
         brain.id,
@@ -481,14 +639,26 @@ export async function submitProposal(
         collected,
         now,
         Boolean(input.maintenance),
+        status,
       ],
     )
+    const heldAt = new Map(parts.held.map((h) => [h.op, h]))
+    const backAt = new Map(parts.returned.map((r) => [r.op, r]))
     for (const [i, op] of good.entries()) {
-      await db.query('INSERT INTO proposal_ops (proposal_id, idx, op) VALUES ($1, $2, $3)', [
-        id,
-        i,
-        JSON.stringify(op),
-      ])
+      const h = heldAt.get(i)
+      const b = backAt.get(i)
+      await db.query(
+        `INSERT INTO proposal_ops (proposal_id, idx, op, status, hold_reason, stale_current)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          id,
+          i,
+          JSON.stringify(op),
+          h ? 'pending' : b ? 'stale' : 'applied',
+          h?.reason ?? null,
+          b?.currentRevision ?? null,
+        ],
+      )
     }
     if (replaced) {
       await db.query("UPDATE proposals SET status = 'superseded', superseded_by = $2 WHERE id = $1", [
@@ -497,17 +667,134 @@ export async function submitProposal(
       ])
     }
     await emit(db, c, { brainId: brain.id, kind: 'proposal.submitted', targetId: id, label: title })
-    return {
-      brain,
-      proposal: proposalOf(row as Row, now),
-      ops: await loadOps(db, id),
-      warnings: await warningsOf(db, brain.id, good),
-      // What it would leave incoherent, on the wiki as it would be, and what is linked to it (spec v0.6 CA7, CA9).
-      checked: await checkChange(c, db, brain.id, good, { keep: false }),
+    let checked: Checked
+    let pages: (ReceiptPage & { pageId: string })[] = []
+    if (applying) {
+      // The parts that apply go to the one writer of pages in one call; what it leaves incoherent, and the pages linked
+      // to it, come from the wiki as it now stands (spec v0.6 CA7, CA9).
+      const keyed = personInWeb(c) ? {} : { keyName: await keyName(db, c) }
+      const done = await checkChange(
+        c,
+        db,
+        brain.id,
+        parts.apply.map((i) => good[i] as Op),
+        {
+          keep: true,
+          indices: parts.apply,
+          meta: {
+            kind: 'proposal',
+            proposalId: id,
+            summary: `Applied at once: ${title}`,
+            maintenance: Boolean(input.maintenance),
+            ...keyed,
+          },
+        },
+      )
+      checked = { coherence: done.coherence, neighbours: done.neighbours }
+      const applied = done.applied as NonNullable<typeof done.applied>
+      for (const i of parts.apply) {
+        // The operation's own page (a supersedes link also revises the page it supersedes, after).
+        const first = applied.revised.find((r) => r.index === i)
+        await db.query(
+          'UPDATE proposal_ops SET applied_page = $3, applied_revision = $4 WHERE proposal_id = $1 AND idx = $2',
+          [id, i, first?.pageId ?? null, first?.revision ?? null],
+        )
+      }
+      pages = pagesOf(applied.revised, applied.before)
+      // The entries the applied parts cite, and those collected without changes, are compiled, as on approval.
+      const cited = new Set<string>(collected)
+      for (const i of parts.apply) {
+        const o = good[i] as Op
+        if (o.op === 'create' || o.op === 'edit')
+          for (const x of o.sources ?? []) if ('entryId' in x) cited.add(x.entryId)
+      }
+      if (cited.size > 0)
+        await db.query('UPDATE entries SET compiled = true WHERE brain_id = $1 AND id = ANY($2)', [
+          brain.id,
+          [...cited],
+        ])
+      // An applied proposal counts towards the next cleanup, as an approved one does.
+      await db.query(
+        `INSERT INTO wiki_settings (brain_id, approvals_since) VALUES ($1, 1)
+         ON CONFLICT (brain_id) DO UPDATE SET approvals_since = wiki_settings.approvals_since + 1`,
+        [brain.id],
+      )
+    } else {
+      // Nothing applied: what it would leave incoherent, on the wiki as it would be, as before (spec v0.6 CA7, CA9).
+      checked = await checkChange(c, db, brain.id, good, { keep: false })
     }
+    const stored: Stored = {
+      proposalId: id,
+      status: applying ? 'applied' : waiting ? 'held' : 'returned',
+      review: null,
+      pages,
+      undo: null,
+      held: parts.held.map((h) => ({ op: h.op, address: h.address, reason: h.reason })),
+      returned: parts.returned,
+    }
+    if (keyHash && requestHash) {
+      await db.query(
+        'INSERT INTO request_keys (credential_id, key, request_hash, receipt, created_at) VALUES ($1, $2, $3, $4, $5)',
+        [ctx.who.credential.id, keyHash, requestHash, JSON.stringify(stored), now],
+      )
+    }
+    const answer = await receiptOf(c, brain, stored, { held: parts.held, checked, warnings })
+    return { brain, again: null, answer, notify: parts.held.length }
   })
-  await proposalNotice(ctx, out.brain, out.proposal.id, out.ops.length)
-  return { proposal: out.proposal, ops: out.ops, warnings: out.warnings, ...out.checked }
+  if (out.again) {
+    // A retry: the same receipt, read again from the proposal and the pages as they are now.
+    const again = out.again
+    return ctx.db.tx(async (db) => receiptOf({ ...ctx, db }, out.brain, again))
+  }
+  const answer = out.answer as Submitted
+  if (out.notify > 0) await proposalNotice(ctx, out.brain, answer.proposal.id, out.notify)
+  return answer
+}
+
+// The answer to a proposal from what was stored: the proposal and its parts as they are, the warnings, the checks (given, or worked out again from the pages it wrote), and each part that came back with its page.
+async function receiptOf(
+  ctx: Ctx,
+  brain: { id: string; slug: string },
+  s: Stored,
+  given: { held?: Held[]; checked?: Checked; warnings?: Warning[] } = {},
+): Promise<Submitted> {
+  const db = ctx.db
+  const row = (await db.one(`SELECT p.*, ${PROPOSAL_KEY_NAME} FROM proposals p WHERE p.id = $1`, [
+    s.proposalId,
+  ])) as Row
+  const ops = await loadOps(db, s.proposalId)
+  const returned: Receipt['returned'] = []
+  for (const r of s.returned) {
+    const current = await getPage(ctx, brain.slug, r.address).then(
+      (x) => x.page,
+      () => null,
+    )
+    returned.push({ ...r, current })
+  }
+  return {
+    proposal: proposalOf(row, ctx.clock()),
+    ops,
+    warnings:
+      given.warnings ??
+      (await warningsOf(
+        db,
+        brain.id,
+        ops.map((o) => o.op),
+      )),
+    ...(given.checked ??
+      (await checksNow(
+        db,
+        brain.id,
+        s.pages.map((p) => p.pageId),
+        ctx.clock(),
+      ))),
+    status: s.status,
+    review: s.review,
+    pages: s.pages.map(({ page, revision, change }) => ({ page, revision, change })),
+    undo: s.undo,
+    held: given.held ?? s.held.map((h) => ({ ...h, detail: holdDetail(h.reason, h.address) })),
+    returned,
+  }
 }
 
 // Curators who asked for it get a mail: which brain, who proposes, how many changes and a link that
@@ -560,7 +847,7 @@ export async function getProposal(
     proposal: await named(ctx.db, proposalOf(row, ctx.clock())),
     ops,
     warnings:
-      row.status === 'pending' || row.status === 'partially_approved'
+      row.status === 'pending' || row.status === 'partially_approved' || row.status === 'partially_applied'
         ? await warningsOf(
             ctx.db,
             String(row.brain_id),
@@ -580,6 +867,9 @@ const STATUSES: ProposalStatus[] = [
   'returned',
   'withdrawn',
   'superseded',
+  'applied',
+  'partially_applied',
+  'stale',
 ]
 
 // `counts`: how many proposals of the brain are in each status (mine=1: of mine), on the first page only.

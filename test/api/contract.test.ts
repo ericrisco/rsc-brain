@@ -664,7 +664,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
   let doc: Json
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     fresh = await world({ fresh: true })
     eric = await w.person('Eric')
   })
