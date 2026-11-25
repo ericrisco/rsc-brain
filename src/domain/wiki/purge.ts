@@ -83,6 +83,8 @@ const TARGETS: Target[] = [
     json: ['op'],
   },
   { table: 'wiki_log', scope: 'brain_id = $1', text: { summary: 500, reason: null }, arrays: [], json: [] },
+  // The comment of an undo (spec learning-memory A2; plan §8.3 H4).
+  { table: 'wiki_changes', scope: 'brain_id = $1', text: { comment: null }, arrays: [], json: [] },
   {
     table: 'wiki_settings',
     scope: 'brain_id = $1',
@@ -492,6 +494,8 @@ export async function purgeProposal(
         [id],
       )
       await db.query("UPDATE wiki_log SET summary = '[purged proposal]' WHERE proposal_id = $1", [id])
+      // The comment of an undo of a change it made (plan §8.3 H4); its log lines carry the proposal and went above.
+      await db.query('UPDATE wiki_changes SET comment = NULL WHERE proposal_id = $1', [id])
       // The corrections a return left in the journal quote it: they go too.
       for (const e of await db.query(
         "SELECT id FROM entries WHERE brain_id = $1 AND type = 'correction' AND $2 = ANY(refs) AND state <> 'purged'",

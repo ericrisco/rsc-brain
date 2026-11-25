@@ -311,6 +311,11 @@ export async function partsOf(db: Db, row: Row): Promise<(ChangePart & { pageId:
   return built.map((b) => b.part)
 }
 
+// A change as the tray shows it, read again.
+export async function viewOfChange(db: Db, id: string): Promise<ChangeView> {
+  return viewOf((await db.one(`${VIEW} WHERE c.id = $1`, [id])) as Row)
+}
+
 export async function getChange(ctx: Ctx, id: string): Promise<{ change: ChangeView; parts: ChangePart[] }> {
   const { row, brain, role } = await changeOf(ctx, id)
   await mayRead(ctx, brain, role)

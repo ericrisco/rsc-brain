@@ -1925,6 +1925,33 @@ const HAND: Record<string, Op> = {
       'Keep a change (curators, in the rsc-brain web): its pages count as reviewed up to the revisions it left. Keeping again changes nothing. 403 web_only with a key; 409 already_undone for an undone change.',
     reply: obj({ change: CHANGE }),
   },
+  'POST /v1/wiki/changes/{id}/undo': {
+    summary:
+      'Undo a change of «Review later» (curators in the web, or a key with the permission to write to the wiki), whole or the parts in "parts": each page goes back exactly as it was (a page it created is retired). 400 missing_dependencies when a part that stays needs one undone; 409 undo_conflict with "pages" when a page was written again since (send "overwrite" with their addresses); a part whose revision before was purged is skipped. Undoing twice answers alreadyUndone. A "comment" becomes a correction for whoever made the change.',
+    body: obj(
+      {
+        parts: list(n('Part number.'), 'Undo only these parts.'),
+        comment: s('Why; it becomes a correction for whoever made the change.'),
+        overwrite: list(s('Address.'), 'Pages written again since, to undo over.'),
+        requestKey: s('Any unique text: a retry with it returns the same answer.'),
+      },
+      ['parts', 'comment', 'overwrite', 'requestKey'],
+    ),
+    reply: {
+      oneOf: [
+        obj(
+          {
+            change: CHANGE,
+            undone: list(obj({ address: s('The page.'), revision: n('Its revision now.') })),
+            skipped: list(obj({ address: s('The page.'), reason: s('purged.') })),
+            correction: s('The correction left for whoever made the change.'),
+          },
+          ['correction'],
+        ),
+        obj({ alreadyUndone: b('It was undone already; nothing changed.') }),
+      ],
+    },
+  },
   'GET /v1/proposals/{id}/review': {
     summary:
       'A proposal as a person reviews it in the web: each operation with the page before and after, what it depends on, and an old base in three versions. Any member reads it in the web; only a curator decides. A key reads it, and decides, only with the permission to write to the wiki (403 web_only otherwise).',

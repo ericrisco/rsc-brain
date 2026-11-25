@@ -21,10 +21,30 @@ export class ApplyError extends AppError {
   }
 }
 
-export type ApplyItem = { op: Op; index?: number; corrected?: boolean; baseReviewed?: boolean }
+// Undoing a change (spec learning-memory A2, R7; plan §2.5): put one page back as the change found it — its content,
+// sources and links out of the revision before, its status, its address and every address row, and the typed links into
+// it — or, for a page the change created, retire it and free its address (M7). Internal: never accepted from clients
+// (readOp knows no «restore»); only undo.ts builds it.
+export type RestoreOp = {
+  op: 'restore'
+  address: string
+  reason: string
+  pageId: string
+  created: boolean
+  revisionBefore: number | null
+  addressBefore: string | null
+  statusBefore: string | null
+  supersededByBefore: string | null
+  addressesBefore: string[]
+  addressesAdded: string[]
+  linksInBefore: { fromPage: string; kind: LinkKind }[]
+  note: string
+}
+export type ApplyItem = { op: Op | RestoreOp; index?: number; corrected?: boolean; baseReviewed?: boolean }
 export type ApplyMeta = {
   // 'write': a key with the permission wrote it directly (spec v0.6).
-  kind: 'proposal' | 'direct' | 'revert' | 'write'
+  // 'undo': a change of «Review later» undone (spec learning-memory A2).
+  kind: 'proposal' | 'direct' | 'revert' | 'write' | 'undo'
   proposalId?: string
   summary: string
   // Why, for a change by hand or a restore (a proposal keeps its reasons on itself and its operations).
@@ -56,16 +76,17 @@ export type PageBefore = {
 // a link listed before the page it points at still applies. Approval grouping (dependencies) is a
 // different question: "edit y" before "merge y into x" must still edit y, then merge.
 // The addresses an operation brings into being: the page it creates, or the new address of a move.
-function bornOf(o: Op): string[] {
+function bornOf(o: Op | RestoreOp): string[] {
   return o.op === 'create' ? [o.address] : o.op === 'move' ? [o.to] : []
 }
 
 // A cycle is one dependency group: finish its creates and links before any operation consuming it.
 // At most 50 operations (WIKI_LIMITS.ops), so transitive closure keeps the grouping small and explicit.
-function applyGroups(ops: Op[]): number[][] {
+function applyGroups(ops: (Op | RestoreOp)[]): number[][] {
   const born = ops.map(bornOf)
   const after = ops.map((o, i) => {
-    const mine = new Set(uses(o))
+    // A restore names its page by id: it needs nothing another operation brings into being.
+    const mine = new Set(o.op === 'restore' ? [] : uses(o))
     return ops.flatMap((_, j) => (j !== i && (born[j] ?? []).some((a) => mine.has(a)) ? [j] : []))
   })
   const reaches = after.map((deps, i) => new Set([i, ...deps]))
@@ -498,6 +519,121 @@ export async function applyOps(
           await setMentions({ id: String(x.id), address: String(x.address) }, o.body)
           await revise(it, String(x.id), `merged "${y.address}" into it`)
           await setStatus(it, y, 'superseded', String(x.id))
+          break
+        }
+        case 'restore': {
+          const p = (await db.one('SELECT * FROM pages WHERE id = $1 AND brain_id = $2 FOR UPDATE', [
+            o.pageId,
+            brainId,
+          ])) as Row | undefined
+          if (!p) fail(it, `the page "${o.address}" is gone.`)
+          const row = p as Row
+          const id = String(row.id)
+          if (!startRevision.has(id)) startRevision.set(id, Number(row.revision))
+          if (!snapped.has(id)) {
+            snapped.add(id)
+            await snapshot(row)
+          }
+          if (o.created) {
+            // Created by the change: retired, out of search and context, its links gone and its address free (M7).
+            await db.query('DELETE FROM page_links WHERE from_page = $1', [id])
+            await db.query('DELETE FROM page_addresses WHERE page_id = $1', [id])
+            await bump(id, "status = 'retired', superseded_by = NULL", [])
+            await revise(it, id, o.note)
+            break
+          }
+          const old = (await db.one('SELECT * FROM page_revisions WHERE page_id = $1 AND revision = $2', [
+            id,
+            o.revisionBefore,
+          ])) as Row | undefined
+          if (!old || old.purged_at)
+            fail(it, `revision ${o.revisionBefore} of "${o.address}" is not there to go back to.`)
+          const was = old as Row
+          // Its address rows: those it had come back to it (a merge gave them to another page); those the change
+          // added go.
+          for (const a of o.addressesBefore) {
+            await db.query('UPDATE page_addresses SET page_id = $3 WHERE brain_id = $1 AND address = $2', [
+              brainId,
+              a,
+              id,
+            ])
+            await db.query(
+              `INSERT INTO page_addresses (brain_id, address, page_id, created_at) VALUES ($1, $2, $3, $4)
+               ON CONFLICT DO NOTHING`,
+              [brainId, a, id, now],
+            )
+          }
+          const keep = new Set(o.addressesBefore)
+          const drop = o.addressesAdded.filter((a) => !keep.has(a))
+          if (drop.length)
+            await db.query('DELETE FROM page_addresses WHERE page_id = $1 AND address = ANY($2)', [id, drop])
+          await bump(
+            id,
+            'type = $3, title = $4, summary = $5, body = $6, tags = $7, status = $8, superseded_by = $9, address = $10',
+            [
+              was.type,
+              was.title,
+              was.summary,
+              was.body,
+              was.tags,
+              o.statusBefore ?? was.status,
+              o.supersededByBefore,
+              o.addressBefore ?? row.address,
+            ],
+          )
+          // Sources purged since do not come back.
+          const before = (was.sources as Source[]) ?? []
+          const ids = before.flatMap((x) => ('entryId' in x ? [x.entryId] : []))
+          const alive = new Set(
+            ids.length === 0
+              ? []
+              : (
+                  await db.query(
+                    "SELECT id FROM entries WHERE brain_id = $1 AND id = ANY($2) AND state <> 'purged'",
+                    [brainId, ids],
+                  )
+                ).map((r) => String(r.id)),
+          )
+          await setSources(
+            id,
+            before.filter((x) => !('entryId' in x) || alive.has(x.entryId)),
+          )
+          // Its typed links out, as the revision lists them.
+          const want: { kind: LinkKind; to: string }[] = []
+          for (const l of (was.links as { kind: LinkKind; to: string }[]) ?? []) {
+            const t = await db.one(
+              'SELECT p.id FROM page_addresses a JOIN pages p ON p.id = a.page_id WHERE a.brain_id = $1 AND a.address = $2',
+              [brainId, l.to],
+            )
+            if (t && t.id !== id) want.push({ kind: l.kind, to: String(t.id) })
+          }
+          await db.query(
+            `DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL
+               AND (kind, to_page) NOT IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
+            [id, want.map((l) => l.kind), want.map((l) => l.to)],
+          )
+          for (const l of want)
+            await db.query(
+              `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
+               ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
+              [brainId, id, l.kind, l.to],
+            )
+          // The typed links into it, as they were (a merge moved them to another page, or added new ones).
+          const into = o.linksInBefore.filter((l) => l.fromPage !== id)
+          await db.query(
+            `DELETE FROM page_links WHERE to_page = $1
+               AND (from_page, kind) NOT IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
+            [id, into.map((l) => l.fromPage), into.map((l) => l.kind)],
+          )
+          for (const l of into)
+            await db.query(
+              `INSERT INTO page_links (brain_id, from_page, kind, to_page)
+               SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM pages WHERE id = $2)
+               ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
+              [brainId, l.fromPage, l.kind, id],
+            )
+          await setMentions({ id, address: String(o.addressBefore ?? row.address) }, String(was.body))
+          await revise(it, id, o.note)
           break
         }
         case 'revert': {

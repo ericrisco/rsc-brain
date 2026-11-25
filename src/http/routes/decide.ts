@@ -27,6 +27,7 @@ import type { WriteMode } from '../../domain/wiki/pages.ts'
 import { setProtection } from '../../domain/wiki/protect.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
 import { compactReview } from '../../domain/wiki/review.ts'
+import { undoChange } from '../../domain/wiki/undo.ts'
 import { chunkedReply } from '../chunked-reply.ts'
 import { bool, compact, int, type Obj, obj, oneOf, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
@@ -65,6 +66,22 @@ export const decideRoutes: Route[] = [
   route('POST /v1/wiki/changes/:id/keep', async (r) => ({
     body: await keepChange(ctxOf(r), r.params.id as string),
   })),
+  // Undo (spec learning-memory A2): whole or by parts, with a comment that teaches, over a conflict only when told.
+  route('POST /v1/wiki/changes/:id/undo', async (r) => {
+    const b = obj(r.body)
+    return {
+      body: await undoChange(
+        ctxOf(r),
+        r.params.id as string,
+        compact({
+          parts: indices(b, 'parts'),
+          comment: str(b, 'comment'),
+          overwrite: strList(b, 'overwrite'),
+          requestKey: str(b, 'requestKey', { max: 200 }),
+        }),
+      ),
+    }
+  }),
   route('GET /v1/proposals/:id/review', async (r) => {
     // The web reads the whole pages; an agent asks for the compact view (diffs and changed fields).
     const view = r.query.get('view') ?? 'full'

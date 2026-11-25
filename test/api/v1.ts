@@ -161,6 +161,7 @@ export const V1 = [
   'GET /v1/brains/{slug}/wiki/changes',
   'GET /v1/wiki/changes/{id}',
   'POST /v1/wiki/changes/{id}/keep',
+  'POST /v1/wiki/changes/{id}/undo',
   'PUT /v1/brains/{slug}/wiki/debates',
   'PUT /v1/brains/{slug}/wiki/settings',
   'PUT /v1/brains/{slug}/wiki/writers/{keyId}',
