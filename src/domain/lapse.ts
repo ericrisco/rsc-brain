@@ -85,15 +85,17 @@ export const lapsesAt = (e: string) =>
          WHEN ${daysOf(e)} IS NULL THEN NULL
          WHEN EXISTS (SELECT 1 FROM page_sources ls JOIN pages lp ON lp.id = ls.page_id
                        WHERE ls.entry_id = ${e}.id AND lp.status IN ('current', 'stale')) THEN NULL
-         ELSE ${e}.lapse_from + make_interval(days => ${daysOf(e)}) END)`
+         ELSE ${e}.lapse_from + make_interval(secs => ${daysOf(e)} * 86400) END)`
 
+// Days are fixed 24-hour days on every path (SQL here, the cutoffs of notLapsedIn in JS): a change of summer time in
+// the session time zone never moves a lapse by an hour (review round 1, R2).
 // Whether an entry has not lapsed at `now` (a SQL parameter or expression). The same rules as lapsesAt, written so the
 // cheap tests come first and the look for a citing page runs only for an entry its lifetime has already left behind:
 // a CASE is evaluated in order (search filters thousands of candidates with it; plan §7.2 R3).
 export const notLapsed = (e: string, now: string) =>
   `(CASE WHEN ${e}.expires_at IS NOT NULL THEN ${e}.expires_at > ${now}
          WHEN ${e}.pinned THEN true
-         WHEN coalesce(${e}.lapse_from + make_interval(days => ${daysOf(e)}) > ${now}, true) THEN true
+         WHEN coalesce(${e}.lapse_from + make_interval(secs => ${daysOf(e)} * 86400) > ${now}, true) THEN true
          ELSE EXISTS (SELECT 1 FROM page_sources ls JOIN pages lp ON lp.id = ls.page_id
                        WHERE ls.entry_id = ${e}.id AND lp.status IN ('current', 'stale')) END)`
 

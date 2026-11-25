@@ -4,6 +4,7 @@
 // CA-B6, B8, B9, B10, B14 (pinned and cited), U1. «Using renews» is tranche 2.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
+import { lapsesAt as lapsesAtSql, notLapsed } from '../../src/domain/lapse.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
 
@@ -253,5 +254,153 @@ describe('the lifetimes in the wiki settings', { skip: skipPg }, () => {
     })
     assert.equal(stale.status, 409, stale.text)
     assert.equal((stale.body.error as { code: string }).code, 'settings_changed')
+  })
+})
+
+// Review round 1 of T002: the same arithmetic on every path (fixed 24-hour days), the edges of a lifetime, and the
+// exemptions and per-brain lifetimes along each path (search, context, several brains, the state label).
+describe('expiry on every path, at its edges', { skip: skipPg }, () => {
+  let w: World
+  let cur: { id: string; key: string }
+  let con: { id: string; key: string }
+  before(async () => {
+    w = await world()
+    cur = await w.person('Cora')
+    con = await w.person('Cole')
+    for (const slug of ['ops', 'dev']) {
+      await w.call(cur.key, 'POST', '/v1/brains', { slug, purpose: slug })
+      await w.member(slug, con.id, 'contributor')
+    }
+    const web = await w.web(cur.id)
+    const put = await w.callWeb(web, 'PUT', '/v1/brains/ops/wiki/settings', { entryLifetimes: { note: 90 } })
+    assert.equal(put.status, 200, put.text)
+  })
+  after(async () => w.close())
+  const fresh = async () => {
+    cur.key = await w.token(cur.id, { days: 365 })
+    con.key = await w.token(con.id, { days: 365 })
+  }
+  const save = async (slug: string, body: Record<string, unknown>) => {
+    const r = await w.call(con.key, 'POST', `/v1/brains/${slug}/entries`, body)
+    assert.equal(r.status, 201, r.text)
+    return (r.body.receipt as { entryId: string }).entryId
+  }
+  const search = async (word: string, brains: string, include = '') => {
+    const r = await w.call(
+      con.key,
+      'GET',
+      `/v1/search?q=${word}&brains=${brains}&in=entries${include ? `&include=${include}` : ''}`,
+    )
+    assert.equal(r.status, 200, r.text)
+    return r.body.items as Array<{ id: string; state: string }>
+  }
+  const inContext = async (slug: string, task: string, id: string) => {
+    const r = await w.call(con.key, 'GET', `/v1/brains/${slug}/context?task=${task}`)
+    assert.equal(r.status, 200, r.text)
+    return String(r.body.text).includes(id)
+  }
+  const lapses = async (id: string) =>
+    ((await w.call(con.key, 'GET', `/v1/entries/${id}`)).body.entry as { lapsesAt: string | null }).lapsesAt
+
+  it('a step is there 7 days less an hour after, gone 7 days and an hour after; its lapse date says when', async () => {
+    const id = await save('dev', { type: 'step', title: 'Edge quetzalite', content: 'Quetzalite.' })
+    const at = await lapses(id)
+    assert.equal(at, new Date(w.now.getTime() + 7 * DAY).toISOString())
+    w.advance(7 * DAY - 3_600_000)
+    assert.ok(
+      (await search('quetzalite', 'dev')).some((i) => i.id === id),
+      'an hour before',
+    )
+    assert.ok(await inContext('dev', 'quetzalite', id), 'an hour before, in context')
+    w.advance(2 * 3_600_000)
+    assert.equal(
+      (await search('quetzalite', 'dev')).find((i) => i.id === id),
+      undefined,
+      'an hour after',
+    )
+    assert.equal(await inContext('dev', 'quetzalite', id), false, 'an hour after, not in context')
+  })
+
+  it('a date set by hand and its lapse date agree, to the hour', async () => {
+    const at = new Date(w.now.getTime() + 5 * DAY + 7_200_000)
+    const id = await save('dev', {
+      type: 'decision',
+      title: 'Hand tamarinix',
+      content: 'Tamarinix.',
+      expiresAt: at.toISOString(),
+    })
+    assert.equal(await lapses(id), at.toISOString())
+    w.advance(5 * DAY + 3_600_000)
+    assert.ok((await search('tamarinix', 'dev')).some((i) => i.id === id))
+    w.advance(2 * 3_600_000)
+    assert.equal(
+      (await search('tamarinix', 'dev')).find((i) => i.id === id),
+      undefined,
+    )
+  })
+
+  it('fixed 24-hour days across a change of summer time, whatever the session time zone', async () => {
+    const id = await save('dev', { type: 'step', title: 'Dst ocelotix', content: 'Ocelotix.' })
+    // Seven days that cross the end of summer time in Madrid (25 October 2026).
+    const from = new Date('2026-10-20T10:00:00.000Z')
+    await w.db.query('UPDATE entries SET lapse_from = $2 WHERE id = $1', [id, from])
+    const seen = await w.db.tx(async (db) => {
+      await db.query("SET LOCAL TIME ZONE 'Europe/Madrid'")
+      return db.one<{ at: Date; before: boolean; after: boolean }>(
+        `SELECT ${lapsesAtSql('e')} AS at, ${notLapsed('e', '$2::timestamptz')} AS before,
+                ${notLapsed('e', '$3::timestamptz')} AS after FROM entries e WHERE e.id = $1`,
+        [id, new Date(from.getTime() + 7 * DAY - 60_000), new Date(from.getTime() + 7 * DAY + 60_000)],
+      )
+    })
+    assert.equal(seen?.at.toISOString(), new Date(from.getTime() + 7 * DAY).toISOString())
+    assert.deepEqual([seen?.before, seen?.after], [true, false])
+  })
+
+  it('per-brain lifetimes, in context and across brains: a note of day 60 is there in ops (90 days), not in dev', async () => {
+    const ops = await save('ops', { type: 'note', title: 'Multi kinkajou', content: 'Kinkajou ops.' })
+    const dev = await save('dev', { type: 'note', title: 'Multi kinkajou', content: 'Kinkajou dev.' })
+    w.advance(60 * DAY)
+    await fresh()
+    const items = await search('kinkajou', 'ops,dev')
+    assert.ok(
+      items.some((i) => i.id === ops),
+      'ops keeps notes 90 days',
+    )
+    assert.equal(
+      items.find((i) => i.id === dev),
+      undefined,
+      'dev keeps them 30',
+    )
+    assert.ok(await inContext('ops', 'kinkajou', ops), 'in the context of ops')
+    assert.equal(await inContext('dev', 'kinkajou', dev), false, 'not in the context of dev')
+  })
+
+  it('a pinned step and a cited step are in context after 30 days, and are not labelled expired', async () => {
+    const pinned = await save('dev', {
+      type: 'step',
+      title: 'Pinned dugongite',
+      content: 'Dugongite pinned.',
+    })
+    const cited = await save('dev', { type: 'step', title: 'Cited dugongite', content: 'Dugongite cited.' })
+    const plain = await save('dev', { type: 'step', title: 'Plain dugongite', content: 'Dugongite plain.' })
+    assert.equal((await w.call(cur.key, 'POST', `/v1/entries/${pinned}/pin`)).status, 200)
+    const page = await w.callWeb(await w.web(cur.id), 'POST', '/v1/brains/dev/wiki/changes', {
+      op: 'create',
+      address: 'dugongite',
+      type: 'topic',
+      title: 'Dugongite',
+      summary: 'Known.',
+      body: 'Cited.',
+      sources: [{ entryId: cited }],
+    })
+    assert.equal(page.status, 201, page.text)
+    w.advance(30 * DAY)
+    await fresh()
+    assert.ok(await inContext('dev', 'dugongite', pinned), 'pinned, in context')
+    assert.ok(await inContext('dev', 'dugongite', cited), 'cited, in context')
+    assert.equal(await inContext('dev', 'dugongite', plain), false, 'plain, not in context')
+    const all = await search('dugongite', 'dev', 'expired')
+    const state = (id: string) => all.find((i) => i.id === id)?.state
+    assert.deepEqual([state(pinned), state(cited), state(plain)], ['active', 'active', 'expired'])
   })
 })
