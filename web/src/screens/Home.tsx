@@ -28,6 +28,8 @@ export type Stats = {
   uncompiled: number
   conflicts: number
   pendingProposals: number
+  // Changes no person reviewed yet (spec learning-memory A2); older servers do not send it.
+  pendingReview?: number
   lastActivityAt: string | null
 }
 export type BrainRow = {

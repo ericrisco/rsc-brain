@@ -41,7 +41,7 @@ type Line = {
   at: string
   actorId: string
   actorName: string
-  kind: 'proposal' | 'direct' | 'revert' | 'purge' | 'write'
+  kind: 'proposal' | 'direct' | 'revert' | 'purge' | 'write' | 'protect'
   proposalId: string | null
   summary: string
   reason: string | null
@@ -63,6 +63,32 @@ export type Wiki = {
   log: Line[]
   seq: number
   corrections?: (addresses: string[]) => PageCorrection[]
+  // «Review later» (spec learning-memory A2): what agents changed, and the pages a curator protected.
+  changes?: FxChange[]
+  protectedIds?: Set<string>
+}
+export type FxPart = {
+  part: number
+  address: string
+  revisionBefore: number | null
+  revisionAfter: number
+  created: boolean
+  dependsOn: number[]
+  state: 'applied' | 'undone'
+}
+export type FxChange = {
+  id: string
+  at: string
+  actor: { id: string; name: string }
+  keyName: string | null
+  ref: string | null
+  proposalId: string | null
+  title: string
+  state: 'pending_review' | 'kept' | 'undone' | 'partly_undone'
+  decidedBy: string | null
+  decidedAt: string | null
+  parts: FxPart[]
+  answers?: Map<string, Answer>
 }
 export type Who = { id: string; name: string }
 
@@ -233,7 +259,7 @@ export function freshWiki(): Wiki {
     maintenance: true,
   })
   log.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : -1))
-  return { pages, log, seq: 1 }
+  return { pages, log, seq: 1, changes: freshChanges(), protectedIds: new Set(['pg_pricing']) }
 }
 
 const last = (p: FxPage) => p.revs[p.revs.length - 1] as Rev
@@ -331,6 +357,8 @@ function reading(w: Wiki, p: FxPage, asked?: string) {
       revision: r.revision,
       createdAt: p.createdAt,
       updatedAt: r.createdAt,
+      protected: w.protectedIds?.has(p.id) ?? false,
+      unreviewed: unreviewedAt(w, p),
     },
     ...(asked && asked !== r.address ? { redirectedFrom: asked } : {}),
     ...(r.status === 'retired' ? { notice: 'retired: this page is kept for its history only.' } : {}),
@@ -855,4 +883,331 @@ export function entryOf(id: string, slug: string): Answer {
       },
     },
   }
+}
+
+// «Review later» of the fixture (spec learning-memory A2). Three changes agents made: an old one on the retention page
+// written again since (an undo is a conflict until a person overwrites), a newer one whose second part needs its first,
+// and one a curator already kept. Fictitious content.
+const KEY_FACTORY = { id: 'acc_factory', name: 'Factory' }
+function freshChanges(): FxChange[] {
+  const change = (c: Omit<FxChange, 'decidedBy' | 'decidedAt' | 'state'> & Partial<FxChange>): FxChange => ({
+    state: 'pending_review',
+    decidedBy: null,
+    decidedAt: null,
+    ...c,
+  })
+  return [
+    change({
+      id: 'chg_fx_numbers',
+      at: '2026-10-21T10:00:00.000Z',
+      actor: KEY_FACTORY,
+      keyName: 'Factory compiler',
+      ref: 'run_118',
+      proposalId: null,
+      title: 'Retention: the October numbers',
+      parts: [
+        {
+          part: 0,
+          address: 'audience/retention',
+          revisionBefore: 1,
+          revisionAfter: 2,
+          created: false,
+          dependsOn: [],
+          state: 'applied',
+        },
+      ],
+    }),
+    change({
+      id: 'chg_fx_intros',
+      at: '2026-10-22T10:00:00.000Z',
+      actor: { id: 'acc_eric', name: 'Eric' },
+      keyName: 'Claude Code laptop',
+      ref: 'ses_42',
+      proposalId: 'prp_fx_intros',
+      title: 'Who writes the intros, and the retention page that links her',
+      parts: [
+        {
+          part: 0,
+          address: 'people/ana',
+          revisionBefore: null,
+          revisionAfter: 1,
+          created: true,
+          dependsOn: [],
+          state: 'applied',
+        },
+        {
+          part: 1,
+          address: 'audience/retention',
+          revisionBefore: 2,
+          revisionAfter: 3,
+          created: false,
+          dependsOn: [0],
+          state: 'applied',
+        },
+      ],
+    }),
+    change({
+      id: 'chg_fx_kept',
+      at: '2026-10-20T10:00:00.000Z',
+      actor: KEY_FACTORY,
+      keyName: 'Factory compiler',
+      ref: 'run_117',
+      proposalId: null,
+      title: 'Annual plans',
+      state: 'kept',
+      decidedBy: 'Eric',
+      decidedAt: '2026-10-20T12:00:00.000Z',
+      parts: [
+        {
+          part: 0,
+          address: 'product/pricing',
+          revisionBefore: null,
+          revisionAfter: 1,
+          created: true,
+          dependsOn: [],
+          state: 'applied',
+        },
+      ],
+    }),
+  ]
+}
+
+const changeView = (c: FxChange) => {
+  const { parts, answers: _a, ...rest } = c
+  return { ...rest, parts: parts.length }
+}
+
+// A page is unreviewed while a change no person saw left it at the revision it is at.
+function unreviewedAt(w: Wiki, p: FxPage): boolean {
+  const now = last(p).revision
+  return (w.changes ?? []).some(
+    (c) =>
+      c.state === 'pending_review' &&
+      c.parts.some(
+        (x) => x.state === 'applied' && p.addresses.includes(x.address) && x.revisionAfter === now,
+      ),
+  )
+}
+export const pendingReviewOf = (w: Wiki) =>
+  (w.changes ?? []).filter((c) => c.state === 'pending_review').length
+
+const noChange = (_id: string) =>
+  err(404, 'not_found', 'No change with that id is available to you.', 'Check the change id.')
+
+export function changesOf(w: Wiki, curator: boolean, q: Q): Answer {
+  if (!curator)
+    return err(403, 'forbidden', 'Only the curators of this brain review its changes.', 'Ask a curator.')
+  const state = q.get('state') ?? 'pending_review'
+  if (!['pending_review', 'kept', 'undone', 'partly_undone', 'all'].includes(state))
+    return err(
+      400,
+      'invalid_request',
+      '"state" is pending_review, kept, undone, partly_undone or all.',
+      'Fix "state".',
+    )
+  const items = (w.changes ?? [])
+    .filter(
+      (c) => state === 'all' || c.state === state || (state === 'undone' && c.state === 'partly_undone'),
+    )
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
+  return { status: 200, body: { items: items.map(changeView), next: null, total: items.length } }
+}
+
+const lines = (t: string) => (t === '' ? [] : t.split('\n'))
+// As the server sends it: the hunks of a unified diff, without the file header.
+function diffOf(before: string, after: string): string {
+  const a = lines(before)
+  const b = lines(after)
+  const out = [`@@ -1,${a.length} +1,${b.length} @@`]
+  let i = 0
+  while (i < a.length && i < b.length && a[i] === b[i]) out.push(` ${a[i++]}`)
+  for (const l of a.slice(i)) out.push(`-${l}`)
+  for (const l of b.slice(i)) out.push(`+${l}`)
+  return out.join('\n')
+}
+
+export function findChange(w: Wiki, id: string): FxChange | undefined {
+  return (w.changes ?? []).find((c) => c.id === id)
+}
+
+export function changeOf(w: Wiki, id: string): Answer {
+  const c = findChange(w, id)
+  if (!c) return noChange(id)
+  const parts = c.parts.map((x) => {
+    const p = find(w, x.address)
+    const body = (n: number | null) => (n === null ? '' : (p?.revs.find((r) => r.revision === n)?.body ?? ''))
+    return {
+      part: x.part,
+      op: null,
+      address: p ? addressOf(p) : x.address,
+      revisionBefore: x.revisionBefore,
+      revisionAfter: x.revisionAfter,
+      created: x.created,
+      dependsOn: x.dependsOn,
+      diff: diffOf(body(x.revisionBefore), body(x.revisionAfter)),
+      state: x.state,
+    }
+  })
+  return { status: 200, body: { change: changeView(c), parts } }
+}
+
+export function keepChange(w: Wiki, id: string, who: Who, curator: boolean): Answer {
+  const c = findChange(w, id)
+  if (!c) return noChange(id)
+  if (!curator) return notCurator
+  if (c.state === 'undone' || c.state === 'partly_undone')
+    return err(409, 'already_undone', 'This change was undone; there is nothing to keep.', 'Leave it.')
+  if (c.state === 'pending_review') {
+    c.state = 'kept'
+    c.decidedBy = who.name
+    c.decidedAt = AT
+  }
+  return { status: 200, body: { change: changeView(c) } }
+}
+
+export function undoChange(
+  w: Wiki,
+  id: string,
+  who: Who,
+  curator: boolean,
+  b: Record<string, unknown>,
+): Answer {
+  const c = findChange(w, id)
+  if (!c) return noChange(id)
+  if (!curator) return notCurator
+  const key = typeof b.requestKey === 'string' ? b.requestKey : null
+  if (key && c.answers?.has(key)) return c.answers.get(key) as Answer
+  if (c.state === 'undone') return { status: 200, body: { alreadyUndone: true } }
+  const live = c.parts.filter((x) => x.state === 'applied')
+  const asked = Array.isArray(b.parts) ? (b.parts as number[]) : live.map((x) => x.part)
+  const unknown = asked.filter((n) => !live.some((x) => x.part === n))
+  if (unknown.length)
+    return err(
+      400,
+      'invalid_request',
+      `This change has no applied part ${unknown.join(', ')}.`,
+      'Pick parts it has.',
+    )
+  const missing = live
+    .filter((x) => !asked.includes(x.part))
+    .map((x) => ({ part: x.part, needs: x.dependsOn.filter((d) => asked.includes(d)) }))
+    .filter((m) => m.needs.length)
+  if (missing.length)
+    return {
+      status: 400,
+      body: {
+        error: {
+          code: 'missing_dependencies',
+          message: `Some parts cannot be undone while others stay: ${missing.map((m) => `part ${m.part} needs ${m.needs.join(', ')}`).join('; ')}.`,
+          howToProceed: 'Undo them together, or leave them all.',
+          problems: missing,
+        },
+      },
+    }
+  const todo = live.filter((x) => asked.includes(x.part))
+  const overwrite = Array.isArray(b.overwrite) ? (b.overwrite as string[]) : []
+  // Undone parts go last first: a later part of the same page stands on an earlier one.
+  const order = [...todo].sort((x, y) => y.part - x.part)
+  const conflicts = order.flatMap((x) => {
+    const p = find(w, x.address)
+    const now = p ? last(p).revision : x.revisionAfter
+    const later = todo.find((o) => o !== x && o.address === x.address && o.revisionBefore === x.revisionAfter)
+    if (later || now === x.revisionAfter || overwrite.includes(x.address)) return []
+    return [{ address: x.address, changeRevision: x.revisionAfter, currentRevision: now }]
+  })
+  if (conflicts.length)
+    return {
+      status: 409,
+      body: {
+        error: {
+          code: 'undo_conflict',
+          message: `Some pages were written again after this change: ${conflicts.map((x) => `"${x.address}" (revision ${x.changeRevision}, now ${x.currentRevision})`).join(', ')}. Nothing was undone.`,
+          howToProceed:
+            'Look at what came after. To undo over it, send again with "overwrite": the addresses of those pages (what came after stays in the history); or undo only other parts.',
+          pages: conflicts,
+        },
+      },
+    }
+  const undone: { address: string; revision: number }[] = []
+  const comment = typeof b.comment === 'string' && b.comment.trim() ? b.comment.trim() : null
+  for (const x of order) {
+    const p = find(w, x.address) as FxPage
+    const before = x.revisionBefore === null ? null : p.revs.find((r) => r.revision === x.revisionBefore)
+    const r = revise(
+      w,
+      p,
+      who,
+      before
+        ? {
+            body: before.body,
+            title: before.title,
+            summary: before.summary,
+            tags: before.tags,
+            status: before.status,
+          }
+        : { status: 'retired' },
+      'revert',
+      `Undone: ${c.title}`,
+      { change: 'restored', reason: comment, ...(before ? { restoredFrom: before.revision } : {}) },
+    )
+    x.state = 'undone'
+    undone.push({ address: r.address, revision: r.revision })
+  }
+  c.state = c.parts.every((x) => x.state === 'undone') ? 'undone' : 'partly_undone'
+  c.decidedBy = who.name
+  c.decidedAt = AT
+  const answer: Answer = {
+    status: 200,
+    body: {
+      change: changeView(c),
+      undone,
+      discarded: [],
+      ...(comment ? { correction: `cor_fx_${w.seq}` } : {}),
+    },
+  }
+  if (key) {
+    c.answers = c.answers ?? new Map()
+    c.answers.set(key, answer)
+  }
+  return answer
+}
+
+export function protectPage(
+  w: Wiki,
+  curator: boolean,
+  web: boolean,
+  address: string,
+  b: Record<string, unknown>,
+): Answer {
+  if (!web)
+    return err(
+      403,
+      'protect_web_only',
+      'Pages are protected in the rsc-brain web.',
+      'Open the page in the web.',
+    )
+  if (!curator) return notCurator
+  const p = find(w, address)
+  if (!p) return pageNotFound(address)
+  if (typeof b.protected !== 'boolean')
+    return err(400, 'invalid_request', '"protected" is true or false.', 'Send {"protected": true} or false.')
+  w.protectedIds = w.protectedIds ?? new Set()
+  const set = w.protectedIds
+  if (set.has(p.id) !== b.protected) {
+    if (b.protected) set.add(p.id)
+    else set.delete(p.id)
+    w.seq += 1
+    w.log.unshift({
+      id: `log_fx_${w.seq}`,
+      at: AT,
+      actorId: 'acc_eric',
+      actorName: 'Eric',
+      kind: 'protect',
+      proposalId: null,
+      summary: `${b.protected ? 'Protected' : 'Unprotected'}: ${addressOf(p)}`,
+      reason: null,
+      pages: [addressOf(p)],
+    })
+  }
+  return { status: 200, body: reading(w, p) }
 }

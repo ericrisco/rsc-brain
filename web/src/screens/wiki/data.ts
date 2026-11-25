@@ -16,6 +16,9 @@ export type WikiPage = {
   tags: string[]
   status: string
   supersededBy: string | null
+  // Spec learning-memory A3, A1 (older servers do not send them).
+  protected?: boolean
+  unreviewed?: boolean
   revision: number
   createdAt: string
   updatedAt: string

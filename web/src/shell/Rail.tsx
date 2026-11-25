@@ -31,7 +31,7 @@ type Item = {
   count?: number
 }
 
-function itemsOf(brain: BrainNav, path: string, waiting: number): Item[] {
+function itemsOf(brain: BrainNav, path: string, waiting: number, toReview: number): Item[] {
   const base = `/b/${encodeURIComponent(brain.slug)}`
   const under = (p: string): boolean | 'inside' =>
     path === p ? true : path.startsWith(`${p}/`) ? 'inside' : false
@@ -46,6 +46,18 @@ function itemsOf(brain: BrainNav, path: string, waiting: number): Item[] {
       keys: 'g r',
       count: waiting,
     },
+    // What agents changed and no person reviewed yet: the curators review it (spec learning-memory A2).
+    ...(brain.role === 'curator'
+      ? [
+          {
+            href: `${base}/review-later`,
+            label: T.shell.reviewLater,
+            icon: 'review' as const,
+            here: under(`${base}/review-later`),
+            count: toReview,
+          },
+        ]
+      : []),
     // A page of the wiki is in the wiki.
     {
       href: `${base}/wiki`,
@@ -124,9 +136,11 @@ function RailLink({ item }: { item: Item }) {
 export function BrainLinks({ brain, me }: { brain: BrainNav | null; me?: Me }) {
   const { path } = useLocation()
   // How many proposals wait in this brain, beside its section (from the brains and their numbers).
-  const waiting = brain
-    ? (brainsResource().data.value?.brains.find((b) => b.slug === brain.slug)?.stats.pendingProposals ?? 0)
-    : 0
+  const stats = brain
+    ? brainsResource().data.value?.brains.find((b) => b.slug === brain.slug)?.stats
+    : undefined
+  const waiting = stats?.pendingProposals ?? 0
+  const toReview = stats?.pendingReview ?? 0
   const home: Item = { href: '/', label: T.shell.allBrains, icon: 'home', here: path === '/' }
   return (
     <nav class="rail-nav" aria-label={brain ? T.shell.brainNav : T.shell.mainNav}>
@@ -156,7 +170,7 @@ export function BrainLinks({ brain, me }: { brain: BrainNav | null; me?: Me }) {
       </ul>
       {brain ? (
         <ul class="rail-group">
-          {itemsOf(brain, path, waiting).map((i) => (
+          {itemsOf(brain, path, waiting, toReview).map((i) => (
             <li key={i.href}>
               <RailLink item={i} />
             </li>

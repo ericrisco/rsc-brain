@@ -1555,6 +1555,106 @@ describe('the fixture API', () => {
     assert.deepEqual([sys.update.mode, sys.update.requested], ['on', true])
   })
 
+  it('«Review later», the protect switch and the write mode (spec learning-memory A2, A4, B2) answer like the server', async () => {
+    const s = fx.scenario('signed-in')
+    const o = { scenario: s.id, cookie: s.cookie }
+    type E = { error: { code: string; pages?: Array<{ address: string }> } }
+    const code = (a: Ans) => (a.body as E).error?.code
+    const list = await call('GET', '/v1/brains/growth/wiki/changes', o)
+    const items = (list.body as { items: Array<{ id: string; parts: number }> }).items
+    assert.deepEqual(
+      items.map((c) => c.id),
+      ['chg_fx_numbers', 'chg_fx_intros'],
+      'oldest first, the pending ones',
+    )
+    const brains = (await call('GET', '/v1/brains', o)).body as {
+      brains: Array<{ slug: string; stats: { pendingReview?: number } }>
+    }
+    assert.equal(brains.brains.find((b) => b.slug === 'growth')?.stats.pendingReview, 2)
+    const one = (await call('GET', '/v1/wiki/changes/chg_fx_intros', o)).body as {
+      parts: Array<{ part: number; dependsOn: number[]; diff: string }>
+    }
+    assert.deepEqual(one.parts[1]?.dependsOn, [0])
+    assert.match(one.parts[1]?.diff ?? '', /^@@ /)
+    const page = (await call('GET', '/v1/brains/growth/pages/audience%2Fretention', o)).body as {
+      page: { unreviewed: boolean; protected: boolean }
+    }
+    assert.deepEqual([page.page.unreviewed, page.page.protected], [true, false])
+    // Undo by parts: a part another part needs is not undone alone.
+    const alone = await call('POST', '/v1/wiki/changes/chg_fx_intros/undo', { ...o, body: { parts: [0] } })
+    assert.equal(code(alone), 'missing_dependencies')
+    // A page written again since: a conflict naming it, until a person overwrites.
+    const clash = await call('POST', '/v1/wiki/changes/chg_fx_numbers/undo', { ...o, body: {} })
+    assert.equal(code(clash), 'undo_conflict')
+    assert.equal((clash.body as E).error.pages?.[0]?.address, 'audience/retention')
+    const over = await call('POST', '/v1/wiki/changes/chg_fx_numbers/undo', {
+      ...o,
+      body: {
+        overwrite: ['audience/retention'],
+        comment: 'The October numbers were wrong.',
+        requestKey: 'k1',
+      },
+    })
+    assert.equal(over.status, 200)
+    assert.ok((over.body as { correction?: string }).correction)
+    assert.deepEqual((await call('POST', '/v1/wiki/changes/chg_fx_numbers/undo', { ...o, body: {} })).body, {
+      alreadyUndone: true,
+    })
+    assert.equal(
+      code(await call('POST', '/v1/wiki/changes/chg_fx_numbers/keep', { ...o, body: {} })),
+      'already_undone',
+    )
+    const kept = await call('POST', '/v1/wiki/changes/chg_fx_intros/keep', { ...o, body: {} })
+    assert.equal((kept.body as { change: { state: string } }).change.state, 'kept')
+    assert.equal(
+      code(await call('POST', '/v1/wiki/changes/chg_fx_intros/keep', { ...o, body: {}, csrf: false })),
+      'csrf',
+    )
+    assert.equal(code(await call('GET', '/v1/wiki/changes/chg_nowhere', o)), 'not_found')
+    // The protect switch.
+    const on = await call('PUT', '/v1/brains/growth/protection/audience%2Fintros', {
+      ...o,
+      body: { protected: true },
+    })
+    assert.equal((on.body as { page: { protected: boolean } }).page.protected, true)
+    assert.equal(
+      code(
+        await call('PUT', '/v1/brains/growth/protection/audience%2Fintros', {
+          ...o,
+          body: { protected: 'yes' },
+        }),
+      ),
+      'invalid_request',
+    )
+    // The write mode and the lifetimes by type, saved on the value they were read.
+    const read = (await call('GET', '/v1/brains/growth/wiki/settings', o)).body as {
+      writeMode: string
+      entryLifetimes: Record<string, number | null>
+    }
+    assert.equal(read.writeMode, 'auto')
+    const mode = await call('PUT', '/v1/brains/growth/wiki/settings', {
+      ...o,
+      body: {
+        writeMode: 'ask_first',
+        entryLifetimes: { note: 45 },
+        base: { writeMode: 'auto', entryLifetimes: read.entryLifetimes },
+      },
+    })
+    assert.equal(mode.status, 200)
+    const now = mode.body as { writeMode: string; entryLifetimes: Record<string, number | null> }
+    assert.deepEqual([now.writeMode, now.entryLifetimes.note], ['ask_first', 45])
+    assert.equal(
+      code(await call('PUT', '/v1/brains/growth/wiki/settings', { ...o, body: { writeMode: 'later' } })),
+      'invalid_request',
+    )
+    assert.equal(
+      code(
+        await call('PUT', '/v1/brains/growth/wiki/settings', { ...o, body: { entryLifetimes: { note: 0 } } }),
+      ),
+      'invalid_request',
+    )
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

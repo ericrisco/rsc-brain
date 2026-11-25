@@ -6,20 +6,25 @@
 // grouped by kind; a link to a page still to write says so. «Who read this» is for curators only (pack
 // rule 7). The body is markdown rendered with raw HTML off (lib/markdown.ts): the one place the web
 // writes HTML it did not build itself.
-import { useEffect } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
+import type { ApiError } from '../../api/client.ts'
 import { useFresh } from '../../api/fresh.ts'
+import { api } from '../../api/index.ts'
+import { invalidate } from '../../api/resource.ts'
 import { renderMarkdown } from '../../lib/markdown.ts'
 import { groupLinks, groupReaders, withoutRedundantMentions } from '../../lib/wiki.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
+import { Button } from '../../ui/Button.tsx'
 import { Dialog } from '../../ui/Dialog.tsx'
 import { SectionHead } from '../../ui/Section.tsx'
 import { viewState } from '../../ui/state.ts'
-import { ErrorState, Skeleton } from '../../ui/states.tsx'
+import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import type { BrainOne } from '../Brain.tsx'
 import { correctHref, entryHref } from '../journal/common.tsx'
-import { isCurator, mapHref, pageHref, Said, StatusTag, TypeTag, useBrain } from './common.tsx'
+import { reviewHref } from '../review/data.ts'
+import { blockedNow, isCurator, mapHref, pageHref, Said, StatusTag, TypeTag, useBrain } from './common.tsx'
 import { entryResource, type LinkView, pageResource, type Reading, readersResource } from './data.ts'
 import { PageEdit, UnsavedEdit, wikiNotice } from './Edit.tsx'
 import { History, RecentHistory } from './History.tsx'
@@ -293,6 +298,59 @@ function Tabs({
   )
 }
 
+// A curator, in the web, protects the page or takes the protection off (spec learning-memory A3): a switch, its line
+// in the log, and the agents' changes to it then wait for a person.
+function Protection({ slug, reading }: { slug: string; reading: Reading }) {
+  const w = T.wiki
+  const on = reading.page.protected === true
+  const [pending, setPending] = useState(false)
+  const [said, setSaid] = useState<string | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
+  const flip = async () => {
+    if (pending) return
+    setPending(true)
+    setError(null)
+    try {
+      await api.call('protectPage', {
+        path: { slug, address: reading.page.address },
+        body: { protected: !on },
+      })
+      invalidate(`brain:${slug}:wiki`)
+      setSaid(on ? w.unprotectedNow : w.protectedNow)
+    } catch (e) {
+      setError(e as ApiError)
+    } finally {
+      setPending(false)
+    }
+  }
+  return (
+    <section class="aside-block card pad" aria-labelledby="protect-title">
+      <SectionHead id="protect-title" title={w.protection} />
+      <FormAlert error={error} />
+      <div class="switch-row">
+        <Button
+          kind="secondary"
+          role="switch"
+          aria-checked={on ? 'true' : 'false'}
+          aria-describedby="protect-hint"
+          pending={pending}
+          blocked={blockedNow(false)}
+          onClick={() => void flip()}
+        >
+          <span class="switch-mark" aria-hidden="true">
+            {on ? '●' : '○'}
+          </span>{' '}
+          {w.protectLabel}
+        </Button>
+      </div>
+      <p class="hint" id="protect-hint">
+        {w.protectHint}
+      </p>
+      <Said text={said} />
+    </section>
+  )
+}
+
 function Head({ slug, reading, view }: { slug: string; reading: Reading; view: string }) {
   const { page } = reading
   const area = page.address.split('/')[0] ?? ''
@@ -313,6 +371,20 @@ function Head({ slug, reading, view }: { slug: string; reading: Reading; view: s
       <h1 class="title">{title}</h1>
       <p class="page-meta meta">
         <TypeTag type={page.type} /> <StatusTag status={page.status} />{' '}
+        {page.unreviewed ? (
+          <>
+            <span class="tag warn" title={T.wiki.unreviewedTitle} data-mark="unreviewed">
+              {T.wiki.unreviewed}
+            </span>{' '}
+          </>
+        ) : null}
+        {page.protected ? (
+          <>
+            <span class="tag" data-mark="protected">
+              {T.wiki.protectedTag}
+            </span>{' '}
+          </>
+        ) : null}
         <span class="mono">{page.address}</span> <span>{T.wiki.revision(page.revision)}</span>{' '}
         <span>{T.wiki.updated(T.date(page.updatedAt))}</span>
       </p>
@@ -420,6 +492,12 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
             names={w.kindsIn}
           />
         </section>
+        {page.unreviewed && isCurator(brain) ? (
+          <p class="note">
+            {T.wiki.unreviewedTitle} <a href={reviewHref(slug)}>{T.wiki.openReview}</a>
+          </p>
+        ) : null}
+        {isCurator(brain) ? <Protection slug={slug} reading={reading} /> : null}
         <Wrong slug={slug} brain={brain} reading={reading} />
         <RecentHistory slug={slug} address={page.address} />
         {isCurator(brain) ? <Readers slug={slug} address={page.address} /> : null}

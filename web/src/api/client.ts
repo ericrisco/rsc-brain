@@ -21,15 +21,23 @@ export class ApiError extends Error {
   readonly problemOps: number[]
   // Where rsc-factory is, while it is to set this installation up (companion_pending); only a plain http(s) address.
   readonly factoryUrl: string | null
+  // The other fields of the refusal, as sent (an undo conflict names its pages and addresses).
+  readonly fields: Record<string, unknown>
   constructor(
     status: number,
     code: string,
     message: string,
     howToProceed: string,
     retryAfter?: number,
-    extra: { current?: unknown; problems?: unknown; factoryUrl?: unknown } = {},
+    extra: {
+      current?: unknown
+      problems?: unknown
+      factoryUrl?: unknown
+      fields?: Record<string, unknown>
+    } = {},
   ) {
     super(message)
+    this.fields = extra.fields ?? {}
     this.rawMessage = message
     this.rawHowToProceed = howToProceed
     Object.defineProperty(this, 'message', {
@@ -139,7 +147,7 @@ function errorOf(status: number, text: string): ApiError {
         e.message,
         typeof e.howToProceed === 'string' ? e.howToProceed : 'Try again.',
         typeof e.retryAfter === 'number' ? e.retryAfter : undefined,
-        { current: e.current, problems: e.problems, factoryUrl: e.factoryUrl },
+        { current: e.current, problems: e.problems, factoryUrl: e.factoryUrl, fields: e },
       )
     }
   } catch {

@@ -1745,6 +1745,36 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'request_key_reused',
       w.call(eric.key, 'POST', '/v1/brains/contract/entries', { ...keyed, content: 'Another.' }),
     )
+    // «Review later» (spec learning-memory A2, A4), in a brain that applies agents' changes at once.
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'contract-undo', purpose: 'Undo refusals.' })
+    await w.callWeb(ericWeb, 'PUT', '/v1/brains/contract-undo/wiki/settings', { writeMode: 'auto' })
+    const undoEntry = String(
+      (
+        (
+          await w.call(eric.key, 'POST', '/v1/brains/contract-undo/entries', {
+            type: 'learning',
+            title: 'Undo',
+            content: 'Undo refusals.',
+          })
+        ).body.receipt as Json
+      ).entryId,
+    )
+    const applied = await w.call(eric.key, 'POST', '/v1/brains/contract-undo/proposals', {
+      title: 'Applied at once',
+      ops: [{ ...page('undo/one'), sources: [{ entryId: undoEntry }] }],
+    })
+    const chg = String(applied.body.undo)
+    await w.callWeb(ericWeb, 'PATCH', '/v1/brains/contract-undo/pages/undo/one', {
+      baseRevision: 1,
+      body: 'By hand.',
+    })
+    await add('undo_conflict', w.callWeb(ericWeb, 'POST', `/v1/wiki/changes/${chg}/undo`, {}))
+    await add(
+      'protect_web_only',
+      w.call(eric.key, 'PUT', '/v1/brains/contract-undo/protection/undo/one', { protected: true }),
+    )
+    await w.callWeb(ericWeb, 'POST', `/v1/wiki/changes/${chg}/undo`, { overwrite: ['undo/one'] })
+    await add('already_undone', w.callWeb(ericWeb, 'POST', `/v1/wiki/changes/${chg}/keep`))
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))
     // Companion mode (F1-PR11), on an installation of its own that waits for rsc-factory.

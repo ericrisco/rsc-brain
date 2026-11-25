@@ -6,9 +6,13 @@ import type { PageState, ReviewOp } from '../../lib/proposals.ts'
 
 export const STATUSES = [
   'pending',
+  // Applied in part: some parts still wait for a person (spec learning-memory A1).
+  'partially_applied',
   'approved',
   'partially_approved',
   'returned',
+  'applied',
+  'stale',
   'withdrawn',
   'superseded',
 ] as const
@@ -67,7 +71,8 @@ export const proposalHref = (slug: string, id: string) => `${base(slug)}/${encod
 
 // Pending ones oldest first: what has waited longest is reviewed first (the old ones lead). Decided ones
 // newest first: the last decisions are what a person looks for.
-export const orderOf = (status: Status) => (status === 'pending' ? 'oldest' : 'newest')
+export const orderOf = (status: Status) =>
+  status === 'pending' || status === 'partially_applied' ? 'oldest' : 'newest'
 
 export const inboxResource = (slug: string, status: Status) =>
   resource(`brain:${slug}:proposals:list:${status}`, () =>

@@ -131,7 +131,7 @@ test('folded, a name shows as a tooltip on keyboard focus and on hover; Esc hide
   await expect(wiki).toBeVisible()
   const shown = async () => ((await tip.boundingBox())?.width ?? 0) > 20
   // Keyboard: Tab from the link before it.
-  await nav.getByRole('link', { name: /^Proposals/ }).focus()
+  await nav.getByRole('link', { name: /^Review later/ }).focus()
   await page.keyboard.press('Tab')
   await expect(wiki).toBeFocused()
   await expect.poll(shown).toBe(true)

@@ -14,6 +14,7 @@ function sectionOf(path: string, base: string): string | null {
   const rest = path.slice(base.length)
   if (rest === '' || rest === '/') return s.overview
   if (rest.startsWith('/proposals')) return s.proposals
+  if (rest.startsWith('/review-later')) return s.reviewLater
   if (rest === '/wiki/decisions') return s.decisions
   if (rest === '/wiki/log') return s.log
   if (rest.startsWith('/wiki/graph')) return s.graph

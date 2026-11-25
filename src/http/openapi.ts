@@ -203,14 +203,18 @@ const BRAIN = obj({
   createdAt: s('When.', { format: 'date-time' }),
   updatedAt: s('When it last changed.', { format: 'date-time' }),
 })
-const STATS = obj({
-  pages: n('Wiki pages that are not retired.'),
-  entries: n('Active journal entries.'),
-  uncompiled: n('Active entries no proposal has gathered yet.'),
-  conflicts: n('Open contradictions between entries.'),
-  pendingProposals: n('Proposals waiting for a curator.'),
-  lastActivityAt: nul(s('The last write, session or proposal.', { format: 'date-time' })),
-})
+const STATS = obj(
+  {
+    pages: n('Wiki pages that are not retired.'),
+    entries: n('Active journal entries.'),
+    uncompiled: n('Active entries no proposal has gathered yet.'),
+    conflicts: n('Open contradictions between entries.'),
+    pendingProposals: n('Proposals with parts waiting for a curator.'),
+    pendingReview: n('Changes agents made that no person reviewed yet («Review later»).'),
+    lastActivityAt: nul(s('The last write, session or proposal.', { format: 'date-time' })),
+  },
+  ['pendingReview'],
+)
 const BRAIN_ROLE = {
   ...BRAIN,
   properties: {

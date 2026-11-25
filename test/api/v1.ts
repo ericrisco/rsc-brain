@@ -262,6 +262,11 @@ export const ERROR_STATUS: Record<string, number> = {
   key_not_allowed: 403,
   // A request key used again for another request (rsc-factory reads it as "not written": plan T010).
   request_key_reused: 409,
+  // «Review later» and the protect switch (spec learning-memory A2, A4): an undo over pages written since; keeping
+  // an undone change; protecting with a key.
+  undo_conflict: 409,
+  already_undone: 409,
+  protect_web_only: 403,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }
