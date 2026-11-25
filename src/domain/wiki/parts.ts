@@ -4,7 +4,9 @@
 //   - A part that writes a protected page waits, unless the key has the wiki write permission (CA-A4, A17).
 //   - A part that writes a page a live correction points at, or declares a «contradicts» or «supersedes» link towards
 //     one, waits, with the permission too: only people write corrections (pack rule 4; CA-A6).
-//   - An edit written on a revision that is no longer the page's comes back with the current one (CA-A20).
+//   - An edit written on a revision that is no longer the page's comes back with the current one (CA-A20), before any
+//     reason to wait: on a protected or corrected page too (review R3).
+//   - A merge writes every page with a typed link into the page it takes in (review R4).
 //   - Parts that depend on one another share their fate (CA-A24): what needs a part that comes back comes back; what
 //     needs a part that waits waits. Needing both, it comes back: it must be redone anyway.
 import type { Op } from './model.ts'
@@ -19,6 +21,8 @@ export type Facts = {
   correctedPages: Set<string>
   // Address (any address a page answers to) → the page and its revision now.
   current: Map<string, { pageId: string; revision: number }>
+  // Address → the pages with a typed link into the page at that address (a merge changes their links; review R4).
+  linksInto?: Map<string, { pageId: string; address: string }[]>
 }
 
 export type HoldReason = 'protected' | 'correction' | 'ask_first' | 'depends'
@@ -54,32 +58,8 @@ type Own =
   | { kind: 'returned'; held: Returned }
 
 function ownFate(op: Op, i: number, f: Facts): Own | null {
-  const pageOf = (a: string) => f.current.get(a)?.pageId
-  if (!f.canWrite) {
-    const p = writesTo(op).find((a) => {
-      const id = pageOf(a)
-      return id !== undefined && f.protectedPages.has(id)
-    })
-    if (p !== undefined)
-      return {
-        kind: 'held',
-        address: p,
-        reason: 'protected',
-        detail: `The page "${p}" is protected: only a person or a key with the wiki write permission writes there. A curator decides this part.`,
-      }
-  }
-  const corrected = (a: string) => {
-    const id = pageOf(a)
-    return id !== undefined && f.correctedPages.has(id)
-  }
-  const c = writesTo(op).find(corrected) ?? declaresAgainst(op).find(corrected)
-  if (c !== undefined)
-    return {
-      kind: 'held',
-      address: c,
-      reason: 'correction',
-      detail: `A person's correction points at the page "${c}": a person decides this part.`,
-    }
+  // An edit written on a revision that is no longer the page's comes back first, whatever page it is on: it must be
+  // redone anyway, and a person deciding an old edit would decide on what is no longer there (review R3).
   if (op.op === 'edit' && op.baseRevision !== undefined) {
     const now = f.current.get(op.address)
     if (now && now.revision !== op.baseRevision)
@@ -88,7 +68,53 @@ function ownFate(op: Op, i: number, f: Facts): Own | null {
         held: { op: i, address: op.address, reason: 'stale', currentRevision: now.revision },
       }
   }
+  // The pages it writes: by its addresses, and for a merge, every page whose typed links into the page merged in
+  // change (re-pointed, or a «supersedes» link deleted; review R4).
+  const written: { pageId: string; address: string }[] = []
+  for (const a of writesTo(op)) {
+    const id = f.current.get(a)?.pageId
+    if (id !== undefined) written.push({ pageId: id, address: a })
+  }
+  if (op.op === 'merge') written.push(...(f.linksInto?.get(op.from) ?? []))
+  if (!f.canWrite) {
+    const p = written.find((w) => f.protectedPages.has(w.pageId))
+    if (p !== undefined)
+      return {
+        kind: 'held',
+        address: p.address,
+        reason: 'protected',
+        detail: holdDetail('protected', p.address),
+      }
+  }
+  const declared = declaresAgainst(op).flatMap((a) => {
+    const id = f.current.get(a)?.pageId
+    return id === undefined ? [] : [{ pageId: id, address: a }]
+  })
+  const c = [...written, ...declared].find((w) => f.correctedPages.has(w.pageId))
+  if (c !== undefined)
+    return {
+      kind: 'held',
+      address: c.address,
+      reason: 'correction',
+      detail: holdDetail('correction', c.address),
+    }
   return null
+}
+
+// Why a part waits, in words for the agent and the curator (also rebuilt for a retry's receipt, which keeps codes only).
+export function holdDetail(reason: HoldReason, address: string, waiting: number[] = []): string {
+  switch (reason) {
+    case 'protected':
+      return `The page "${address}" is protected: only a person or a key with the wiki write permission writes there. A curator decides this part.`
+    case 'correction':
+      return `A person's correction points at the page "${address}": a person decides this part.`
+    case 'ask_first':
+      return 'This brain asks first: a curator decides every change to its wiki.'
+    case 'depends':
+      return waiting.length
+        ? `It needs ${waiting.map((j) => `part ${j}`).join(', ')}, which waits for a person; it goes with it.`
+        : 'It needs a part that waits for a person; it goes with it.'
+  }
 }
 
 export function classify(ops: Op[], f: Facts): Classified {
@@ -99,7 +125,7 @@ export function classify(ops: Op[], f: Facts): Classified {
         op: i,
         address: o.address,
         reason: 'ask_first',
-        detail: 'This brain asks first: a curator decides every change to its wiki.',
+        detail: holdDetail('ask_first', o.address),
       })),
       returned: [],
     }
@@ -145,7 +171,7 @@ export function classify(ops: Op[], f: Facts): Classified {
         op: i,
         address: o.address,
         reason: 'depends',
-        detail: `It needs ${waiting.map((j) => `part ${j}`).join(', ')}, which waits for a person; it goes with it.`,
+        detail: holdDetail('depends', o.address, waiting),
       })
       return
     }

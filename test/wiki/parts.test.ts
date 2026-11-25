@@ -248,4 +248,56 @@ describe('classify', () => {
       ],
     )
   })
+
+  it('review R3: an edit written on an old revision comes back even on a protected or corrected page', () => {
+    const r = classify([edit('q', 2), edit('c', 1)], facts())
+    assert.deepEqual(r.held, [])
+    assert.deepEqual(
+      r.returned.map((x) => [x.op, x.address, x.reason, x.currentRevision]),
+      [
+        [0, 'q', 'stale', 3],
+        [1, 'c', 'stale', 3],
+      ],
+    )
+  })
+
+  it('review R4: a merge changes the links of every page that links into the page merged in; one protected or corrected holds it', () => {
+    const merge: Op = {
+      op: 'merge',
+      address: 'x',
+      from: 'y',
+      body: '',
+      dropSources: [],
+      dropLinks: [],
+      reason: R,
+    }
+    const current = new Map([
+      ['x', { pageId: 'pg_x', revision: 1 }],
+      ['y', { pageId: 'pg_y', revision: 1 }],
+    ])
+    // P (protected) has «supersedes y»: merging y deletes that link, so it writes P.
+    const into = new Map([['y', [{ pageId: 'pg_p', address: 'p' }]]])
+    const held = classify([merge], facts({ current, protectedPages: new Set(['pg_p']), linksInto: into }))
+    assert.deepEqual(
+      held.held.map((h) => [h.op, h.address, h.reason]),
+      [[0, 'p', 'protected']],
+    )
+    assert.deepEqual(
+      classify(
+        [merge],
+        facts({ current, protectedPages: new Set(['pg_p']), linksInto: into, canWrite: true }),
+      ).apply,
+      [0],
+    )
+    const corrected = classify(
+      [merge],
+      facts({ current, correctedPages: new Set(['pg_p']), linksInto: into, canWrite: true }),
+    )
+    assert.deepEqual(
+      corrected.held.map((h) => [h.address, h.reason]),
+      [['p', 'correction']],
+    )
+    // With no page linking in, it applies.
+    assert.deepEqual(classify([merge], facts({ current })).apply, [0])
+  })
 })
