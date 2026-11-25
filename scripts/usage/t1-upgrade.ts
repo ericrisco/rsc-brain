@@ -185,12 +185,13 @@ try {
   )
   const page = await call(tok(reader), 'GET', '/v1/brains/demo/pages/billing', undefined, (b) => ({
     revision: (b.page as { revision: number }).revision,
-    unreviewed: (b.page as { unreviewed?: boolean }).unreviewed ?? (b as { unreviewed?: boolean }).unreviewed,
+    unreviewed: (b.page as { unreviewed?: boolean }).unreviewed,
   }))
   const pg2 = page.body.page as { revision: number; unreviewed?: boolean }
+  // The page says it, false: a missing field is not «reviewed» (review round 1 of T001).
   check(
-    'CA-U6: the page written before reads as before, at revision 2, not marked unreviewed',
-    page.status === 200 && pg2.revision === 2 && pg2.unreviewed !== true,
+    'CA-U6: the page written before reads as before, at revision 2, and says unreviewed: false',
+    page.status === 200 && pg2.revision === 2 && pg2.unreviewed === false,
   )
   await now.stop()
 } finally {
