@@ -5,7 +5,7 @@
 import { AppError } from '../../core/errors.ts'
 import { newId } from '../../core/ids.ts'
 import type { Db, Row } from '../../db/db.ts'
-import type { Ctx } from '../context.ts'
+import { type Ctx, personInWeb } from '../context.ts'
 import { emit } from '../events.ts'
 import { type LinkKind, mentionsOf, type Op, type Source, sourceKey } from './model.ts'
 import { uses } from './review.ts'
@@ -579,6 +579,11 @@ export async function applyOps(
     deferred.clear()
   }
 
+  // A person in the web saw what they wrote: their revisions are reviewed (spec learning-memory A1, CA-A9).
+  if (personInWeb(ctx) && revised.length > 0)
+    await db.query('UPDATE pages SET reviewed_revision = revision WHERE id = ANY($1)', [
+      [...new Set(revised.map((r) => r.pageId))],
+    ])
   const pages = [...touched]
   const logId = newId('wlg')
   await db.query(

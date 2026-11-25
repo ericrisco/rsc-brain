@@ -29,7 +29,7 @@ const GATE = new Set(['read_only_key', 'cannot_create_brains'])
 
 const SIDE = /mcpside|apiside/g
 // Identifiers made per side (a new session, entry, proposal) differ by nature; the rest must not.
-const IDS = /\b(acc|brn|crd|ses|ent|rel|pg|prp|wlg|inv|app)_[0-9a-f]{12}\b/g
+const IDS = /\b(acc|brn|crd|ses|ent|rel|pg|prp|wlg|inv|app|chg)_[0-9a-f]{12}\b/g
 const fold = (v: unknown) => JSON.parse(JSON.stringify(v).replace(SIDE, 'side').replace(IDS, '$1_*'))
 
 describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () => {

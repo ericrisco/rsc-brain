@@ -29,6 +29,8 @@ export type ContextItem = {
   type: string
   title: string
   address?: string
+  // A page a change no person saw left as it is (spec learning-memory A1, CA-A9).
+  unreviewed?: boolean
 }
 type Item = { id: string; block: string; lines?: string[]; about?: Omit<ContextItem, 'section'> }
 type Section = { name: string; title?: string; items: Item[] }
@@ -51,7 +53,8 @@ function block(r: Row, brainSlug: string): Item {
 
 function pageBlock(r: Row, brainSlug: string, via?: string): Item {
   const how = via ? ` via="${attr(via)}"` : ''
-  const head = `<<<page address=${r.address} type=${r.type} status=${r.status} brain=${brainSlug} updated=${(r.updated_at as Date).toISOString().slice(0, 10)}${how}>>>`
+  const unreviewed = r.reviewed_revision != null && Number(r.revision) > Number(r.reviewed_revision)
+  const head = `<<<page address=${r.address} type=${r.type} status=${r.status} brain=${brainSlug} updated=${(r.updated_at as Date).toISOString().slice(0, 10)}${unreviewed ? ' reviewed=no' : ''}${how}>>>`
   const summary = String(r.summary) ? `\n${neutralize(String(r.summary))}` : ''
   const body = `${neutralize(String(r.title))}${summary}\n\n${neutralize(String(r.body))}`
   return {
@@ -63,6 +66,7 @@ function pageBlock(r: Row, brainSlug: string, via?: string): Item {
       type: String(r.type),
       title: String(r.title),
       address: String(r.address),
+      ...(unreviewed ? { unreviewed: true } : {}),
     },
   }
 }

@@ -33,6 +33,8 @@ export type WikiPage = {
   updatedAt: string
   // Only a person in the web or a key with the wiki write permission writes it (spec learning-memory A3).
   protected: boolean
+  // A change no person saw left it at this revision (spec learning-memory A1, CA-A9).
+  unreviewed: boolean
 }
 
 export const pageOf = (r: Row): WikiPage => ({
@@ -50,6 +52,7 @@ export const pageOf = (r: Row): WikiPage => ({
   createdAt: (r.created_at as Date).toISOString(),
   updatedAt: (r.updated_at as Date).toISOString(),
   protected: Boolean(r.protected),
+  unreviewed: r.reviewed_revision != null && Number(r.revision) > Number(r.reviewed_revision),
 })
 
 // The page an address leads to, through any address it ever had.

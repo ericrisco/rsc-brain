@@ -29,6 +29,8 @@ export type Neighbour = {
   revision: number
   // How it is linked to a page the change touches: the link's kind, and whether it goes from that page or to it.
   link: { page: string; kind: string; direction: 'out' | 'in' }
+  // A change no person saw left it as it is (spec learning-memory A1, CA-A9).
+  unreviewed: boolean
 }
 
 export type Checked = { coherence: Coherence[]; neighbours: Neighbour[] }
@@ -174,7 +176,7 @@ async function after(db: Db, brainId: string, b: Before, touched: string[]): Pro
   const near = touched.length
     ? await db.query(
         `SELECT DISTINCT ON (n.id) n.address, n.title, n.summary, n.type, n.status, n.revision,
-                s.address AS page, x.kind, x.direction
+                n.revision > n.reviewed_revision AS unreviewed, s.address AS page, x.kind, x.direction
            FROM (${LINKED}) x JOIN pages n ON n.id = x.dst JOIN pages s ON s.id = x.src
           WHERE x.dst <> ALL($1) AND n.status IN ('current', 'stale')
           ORDER BY n.id, x.direction DESC, x.kind
@@ -191,6 +193,7 @@ async function after(db: Db, brainId: string, b: Before, touched: string[]): Pro
       status: String(r.status),
       revision: Number(r.revision),
       link: { page: String(r.page), kind: String(r.kind), direction: r.direction as 'out' | 'in' },
+      unreviewed: r.unreviewed === true,
     }))
     .sort((a, c) => a.address.localeCompare(c.address))
   return { coherence: out, neighbours }

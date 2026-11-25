@@ -15,6 +15,7 @@ import { allow, type Ctx, inBrain } from '../context.ts'
 import { webCorrection } from '../entries.ts'
 import { emit } from '../events.ts'
 import { ApplyError, type ApplyItem, applyOps, type Revised } from './apply.ts'
+import { recordChange } from './changes.ts'
 import { type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
 import { named, type Proposal, type ProposalOp, proposalOf, proposalOpOf } from './proposals.ts'
 import { buildReview, dependencies, fingerprint, type Review, wikiPurges } from './review.ts'
@@ -76,14 +77,19 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 
 // What a retry with the same request key gets again, as stored: ids and revisions only, never the text of a page
 // (a purge since must not survive in it, spec v0.6). The proposal and its operations are read again as they are.
-type Stored = { proposalId: string; applied: Revised[] }
+type Stored = { proposalId: string; applied: Revised[]; undo?: string | null }
 
 async function decisionOf(ctx: Ctx, s: Stored): Promise<Decision> {
   const row = (await ctx.db.one('SELECT * FROM proposals WHERE id = $1', [s.proposalId])) as Row
   const ops = (
     await ctx.db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [s.proposalId])
   ).map(proposalOpOf)
-  return { proposal: await named(ctx.db, proposalOf(row, ctx.clock())), ops, applied: s.applied }
+  return {
+    proposal: await named(ctx.db, proposalOf(row, ctx.clock())),
+    ops,
+    applied: s.applied,
+    undo: s.undo ?? null,
+  }
 }
 
 const checkRequestKey = (k: string | undefined) => {
@@ -120,7 +126,7 @@ async function once(
   return {
     again: null,
     keep: async (d) => {
-      const stored: Stored = { proposalId: d.proposal.id, applied: d.applied }
+      const stored: Stored = { proposalId: d.proposal.id, applied: d.applied, undo: d.undo }
       await ctx.db.query(
         'INSERT INTO request_keys (credential_id, key, request_hash, receipt, created_at) VALUES ($1, $2, $3, $4, $5)',
         [credential, key, hash, JSON.stringify(stored), ctx.clock()],
@@ -275,7 +281,8 @@ function overlay(
   return out
 }
 
-export type Decision = { proposal: Proposal; ops: ProposalOp[]; applied: Revised[] }
+// `undo`: the change in «Review later» when a key applied it (spec learning-memory A1); null in the web.
+export type Decision = { proposal: Proposal; ops: ProposalOp[]; applied: Revised[]; undo: string | null }
 
 // The activity's label of a decision: its status, first (the web's live notice reads it), then the key, if one.
 const decidedLabel = (status: string, byKey: ByKey | null) =>
@@ -397,17 +404,18 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     // Apply under a savepoint: if it fails, nothing of it stays, but the error is kept on the proposal.
     await db.query('SAVEPOINT apply')
     let applied: Revised[]
+    let written: Awaited<ReturnType<typeof applyOps>> | null = null
     try {
-      applied = (
-        await applyOps(c, db, brainId, items, {
-          kind: 'proposal',
-          proposalId: String(row.id),
-          summary: `${rest.length > 0 ? 'Partly approved' : 'Approved'}${byKey ? ` by ${byKey.owner} with the key ${byKey.key}` : ''}: ${String(row.title)}`,
-          ...(byKey ? { keyName: byKey.key } : {}),
-          // An approved maintenance proposal is a cleanup (spec v0.6 «Limpieza diaria»).
-          maintenance: Boolean(row.maintenance),
-        })
-      ).revised
+      const done = await applyOps(c, db, brainId, items, {
+        kind: 'proposal',
+        proposalId: String(row.id),
+        summary: `${rest.length > 0 ? 'Partly approved' : 'Approved'}${byKey ? ` by ${byKey.owner} with the key ${byKey.key}` : ''}: ${String(row.title)}`,
+        ...(byKey ? { keyName: byKey.key } : {}),
+        // An approved maintenance proposal is a cleanup (spec v0.6 «Limpieza diaria»).
+        maintenance: Boolean(row.maintenance),
+      })
+      applied = done.revised
+      written = done
     } catch (err) {
       await db.query('ROLLBACK TO SAVEPOINT apply')
       // A deadlock or a serialisation failure is the database's, not the proposal's: let it fail whole
@@ -420,6 +428,16 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
       failure = e
       return null
     }
+    // A key's decision goes into «Review later»; a person's in the web is reviewed (spec learning-memory A1, H1).
+    const undo = written
+      ? await recordChange(db, c, {
+          brainId,
+          logId: written.logId,
+          proposalId: String(row.id),
+          before: written.before,
+          revised: written.revised,
+        })
+      : null
     const now = ctx.clock()
     for (const o of ops) {
       const ok = approve.includes(o.index)
@@ -484,7 +502,7 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     const final = (
       await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
     ).map(proposalOpOf)
-    const decision = { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied }
+    const decision = { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied, undo }
     await keep(decision)
     return decision
   })
@@ -521,7 +539,12 @@ export async function returnProposal(
     const final = (
       await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
     ).map(proposalOpOf)
-    const decision = { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied: [] }
+    const decision = {
+      proposal: await named(db, proposalOf(done as Row, now)),
+      ops: final,
+      applied: [],
+      undo: null,
+    }
     await keep(decision)
     return decision
   })

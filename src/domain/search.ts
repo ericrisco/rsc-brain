@@ -69,6 +69,8 @@ export type Hit = {
   reason: string
   linkedFrom?: LinkedFrom
   at: string
+  // A page a change no person saw left as it is (spec learning-memory A1, CA-A9).
+  unreviewed?: boolean
 }
 
 export type SearchResult = {
@@ -634,7 +636,8 @@ async function describe(
                  WHEN e.superseded_by IS NOT NULL THEN 'superseded'
                  WHEN NOT ${notLapsed('e', at)} THEN 'expired'
                  ELSE 'active' END AS state,
-            ${empty ? 'left(e.content, 200)' : headline("e.title || ' — ' || e.content", tsq)} AS snippet
+            ${empty ? 'left(e.content, 200)' : headline("e.title || ' — ' || e.content", tsq)} AS snippet,
+            NULL::boolean AS unreviewed
        FROM entries e JOIN brains b ON b.id = e.brain_id WHERE e.id = ANY(${ids}::text[])
      UNION ALL
      SELECT 'page', p.id, p.address, p.type, p.title, b.slug, p.status,
@@ -642,7 +645,8 @@ async function describe(
               empty
                 ? "left(CASE WHEN p.summary <> '' THEN p.summary ELSE p.body END, 200)"
                 : headline("concat_ws(' — ', p.title, nullif(p.summary, ''), p.body)", tsq)
-            }
+            },
+            p.revision > p.reviewed_revision
        FROM pages p JOIN brains b ON b.id = p.brain_id WHERE p.id = ANY(${pids}::text[])`,
     params,
   )
@@ -669,7 +673,10 @@ async function describe(
             : 'matched by meaning',
       at: c.at.toISOString(),
     }
-    if (c.kind === 'page') hit.address = String(x.address)
+    if (c.kind === 'page') {
+      hit.address = String(x.address)
+      hit.unreviewed = x.unreviewed === true
+    }
     out.push(hit)
   }
   return out
@@ -712,6 +719,7 @@ export async function neighboursOf(db: Db, from: string[], o: NeighbourOptions):
     const kinds = o.kinds?.length ? ` AND x.kind = ANY(${p(o.kinds)}::text[])` : ''
     const rows = await db.query<Row>(
       `SELECT DISTINCT ON (n.id) n.id, n.address, n.type, n.title, n.status, n.updated_at, b.slug,
+              n.revision > n.reviewed_revision AS unreviewed,
               x.kind, x.direction, s.id AS src_id, s.address AS src_address, s.title AS src_title
          FROM (${parts.join(' UNION ALL ')}) x
          JOIN pages n ON n.id = x.dst
@@ -752,6 +760,7 @@ export async function neighboursOf(db: Db, from: string[], o: NeighbourOptions):
             : `links to ${linkedFrom.title} via ${linkedFrom.kind}`,
         linkedFrom,
         at: (x.updated_at as Date).toISOString(),
+        unreviewed: x.unreviewed === true,
       })
     }
     frontier = next

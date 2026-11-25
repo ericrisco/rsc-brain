@@ -14,6 +14,7 @@ import { installation } from '../installation.ts'
 import { vigentEntry } from '../lapse.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
 import type { PageBefore, Revised } from './apply.ts'
+import { recordChange } from './changes.ts'
 import { type Checked, checkChange, checksNow } from './coherence.ts'
 import { mentionsOf, nearlySame, type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
 import { getPage, settingsOf, type WikiPage } from './pages.ts'
@@ -669,6 +670,7 @@ export async function submitProposal(ctx: Ctx, slug: string, input: ProposalInpu
     await emit(db, c, { brainId: brain.id, kind: 'proposal.submitted', targetId: id, label: title })
     let checked: Checked
     let pages: (ReceiptPage & { pageId: string })[] = []
+    let undo: string | null = null
     if (applying) {
       // The parts that apply go to the one writer of pages in one call; what it leaves incoherent, and the pages linked
       // to it, come from the wiki as it now stands (spec v0.6 CA7, CA9).
@@ -701,6 +703,14 @@ export async function submitProposal(ctx: Ctx, slug: string, input: ProposalInpu
         )
       }
       pages = pagesOf(applied.revised, applied.before)
+      // Into «Review later», unless a person in the web proposed it (plan §2.4).
+      undo = await recordChange(db, c, {
+        brainId: brain.id,
+        logId: applied.logId,
+        proposalId: id,
+        before: applied.before,
+        revised: applied.revised,
+      })
       // The entries the applied parts cite, and those collected without changes, are compiled, as on approval.
       const cited = new Set<string>(collected)
       for (const i of parts.apply) {
@@ -726,9 +736,9 @@ export async function submitProposal(ctx: Ctx, slug: string, input: ProposalInpu
     const stored: Stored = {
       proposalId: id,
       status: applying ? 'applied' : waiting ? 'held' : 'returned',
-      review: null,
+      review: undo ? 'pending-review' : null,
       pages,
-      undo: null,
+      undo,
       held: parts.held.map((h) => ({ op: h.op, address: h.address, reason: h.reason })),
       returned: parts.returned,
     }
@@ -789,9 +799,9 @@ async function receiptOf(
         ctx.clock(),
       ))),
     status: s.status,
-    review: s.review,
+    review: s.review ?? null,
     pages: s.pages.map(({ page, revision, change }) => ({ page, revision, change })),
-    undo: s.undo,
+    undo: s.undo ?? null,
     held: given.held ?? s.held.map((h) => ({ ...h, detail: holdDetail(h.reason, h.address) })),
     returned,
   }
