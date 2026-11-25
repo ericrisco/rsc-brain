@@ -5,6 +5,14 @@
 
 import { invalid } from '../../core/errors.ts'
 import { readLifetimes } from '../../domain/lapse.ts'
+import { limitOf } from '../../domain/listing.ts'
+import {
+  CHANGE_STATES,
+  type ChangeState,
+  getChange,
+  keepChange,
+  listChanges,
+} from '../../domain/wiki/changes.ts'
 import { setDebate } from '../../domain/wiki/debates.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
 import {
@@ -20,7 +28,7 @@ import { setProtection } from '../../domain/wiki/protect.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
 import { compactReview } from '../../domain/wiki/review.ts'
 import { chunkedReply } from '../chunked-reply.ts'
-import { bool, compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
+import { bool, compact, int, type Obj, obj, oneOf, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -33,7 +41,30 @@ function indices(b: Obj, key: string): number[] | undefined {
   return v as number[]
 }
 
+const q = (v: string | null) => (v === null || v === '' ? undefined : v)
+
 export const decideRoutes: Route[] = [
+  // «Review later» (spec learning-memory A2): what agents changed, oldest first; the detail; Keep (a person, in the web).
+  route('GET /v1/brains/:slug/wiki/changes', async (r) => ({
+    body: await listChanges(
+      ctxOf(r),
+      r.params.slug as string,
+      compact({
+        state: oneOf({ state: q(r.query.get('state')) }, 'state', [...CHANGE_STATES, 'all']) as
+          | ChangeState
+          | 'all'
+          | undefined,
+        cursor: q(r.query.get('cursor')),
+        limit: limitOf(r.query.get('limit')),
+      }),
+    ),
+  })),
+  route('GET /v1/wiki/changes/:id', async (r) => ({
+    body: await getChange(ctxOf(r), r.params.id as string),
+  })),
+  route('POST /v1/wiki/changes/:id/keep', async (r) => ({
+    body: await keepChange(ctxOf(r), r.params.id as string),
+  })),
   route('GET /v1/proposals/:id/review', async (r) => {
     // The web reads the whole pages; an agent asks for the compact view (diffs and changed fields).
     const view = r.query.get('view') ?? 'full'

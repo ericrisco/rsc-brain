@@ -12,10 +12,9 @@ import { AppError, conflict, invalid, notFound } from '../../core/errors.ts'
 import type { Row } from '../../db/db.ts'
 import { redact } from '../../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
-import { webCorrection } from '../entries.ts'
 import { emit } from '../events.ts'
 import { ApplyError, type ApplyItem, applyOps, type Revised } from './apply.ts'
-import { recordChange } from './changes.ts'
+import { recordChange, teach } from './changes.ts'
 import { type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
 import { named, type Proposal, type ProposalOp, proposalOf, proposalOpOf } from './proposals.ts'
 import { buildReview, dependencies, fingerprint, type Review, wikiPurges } from './review.ts'
@@ -151,7 +150,8 @@ async function stillAsSeen(ctx: Ctx, row: Row, seen: string): Promise<ProposalOp
     err.current = { supersededBy: row.superseded_by }
     throw err
   }
-  if (row.status !== 'pending') {
+  // Spec learning-memory A1: a proposal applied in part still has parts that wait; those are decided (CA-A18).
+  if (row.status !== 'pending' && row.status !== 'partially_applied') {
     const by = await ctx.db.one<{ name: string }>('SELECT name FROM accounts WHERE id = $1', [row.decided_by])
     const err = conflict(
       'already_decided',
@@ -188,33 +188,29 @@ const commentOf = (raw: string | undefined): string | undefined => {
   return c
 }
 
-// The returned part becomes a person's correction that applies to whoever proposed (spec B2, CA8).
-async function teach(
+// The returned parts become a person's correction for whoever proposed (spec B2, CA8): teach() in changes.ts, shared
+// with an undo that carries a comment (spec learning-memory CA-A25).
+const teachReturned = (
   ctx: Ctx,
   brainId: string,
   row: Row,
   comment: string,
   returned: ProposalOp[],
   byKey: boolean,
-) {
-  const author = await ctx.db.one<{ name: string }>('SELECT name FROM accounts WHERE id = $1', [
-    row.author_id,
-  ])
-  const appliesTo = String(row.agent ?? author?.name ?? 'the proposer').slice(0, 80)
-  const which = returned.map((o) => `${o.index} (${o.op.op} ${o.op.address})`).join(', ')
-  await webCorrection(
+) =>
+  teach(
     ctx,
-    ctx.db,
     brainId,
     {
-      title: `Returned: ${String(row.title)}`.slice(0, 200),
-      content: `${comment}\n\nReturned operations of proposal ${row.id}: ${which}.`.slice(0, 32_000),
-      appliesTo,
-      refs: [String(row.id)],
+      authorId: String(row.author_id),
+      agent: row.agent == null ? null : String(row.agent),
+      title: String(row.title),
+      ref: String(row.id),
     },
-    { decidedByKey: byKey },
+    comment,
+    `Returned operations of proposal ${row.id}: ${returned.map((o) => `${o.index} (${o.op.op} ${o.op.address})`).join(', ')}.`,
+    byKey,
   )
-}
 
 // What a person may correct before approving (spec B2: «Edit de una operación»): the words of a new page,
 // of an edit and of a merge — only those they edited — and for an edit the revision they saw. Never a whole
@@ -297,6 +293,18 @@ export type ApproveInput = {
   requestKey?: string
 }
 
+// A part that does not wait — applied at once, or back for being written on an old revision — is not decided.
+function notHeld(i: number, o: ProposalOp): never {
+  throw new AppError(
+    400,
+    'not_held',
+    `Operation ${i} is ${o.status}: only the parts that wait for a person are decided.`,
+    o.status === 'applied'
+      ? 'It is in «Review later»: keep it or undo it there.'
+      : 'Leave it out; its author redoes it on the current page.',
+  )
+}
+
 export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput): Promise<Decision> {
   const comment = commentOf(input.comment)
   checkRequestKey(input.requestKey)
@@ -315,14 +323,21 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     ])
     if (again) return again
     const ops = await stillAsSeen(c, row, input.fingerprint)
-    const all = ops.map((o) => o.index)
+    const every = ops.map((o) => o.index)
+    // Only the parts that wait are decided: «all» and «the rest» are those (spec learning-memory A1, plan §2.5).
+    const all = ops.filter((o) => o.status === 'pending').map((o) => o.index)
     const original = ops.map((o) => o.op)
     const approve = [...new Set(input.approve ?? all)].sort((a, b) => a - b)
     if (approve.length === 0)
       throw invalid('Approve at least one operation.', 'To approve none, return the proposal.')
-    for (const i of [...approve, ...(input.baseReviewed ?? [])]) {
-      if (!all.includes(i))
-        throw invalid(`The proposal has no operation ${i}.`, `Its operations are 0 to ${all.length - 1}.`)
+    for (const i of [
+      ...approve,
+      ...(input.baseReviewed ?? []),
+      ...Object.keys(input.corrections ?? {}).map(Number),
+    ]) {
+      if (!every.includes(i))
+        throw invalid(`The proposal has no operation ${i}.`, `Its operations are 0 to ${every.length - 1}.`)
+      if (!all.includes(i)) notHeld(i, ops[i] as ProposalOp)
     }
     // A curator's correction replaces the operation, checked like any operation.
     const corrected = new Set<number>()
@@ -363,7 +378,8 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     const plain = ops.map((o) => o.op)
     const deps = dependencies(plain)
     const missing = approve.flatMap((i) => {
-      const needs = (deps[i] ?? []).filter((j) => !approve.includes(j))
+      // What applied already is there; only a part that still waits can be missing.
+      const needs = (deps[i] ?? []).filter((j) => !approve.includes(j) && all.includes(j))
       return needs.length > 0 ? [{ op: i, needs }] : []
     })
     if (missing.length > 0) {
@@ -440,6 +456,8 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
       : null
     const now = ctx.clock()
     for (const o of ops) {
+      // Parts applied at once, or that came back, are left as they are.
+      if (o.status !== 'pending') continue
       const ok = approve.includes(o.index)
       // The operation's own page (a supersedes link also revises the page it supersedes, after).
       const first = applied.find((r) => r.index === o.index)
@@ -479,7 +497,7 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
       [row.id, status, ctx.who.accountId, now, comment ?? null],
     )
     if (rest.length > 0 && comment) {
-      await teach(
+      await teachReturned(
         c,
         brainId,
         row,
@@ -524,12 +542,23 @@ export async function returnProposal(
     if (again) return again
     const ops = await stillAsSeen(c, row, input.fingerprint)
     const now = ctx.clock()
-    await db.query("UPDATE proposal_ops SET status = 'returned' WHERE proposal_id = $1", [row.id])
+    // Only what waits goes back; parts applied at once stay applied (spec learning-memory A1).
+    await db.query(
+      "UPDATE proposal_ops SET status = 'returned' WHERE proposal_id = $1 AND status = 'pending'",
+      [row.id],
+    )
     const done = await db.one(
       `UPDATE proposals SET status = 'returned', decided_by = $2, decided_at = $3, comment = $4 WHERE id = $1 RETURNING *`,
       [row.id, ctx.who.accountId, now, comment],
     )
-    await teach(c, brainId, row, comment, ops, byKey !== null)
+    await teachReturned(
+      c,
+      brainId,
+      row,
+      comment,
+      ops.filter((o) => o.status === 'pending'),
+      byKey !== null,
+    )
     await emit(db, c, {
       brainId,
       kind: 'proposal.decided',

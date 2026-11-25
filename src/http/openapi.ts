@@ -486,6 +486,21 @@ const PROPOSAL_COUNTS = obj(
     ]),
   ),
 )
+// A change for review (spec learning-memory A2).
+const CHANGE = obj({
+  id: s('chg_…'),
+  at: DATE,
+  actor: obj({ id: s('The account.'), name: s('Its name.') }),
+  keyName: nul(s('The key it came with, by its name then.')),
+  ref: nul(s('The session or run of a short key.')),
+  proposalId: nul(s('The proposal it applied, if any.')),
+  title: s('What it changed.'),
+  parts: n('How many pages it touched.'),
+  state: s('pending_review, kept, undone or partly_undone.'),
+  decidedBy: nul(s('Who kept or undid it.')),
+  decidedAt: nul(DATE),
+})
+
 const INBOX = obj(
   {
     items: list(
@@ -1874,6 +1889,41 @@ const HAND: Record<string, Op> = {
       order: 'newest (the default) or oldest first.',
     },
     reply: INBOX,
+  },
+  'GET /v1/brains/{slug}/wiki/changes': {
+    summary:
+      '«Review later» (spec learning-memory A2): the changes to the wiki a person in the web did not make, oldest first, with who, which key, from which session or run and how many parts. For the curators of the brain and the keys with the permission to write to its wiki (403 otherwise).',
+    query: {
+      state: 'pending_review (the default), kept, undone, partly_undone, or all.',
+      cursor: 'The next page.',
+      limit: 'How many (1–200).',
+    },
+    reply: obj({ items: list(CHANGE, 'Oldest first.'), next: NEXT, total: n('How many in this state.') }),
+  },
+  'GET /v1/wiki/changes/{id}': {
+    summary:
+      'A change for review and its parts, one per page it touched: the revisions before and after, whether it created the page, the parts it needs to stay, and the difference of the body ("purged" when a revision was purged).',
+    reply: obj({
+      change: CHANGE,
+      parts: list(
+        obj({
+          part: n('Its number.'),
+          op: nul(s('The operation that made it, when known (a proposal).')),
+          address: s('The page, at its address now.'),
+          revisionBefore: nul(n('The revision before; null for a page it created.')),
+          revisionAfter: n('The revision it left.'),
+          created: b('It created the page.'),
+          dependsOn: list(n('Part.'), 'Parts that cannot be undone while this one stays.'),
+          diff: s('A unified diff of the body, or "purged".'),
+          state: s('applied or undone.'),
+        }),
+      ),
+    }),
+  },
+  'POST /v1/wiki/changes/{id}/keep': {
+    summary:
+      'Keep a change (curators, in the rsc-brain web): its pages count as reviewed up to the revisions it left. Keeping again changes nothing. 403 web_only with a key; 409 already_undone for an undone change.',
+    reply: obj({ change: CHANGE }),
   },
   'GET /v1/proposals/{id}/review': {
     summary:
