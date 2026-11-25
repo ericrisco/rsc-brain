@@ -104,6 +104,25 @@ describe('schema 0032 constraints', { skip: skipPg }, () => {
     await rejects("UPDATE wiki_settings SET write_mode = 'sometimes' WHERE brain_id = 'brn_a'")
   })
 
+  it('the lifetime of each type is whole days from 1 to 3650, or null; keys are types of entry (review R1)', async () => {
+    const set = (v: string) =>
+      t.db.query("UPDATE wiki_settings SET entry_lifetimes = $1::jsonb WHERE brain_id = 'brn_a'", [v])
+    await set('{"step": 1, "note": 3650, "decision": null, "learning": 60}')
+    for (const bad of [
+      '{"step": 7.5}',
+      '{"step": "x"}',
+      '{"note": 1e300}',
+      '{"step": 0}',
+      '{"step": 3651}',
+      '{"step": -3}',
+      '{"weapon": 5}',
+      '{"step": true}',
+      '[]',
+    ])
+      await assert.rejects(() => set(bad), bad)
+    await set('{}')
+  })
+
   it('a proposal may be applied, partly applied or stale; a part says why it waits', async () => {
     for (const [i, status] of ['applied', 'partially_applied', 'stale'].entries())
       await t.db.query(

@@ -3,11 +3,25 @@
 -- entry, computed when read. Every new column takes a constant default or now() when added, so PostgreSQL adds it
 -- without rewriting the table; the only bulk update is on pages (what existed counts as reviewed, CA-U6).
 
+-- Whether lifetimes of entries are well formed: an object whose keys are types of entry and whose values are whole days
+-- from 1 to 3650, or null for never. The app checks it too (lapse.ts readLifetimes); this holds for every path in, an
+-- import or a restore included. With its schema, so a copy restores under the empty search path of pg_restore (0025).
+CREATE FUNCTION public.brain_lifetimes_ok(v jsonb) RETURNS boolean
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  AS $$
+    SELECT pg_catalog.jsonb_typeof(v) = 'object' AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.jsonb_each(v) AS e(k, d)
+       WHERE e.k NOT IN ('decision', 'learning', 'attempt', 'correction', 'preference', 'fact', 'step', 'summary', 'note')
+          OR NOT (pg_catalog.jsonb_typeof(e.d) = 'null'
+                  OR (pg_catalog.jsonb_typeof(e.d) = 'number' AND e.d::text ~ '^[0-9]{1,4}$'
+                      AND e.d::text::integer BETWEEN 1 AND 3650)))
+  $$;
+
 -- The write mode of a wiki (spec A4): «auto» applies agents' changes at once, «ask_first» is v0.7.15. How long each
 -- type of entry lasts without use (spec B2), per brain: {type: days | null}, null for never; empty is the defaults.
 ALTER TABLE wiki_settings
   ADD COLUMN write_mode text NOT NULL DEFAULT 'auto' CHECK (write_mode IN ('auto', 'ask_first')),
-  ADD COLUMN entry_lifetimes jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(entry_lifetimes) = 'object');
+  ADD COLUMN entry_lifetimes jsonb NOT NULL DEFAULT '{}' CHECK (public.brain_lifetimes_ok(entry_lifetimes));
 
 -- Protected pages (spec A3): no page is born protected (CA-A19). A page is «unreviewed» while its revision is past
 -- the last one a person saw (spec A1); pages that existed passed through the old regime and count as reviewed.

@@ -460,6 +460,13 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
       // A value the schema refuses.
       ['bad value', tamper('pages.ndjson', (r) => r.map((x) => ({ ...x, type: 'weapon' })))],
       ['purged', tamper('entries.ndjson', (r) => r.map((x) => ({ ...x, state: 'purged' })))],
+      // Lifetimes of entries that are not whole days from 1 to 3650, or not of a type (review round 1, R1).
+      ...[{ step: 7.5 }, { step: 'x' }, { note: 1e300 }, { step: 0 }, { weapon: 5 }, []].map(
+        (v): [string, Map<string, Buffer | string>] => [
+          `entry_lifetimes ${JSON.stringify(v)}`,
+          tamper('wiki_settings.ndjson', (r) => r.map((x) => ({ ...x, entry_lifetimes: v }))),
+        ],
+      ),
       [
         'newer',
         new Map<string, Buffer | string>([

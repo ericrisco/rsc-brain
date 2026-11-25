@@ -15,6 +15,7 @@ import { newId } from '../../core/ids.ts'
 import { UnzipError } from '../../core/unzip.ts'
 import type { Db } from '../../db/db.ts'
 import type { Ctx } from '../../domain/context.ts'
+import { readLifetimes } from '../../domain/lapse.ts'
 import { isAddress } from '../../domain/wiki/model.ts'
 import { FAITHFUL_FORMAT, FAITHFUL_VERSION } from '../export/faithful.ts'
 import { addressOf, redactText } from './markdown.ts'
@@ -535,6 +536,15 @@ export async function writeFaithful(
       out.push(row)
     }
     if (name === 'wiki_settings' && out[0]) {
+      // The lifetimes of entries are read as a curator's would be: whole days of a type, or never (review R1).
+      const lifetimes = (out[0] as Record<string, unknown>).entry_lifetimes
+      if (lifetimes !== undefined) {
+        try {
+          readLifetimes(lifetimes)
+        } catch {
+          throw bad('the lifetimes of entries in wiki_settings are not whole days from 1 to 3650 of a type')
+        }
+      }
       const cols = spec.columns.filter((c) => c in (out[0] as object))
       await fits('wiki_settings', () =>
         db.query(
