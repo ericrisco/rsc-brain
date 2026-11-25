@@ -109,6 +109,11 @@ describe('a pg_dump copy restores into a new database (CA16)', { skip: skipPg },
         "SELECT count(*)::int AS n FROM entries WHERE search @@ brain_query(ARRAY['louvain'], '{}', '{}')",
       )
       assert.equal(entries.rows[0].n, 3)
+      // Spec learning-memory (plan §3.1): the expiry of each type is a function of the schema, and it restores too.
+      const days = await c.query("SELECT public.brain_entry_days('step', '{}') AS d")
+      assert.equal(days.rows[0].d, 7)
+      const kept = await c.query('SELECT count(*)::int AS n FROM entries WHERE lapse_from IS NOT NULL')
+      assert.equal(kept.rows[0].n, 3)
     } finally {
       await c.end()
     }

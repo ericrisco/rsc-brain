@@ -47,7 +47,11 @@ const PEOPLE = new Set([
   'actor_id',
 ])
 // A session open in A comes in closed (its key is A's): its state is the one thing that may differ.
-const MAY_DIFFER: Record<string, string[]> = { sessions: ['status', 'closed_at'] }
+// An import is a person's act: its pages come in reviewed, whatever they were (spec learning-memory A1, plan §3.1).
+const MAY_DIFFER: Record<string, string[]> = {
+  sessions: ['status', 'closed_at'],
+  pages: ['reviewed_revision'],
+}
 const SCOPE: Record<string, string> = {
   sessions: 'brain_id = $1',
   pages: 'brain_id = $1',
@@ -290,6 +294,11 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
     }
     // The ids are the original ones (no clash in B).
     assert.ok(await b.db.one('SELECT 1 FROM entries WHERE id = $1', [ids.e1]))
+    const unreviewed = await b.db.one(
+      `SELECT count(*)::int AS n FROM pages p JOIN brains b ON b.id = p.brain_id
+        WHERE b.slug = 'copy' AND p.reviewed_revision <> p.revision`,
+    )
+    assert.equal(unreviewed?.n, 0, 'every imported page is reviewed')
   })
 
   it("finds people by email only among the brain's members; everyone else is an author who never signs in", async () => {

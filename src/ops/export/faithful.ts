@@ -40,7 +40,7 @@ export const KINDS: readonly Kind[] = [
     sql: `SELECT id, session_id, type, topic, title, content, applies_to, tags, refs, author_id, on_behalf_id,
                  stamped_ref, revision, repeat_count, norm_hash, pinned, review_after, expires_at, state,
                  forgotten_by, forgotten_reason, forgotten_at, ${keptOrNull('superseded_by')}, compiled, created_at,
-                 updated_at, client
+                 updated_at, client, lapse_from
             FROM entries WHERE id IN (${KEPT}) ORDER BY id`,
     people: ['author_id', 'on_behalf_id', 'forgotten_by'],
   },
@@ -59,9 +59,10 @@ export const KINDS: readonly Kind[] = [
   },
   {
     name: 'pages',
-    sql: `SELECT id, address, type, title, summary, body, tags, status, superseded_by, revision, created_at, updated_at
+    sql: `SELECT id, address, type, title, summary, body, tags, status, superseded_by, revision, created_at, updated_at,
+                 protected, protected_by, protected_at
             FROM pages WHERE brain_id = $1 ORDER BY id`,
-    people: [],
+    people: ['protected_by'],
   },
   {
     name: 'page_addresses',
@@ -99,7 +100,7 @@ export const KINDS: readonly Kind[] = [
   {
     name: 'proposal_ops',
     sql: `SELECT o.proposal_id, o.idx, o.op, o.status, o.corrected_by, o.base_reviewed_by, o.applied_page,
-                 o.applied_revision
+                 o.applied_revision, o.hold_reason, o.stale_current
             FROM proposal_ops o JOIN proposals p ON p.id = o.proposal_id
            WHERE p.brain_id = $1 ORDER BY o.proposal_id, o.idx`,
     people: ['corrected_by', 'base_reviewed_by'],
@@ -107,7 +108,7 @@ export const KINDS: readonly Kind[] = [
   {
     name: 'wiki_settings',
     sql: `SELECT guide, map_intro, stale_days, long_chars, maintenance_every, approvals_since, usage_note,
-                 meaning_excluded
+                 meaning_excluded, write_mode, entry_lifetimes
             FROM wiki_settings WHERE brain_id = $1`,
     people: [],
   },

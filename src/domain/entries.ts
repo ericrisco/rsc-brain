@@ -407,8 +407,9 @@ async function write(
       const id = newId('ent')
       await db.query(
         `INSERT INTO entries (id, brain_id, session_id, type, topic, title, content, applies_to, tags, refs, author_id,
-           credential_id, on_behalf_id, stamped_ref, norm_hash, review_after, expires_at, created_at, updated_at, client)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18,$19)`,
+           credential_id, on_behalf_id, stamped_ref, norm_hash, review_after, expires_at, created_at, updated_at, client,
+           lapse_from)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18,$19,$18)`,
         [
           id,
           brainId,

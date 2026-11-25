@@ -67,7 +67,40 @@ async function redactStoredClients(db: Db): Promise<void> {
   }
 }
 
-export const STEPS: Step[] = [{ id: '0018_redact_clients', run: redactStoredClients }]
+// Spec learning-memory «Paso desde la versión anterior» (CA-U3, plan §3.2): every brain that existed now applies
+// agents' changes at once. Each active curator gets a notice in the web that says so and where to go back to «Ask
+// first», and each brain an audit line. No mail: the migrator has no outbox (plan §9). A new installation has no
+// brains and notifies nobody. The text goes through redact() like everything stored (pack rule 1).
+export const wikiModeNotice = (name: string, slug: string) =>
+  redact(
+    `The wiki of "${name}" now applies agents' changes at once, with undo. To ask first, open Settings › Wiki: /b/${slug}/settings`,
+  ).text.slice(0, 500)
+
+async function noticeWikiMode(db: Db): Promise<void> {
+  const brains = await db.query<{ id: string; slug: string; name: string }>(
+    'SELECT id, slug, name FROM brains ORDER BY id',
+  )
+  for (const b of brains) {
+    await db.query(
+      `INSERT INTO notices (account_id, at, kind, brain_id, text)
+       SELECT m.account_id, now(), 'wiki_mode', $1, $2
+         FROM memberships m JOIN accounts a ON a.id = m.account_id
+        WHERE m.brain_id = $1 AND m.role = 'curator' AND a.status = 'active'
+        ORDER BY m.account_id`,
+      [b.id, wikiModeNotice(b.name, b.slug)],
+    )
+    await db.query(
+      `INSERT INTO audit (at, actor_id, credential_id, action, brain_id, target, outcome, detail)
+       VALUES (now(), NULL, NULL, 'wiki.mode', $1, NULL, 'ok', 'auto (upgrade)')`,
+      [b.id],
+    )
+  }
+}
+
+export const STEPS: Step[] = [
+  { id: '0018_redact_clients', run: redactStoredClients },
+  { id: '0033_wiki_mode_notices', run: noticeWikiMode },
+]
 
 export async function migrationFiles(dir: string): Promise<string[]> {
   const names = (await readdir(dir)).filter((f) => NAME.test(f))
