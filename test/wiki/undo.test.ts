@@ -134,6 +134,8 @@ describe('undo, exact, whole or in parts (spec learning-memory A2)', { skip: ski
 
   it('CA-A2, A3: undoing a create retires the page: out of search and context, its address free; the log has both lines', async () => {
     const c = await propose([create('fresh')], 'Fresh page')
+    // The test clock stands still: a minute apart, the two log lines have an order.
+    w.advance(60_000)
     const r = await undo(c.undo)
     assert.equal(r.status, 200, r.text)
     assert.deepEqual(
