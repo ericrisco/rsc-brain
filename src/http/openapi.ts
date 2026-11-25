@@ -62,6 +62,7 @@ const CHECKED = {
         kind: s('The kind of link.'),
         direction: s('out: from that page; in: to it.'),
       }),
+      unreviewed: b('A change no person saw left it as it is (spec learning-memory A1).'),
     }),
     'The pages linked to what the change touches (at most 20), to read for contradictions in meaning.',
   ),
@@ -447,9 +448,27 @@ export const EVENT = obj(
 const PAGE = obj({ items: list({ type: 'object' }), next: NEXT })
 
 // Proposals as the inbox of the web reads and decides them (spec B2 «Revisar una propuesta», B6 PR21).
-const PROPOSAL_STATUS = s('pending, approved, partially_approved, returned, withdrawn or superseded.', {
-  enum: ['pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'],
-})
+// Spec learning-memory (plan §8.3 M2): applied — every part applied at once; partially_applied — some applied, some wait
+// for a person; stale — every part came back (written on an old revision); pending — every part waits (or the brain asks
+// first). approved, partially_approved and returned come after a person or a key with the permission decides what
+// waits. «returned» as a status is always a curator returning it; the «returned» list of a proposal's answer is the
+// parts that came back to redo.
+const PROPOSAL_STATUS = s(
+  'pending (all of it waits for a person, or the brain asks first), applied (every part applied at once), partially_applied (some applied at once, some wait), stale (every part came back to redo on the current page), approved, partially_approved or returned (decided by a person or a key with the permission: returned is a curator returning it, not the "returned" list of an answer), withdrawn or superseded.',
+  {
+    enum: [
+      'pending',
+      'approved',
+      'partially_approved',
+      'returned',
+      'withdrawn',
+      'superseded',
+      'applied',
+      'partially_applied',
+      'stale',
+    ],
+  },
+)
 const PROPOSAL = obj(
   {
     id: s('Proposal id (prp_…).'),
@@ -480,10 +499,17 @@ const PROPOSAL_NAMED = {
 }
 const PROPOSAL_COUNTS = obj(
   Object.fromEntries(
-    ['pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'].map((k) => [
-      k,
-      n(`Proposals ${k.replace('_', ' ')}.`),
-    ]),
+    [
+      'pending',
+      'approved',
+      'partially_approved',
+      'returned',
+      'withdrawn',
+      'superseded',
+      'applied',
+      'partially_applied',
+      'stale',
+    ].map((k) => [k, n(`Proposals ${k.replace('_', ' ')}.`)]),
   ),
 )
 // A change for review (spec learning-memory A2).
@@ -522,7 +548,10 @@ const WARNING = obj({
   code: s('A stable code.'),
   message: s('What to look at.'),
 })
-const OP_STATUS = s('pending, approved or returned.', { enum: ['pending', 'approved', 'returned'] })
+const OP_STATUS = s(
+  'pending (waits for a person: see holdReason), approved or returned (decided), applied (at once), stale (came back: written on an old revision), undone (a person or key undid it).',
+  { enum: ['pending', 'approved', 'returned', 'applied', 'stale', 'undone'] },
+)
 const PROPOSAL_OP = obj(
   {
     index: n('Its number in the proposal, from 0.'),
@@ -531,12 +560,18 @@ const PROPOSAL_OP = obj(
       description: 'The operation (create, edit, move, link, unlink, status, merge or revert).',
     },
     status: OP_STATUS,
+    holdReason: nul(
+      s('Why a pending part waits: protected, correction, ask_first or depends.', {
+        enum: ['protected', 'correction', 'ask_first', 'depends', null],
+      }),
+    ),
+    staleCurrent: nul(n('The revision of its page when it came back.')),
     correctedBy: nul(s('The curator who corrected it before approving.')),
     baseReviewedBy: nul(s('The curator who marked its old base reviewed.')),
     appliedPage: nul(s('The page it changed.')),
     appliedRevision: nul(n('The revision it made.')),
   },
-  ['correctedBy', 'baseReviewedBy', 'appliedPage', 'appliedRevision'],
+  ['correctedBy', 'baseReviewedBy', 'appliedPage', 'appliedRevision', 'holdReason', 'staleCurrent'],
 )
 const PAGE_STATE = {
   type: ['object', 'null'],
@@ -594,6 +629,7 @@ const REVIEW = obj({
 const DECISION = obj({
   proposal: PROPOSAL_NAMED,
   ops: list(PROPOSAL_OP),
+  undo: nul(s('The change in «Review later» when a key applied it (chg_…); null in the web.')),
   applied: list(
     obj(
       {
@@ -633,8 +669,11 @@ const WIKI_PAGE = obj(
     protected: b(
       "Protected by a curator: only a person in the web or a key with the wiki write permission writes it; other keys' changes to it wait for a person.",
     ),
+    unreviewed: b(
+      'A change no person saw left it at this revision; Keep in «Review later» or an edit by hand takes it off.',
+    ),
   },
-  ['protected'],
+  ['protected', 'unreviewed'],
 )
 const LINK_VIEW = obj({
   kind: s('mentions, related, depends-on, contradicts, supersedes, part-of or example-of.'),
@@ -1995,7 +2034,8 @@ const HAND: Record<string, Op> = {
     reply: DECISION,
   },
   'POST /v1/brains/{slug}/proposals': {
-    summary: 'Send a wiki proposal for a person to approve.',
+    summary:
+      'Send changes to the wiki (spec learning-memory A1). In a brain that applies automatically (the default) they apply at once, part by part, and enter «Review later»; parts on protected pages (without the wiki write permission), against a person’s correction, or in a brain set to ask first wait for a person ("held"); edits written on an old revision come back with the page now ("returned"), to redo. Parts that depend on one another share their fate. A retry with the same requestKey returns the same receipt.',
     status: 201,
     body: obj(
       {
@@ -2007,13 +2047,63 @@ const HAND: Record<string, Op> = {
         maintenance: b(
           'This is a cleanup of the wiki (a maintenance pass): approved, it counts as the daily cleanup.',
         ),
+        requestKey: s(
+          'Repeating the request with the same key returns the same receipt (409 request_key_reused if it differs).',
+        ),
       },
-      ['reason', 'collected', 'supersedes', 'maintenance'],
+      ['reason', 'collected', 'supersedes', 'maintenance', 'requestKey'],
     ),
-    reply: {
-      type: 'object',
-      description: 'The proposal, its operations, its warnings, and (v0.6) coherence and neighbours.',
-    },
+    reply: obj({
+      proposal: PROPOSAL,
+      ops: list(PROPOSAL_OP),
+      warnings: list(WARNING),
+      ...CHECKED,
+      status: s(
+        "The receipt (R1): applied (something applied at once), held (nothing applied; something waits for a person), returned (everything came back to redo). The proposal's own status follows its parts: applied, partially_applied, pending or stale.",
+        { enum: ['applied', 'held', 'returned'] },
+      ),
+      review: nul(
+        s('pending-review when what applied entered «Review later»; null otherwise.', {
+          enum: ['pending-review', null],
+        }),
+      ),
+      pages: list(
+        obj({
+          page: s('The page, at its address now.'),
+          revision: n('The revision it left.'),
+          change: s('created or updated.', { enum: ['created', 'updated'] }),
+        }),
+        'The pages that changed at once.',
+      ),
+      undo: nul(
+        s(
+          'The change in «Review later» that undoes it (chg_…); null when nothing applied or a person in the web sent it.',
+        ),
+      ),
+      held: list(
+        obj({
+          op: n('The operation.'),
+          address: s('The page that makes it wait.'),
+          reason: s('protected, correction, ask_first or depends.', {
+            enum: ['protected', 'correction', 'ask_first', 'depends'],
+          }),
+          detail: s('Why, in words.'),
+        }),
+        'Parts that wait for a curator in the web or a key with the permission (brain_decide).',
+      ),
+      returned: list(
+        obj({
+          op: n('The operation.'),
+          address: s('The page.'),
+          reason: s('stale (written on an old revision) or depends (needs one that came back).', {
+            enum: ['stale', 'depends'],
+          }),
+          currentRevision: nul(n('The revision of the page now.')),
+          current: nul({ ...WIKI_PAGE, description: 'The page now, to redo the part on.' }),
+        }),
+        'Parts that came back to redo: not the "returned" status, which is a curator returning a proposal.',
+      ),
+    }),
   },
   'POST /v1/brains/{slug}/wiki/check': {
     summary:
@@ -2053,6 +2143,7 @@ const HAND: Record<string, Op> = {
       ...CHECKED,
       applied: b('Always true: it was written.'),
       logId: s('Its line in the log of the wiki.'),
+      undo: nul(s('The change in «Review later» that undoes it (chg_…).')),
       revised: list(
         obj({ index: n('The operation.'), address: s('The page.'), revision: n('The revision it made.') }, [
           'index',

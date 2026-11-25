@@ -9,7 +9,7 @@ export const INSTRUCTIONS = `rsc-brain is a shared memory for you and the people
 3. Write while you work: mem_save each decision with its why, each learning, each failed attempt, and anything the person corrects (as a "learning"; "correction" is only for people). Types: ${AGENT_ENTRY_TYPES.join(', ')}. Use a topic for what evolves, so it is revised instead of duplicated. Start with mem_session_start and pass its session to later calls.
 4. Never save secrets: no keys, passwords or tokens. Wrap anything private in <private>...</private>.
 5. Close: mem_session_summary with goal, done, discovered, decided and pending.
-6. If asked to compile, use brain_compile_pack (it shows each operation with an example), then brain_propose; a person approves it. If a curator let your key write to the wiki, brain_write applies it at once, and brain_review then brain_decide decide others' proposals. Do not invent: cite the entries you use. Read the warnings and the linked pages each answer brings (brain_check asks first) and fix contradictions.
+6. If asked to compile, use brain_compile_pack (it shows each operation with an example), then brain_propose: it applies at once, with undo, and a curator reviews it later; parts on protected pages or against a correction wait, parts on an old revision come back to redo. If a curator let your key write to the wiki, brain_write writes directly, brain_review then brain_decide decide what waits, and brain_changes and brain_undo review what changed. Do not invent: cite the entries you use. Read the warnings and the linked pages each answer brings (brain_check asks first) and fix contradictions.
 7. When mem_context brings a cleanup, fix what its report lists and send it with "maintenance": true.
 
 Every error says what happened and how to proceed. A brain you cannot use answers as if it did not exist.`
@@ -26,7 +26,8 @@ export const PROMPTS: PromptDef[] = [
   {
     name: 'compile_brain',
     title: 'Compile this brain',
-    description: 'Turn what the journal learned into proposals for the wiki, for a person to approve.',
+    description:
+      'Turn what the journal learned into changes to the wiki, applied at once for a person to review.',
     arguments: [{ name: 'brain', description: 'The brain to compile (its name).', required: false }],
     text: (a) =>
       [
@@ -35,7 +36,7 @@ export const PROMPTS: PromptDef[] = [
         '2. Follow the guide. Group entries into pages: create, update, link, move or retire. Cite the entries each change comes from. Do not invent anything the entries do not say.',
         '3. Entries that change nothing go in "collected".',
         '4. Send it with brain_propose. Fix the problems it reports and send again.',
-        '5. Tell the person the proposal id and that it waits for their approval in the web.',
+        '5. Tell the person what applied (it is undoable from «Review later»), what waits for a curator and why, and redo what came back on the current page.',
       ].join('\n'),
   },
   {

@@ -206,6 +206,24 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
         '/v1/brains/par/proposals',
         { title: `Hooks ${s}side`, ops: [opOn(`audience/${s}side`)] },
       ],
+      // Applied at once: the second twin's title is the first's, a duplicate_title the first one did not have.
+      drop: (r) => {
+        delete r.coherence
+        delete r.neighbours
+        delete r.warnings
+      },
+    },
+    // Spec learning-memory A2: «Review later» and undo, with Eric's key (it may write to the wiki of "par").
+    brain_changes: {
+      args: () => ({ brain: 'par', state: 'undone' }),
+      api: () => ['GET', '/v1/brains/par/wiki/changes?state=undone'],
+    },
+    brain_undo: {
+      args: (s) => ({ id: t('undo', s) }),
+      api: (s) => ['POST', `/v1/wiki/changes/${t('undo', s)}/undo`, {}],
+      drop: (r) => {
+        delete (r.change as Json | undefined)?.decidedAt
+      },
     },
     brain_check: {
       args: () => ({ brain: 'par', title: 'Check', ops: [opOn('checked/page')] }),
@@ -260,7 +278,9 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
   }
 
   before(async () => {
-    w = await world({ askFirst: true })
+    // The default mode: proposals apply at once (spec learning-memory A1). Proposals that must wait for the cases of
+    // withdrawing, reviewing and deciding are sent while the brain asks first, then it goes back to applying.
+    w = await world()
     eric = await w.person('Eric')
     stranger = await w.person('Stranger')
     readOnly = await w.token(eric.id, { perm: 'read' })
@@ -289,9 +309,21 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
     await twins('forget', (s) => entry(`Forget ${s}side`))
     await twins('summary', () => session())
     await twins('end', () => session())
+    const mode = (writeMode: string) => w.callWeb(web, 'PUT', '/v1/brains/par/wiki/settings', { writeMode })
+    assert.equal((await mode('ask_first')).status, 200)
     await twins('withdraw', (s) => proposal(s))
     await twins('review', (s) => proposal(s, 'Review', 'reviewed'))
     await twins('decide', (s) => proposal(s, 'Decide', 'decided'))
+    assert.equal((await mode('auto')).status, 200)
+    // Changes in «Review later» to undo, one per side (spec learning-memory A2).
+    await twins('undo', async (s) => {
+      const r = await w.call(eric.key, 'POST', '/v1/brains/par/proposals', {
+        title: `Undo ${s}side`,
+        ops: [opOn(`undone/${s}side`)],
+      })
+      assert.equal(r.body.status, 'applied', r.text)
+      return String(r.body.undo)
+    })
   })
   after(async () => w.close())
 

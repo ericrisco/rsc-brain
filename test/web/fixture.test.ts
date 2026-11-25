@@ -746,6 +746,9 @@ describe('the fixture API', () => {
       returned: 1,
       withdrawn: 1,
       superseded: 1,
+      applied: 0,
+      partially_applied: 0,
+      stale: 0,
     })
     assert.ok(list.items.some((p) => p.old))
     assert.equal((await go('GET', '/v1/brains/growth/proposals?status=done')).status, 400)

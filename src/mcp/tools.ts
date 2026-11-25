@@ -25,6 +25,7 @@ export type Tool = {
   writes: boolean // needs a read + write key
   creates?: boolean // needs the right to create brains
   wikiWriter?: boolean // needs a key a curator let write to the wiki directly
+  reviewer?: boolean // a curator's key, or a key a curator let write to the wiki (spec learning-memory A2)
   annotations: { readOnlyHint: boolean; destructiveHint?: boolean; idempotentHint?: boolean }
   call: (a: Json, k: Kit) => Promise<Call>
 }
@@ -467,7 +468,7 @@ export const TOOLS: Tool[] = [
     name: 'brain_propose',
     title: 'Propose wiki changes',
     description:
-      'Sends changes to the wiki for a person to approve: operations citing their source entries, entries collected unchanged, and which proposal it replaces. Returns its problems or its id.',
+      'Sends changes to the wiki. They apply at once and a curator reviews them later; parts on protected pages, against a person\'s correction or in a brain set to ask first wait for a person; parts written on an old revision come back with the current page, to redo. Operations cite their source entries; "collected" lists entries compiled unchanged. Returns, part by part, what applied (pages, and "undo" for «Review later»), what waits ("held", with why) and what came back ("returned", with the page now), or the problems that stopped it.',
     inputSchema: obj(
       {
         brain: BRAIN,
@@ -492,6 +493,63 @@ export const TOOLS: Tool[] = [
       method: 'POST',
       path: `/v1/brains/${enc(await k.brain(a))}/proposals`,
       body: pick(a, ['title', 'reason', 'ops', 'collected', 'supersedes', 'maintenance', 'requestKey']),
+    }),
+  },
+  {
+    name: 'brain_changes',
+    title: 'Review later',
+    description:
+      'What agents changed in the wiki and nobody reviewed yet («Review later»), oldest first: who, with which key, from which session or run, how many parts. With "id": the parts of one change, each with its page, revisions and the difference. For curators\' keys and keys a curator let write to the wiki. Keeping a change is a person\'s, in the web.',
+    inputSchema: obj({
+      brain: BRAIN,
+      session: SESSION,
+      id: str('A change id (chg_…): its parts instead of the list.'),
+      state: { type: 'string', enum: ['pending_review', 'kept', 'undone', 'partly_undone', 'all'] },
+      cursor: str('The "next" of the page before.'),
+    }),
+    reviewer: true,
+    writes: false,
+    annotations: { readOnlyHint: true },
+    call: async (a, k) => {
+      const id = text(a, 'id')
+      if (id) return { method: 'GET', path: `/v1/wiki/changes/${enc(id)}` }
+      return {
+        method: 'GET',
+        path: `/v1/brains/${enc(await k.brain(a))}/wiki/changes`,
+        query: query(a, { state: 'state', cursor: 'cursor' }),
+      }
+    },
+  },
+  {
+    name: 'brain_undo',
+    title: 'Undo a change',
+    description:
+      'Undoes a change of «Review later», whole or the parts in "parts", when a curator gave your key the permission to write to the wiki: each page goes back exactly as it was, a page it created is retired. A "comment" becomes a correction for whoever made the change. A page written again since is a conflict (undo_conflict, with the pages): send "overwrite" with their addresses only if that is meant. Undoing twice answers alreadyUndone.',
+    inputSchema: obj(
+      {
+        id: str('The change id (chg_…).'),
+        parts: {
+          type: 'array',
+          items: { type: 'integer', minimum: 0 },
+          description: 'Undo only these parts; a part another part that stays needs cannot go alone.',
+        },
+        comment: str('Why: it teaches whoever made the change.'),
+        overwrite: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Addresses of pages written again since, to undo over.',
+        },
+        requestKey: str('Any unique text: repeating the call with the same key returns the same result.'),
+      },
+      ['id'],
+    ),
+    wikiWriter: true,
+    writes: true,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    call: async (a) => ({
+      method: 'POST',
+      path: `/v1/wiki/changes/${enc(text(a, 'id', true) as string)}/undo`,
+      body: pick(a, ['parts', 'comment', 'overwrite', 'requestKey']),
     }),
   },
   {
@@ -607,7 +665,7 @@ export const TOOLS: Tool[] = [
     name: 'brain_decide',
     title: 'Decide a proposal',
     description:
-      'Decides a pending proposal, as a curator does in the web, when a curator gave your key the permission to write to the wiki. "approve": all of it, or the operations in "approve" with a "comment" for the rest, which goes back to its author; "corrections" changes an operation first. "return": all of it goes back, with a "comment". Send the fingerprint of the review you read (brain_review): if the proposal changed, nothing is applied and the current review comes back.',
+      'Decides what waits in a proposal (pending, or applied in part with parts held), as a curator does in the web, when a curator gave your key the permission to write to the wiki; what you apply goes to «Review later». Only parts that wait are decided (not_held otherwise). "approve": all of it, or the operations in "approve" with a "comment" for the rest, which goes back to its author; "corrections" changes an operation first. "return": all of it goes back, with a "comment". Send the fingerprint of the review you read (brain_review): if the proposal changed, nothing is applied and the current review comes back.',
     inputSchema: obj(
       {
         id: str('The proposal id.'),
@@ -720,7 +778,17 @@ export async function listedTools(db: Db, who: Principal): Promise<Tool[]> {
   const writer = key
     ? Boolean(await db.one('SELECT 1 FROM wiki_writers WHERE key_id = $1 LIMIT 1', [key]))
     : false
-  return TOOLS.filter((t) => allowed(t, who) === null && (!t.wikiWriter || writer))
+  // «Review later» is read by the curators' keys too (spec learning-memory A2).
+  const curator =
+    writer ||
+    Boolean(
+      await db.one("SELECT 1 FROM memberships WHERE account_id = $1 AND role = 'curator' LIMIT 1", [
+        who.accountId,
+      ]),
+    )
+  return TOOLS.filter(
+    (t) => allowed(t, who) === null && (!t.wikiWriter || writer) && (!t.reviewer || curator),
+  )
 }
 
 // The brains this key can use, by name (the same narrowing as brain_list).
