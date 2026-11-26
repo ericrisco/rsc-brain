@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { AppError, conflict, invalid } from '../../core/errors.ts'
 import type { Db } from '../../db/db.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
+import { recordChange } from './changes.ts'
 import { type Checked, checkChange, checksNow } from './coherence.ts'
 import type { Op, Problem } from './model.ts'
 import { getPage } from './pages.ts'
@@ -22,6 +23,8 @@ type Stored = {
   applied: true
   logId: string
   revised: { index?: number; address: string; revision: number }[]
+  // The change in «Review later» that undoes it (spec learning-memory A1, CA-A17).
+  undo: string | null
 }
 export type WriteReceipt = Stored & Checked
 
@@ -78,8 +81,8 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
       )
       if (seen) {
         if (seen.request_hash === requestHash) {
-          const { applied, logId, revised } = seen.receipt
-          return rebuilt(db, brain.id, { applied, logId, revised }, ctx.clock())
+          const { applied, logId, revised, undo } = seen.receipt
+          return rebuilt(db, brain.id, { applied, logId, revised, undo: undo ?? null }, ctx.clock())
         }
         throw conflict(
           'request_key_reused',
@@ -133,6 +136,12 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
     })
     if (!applied) throw invalid('Nothing to write.', 'Send at least one operation.')
     const { revised, logId } = applied
+    const undo = await recordChange(db, c, {
+      brainId: brain.id,
+      logId,
+      before: applied.before,
+      revised,
+    })
     // The entries it cites, and those collected without changes, are compiled, as with an approved proposal.
     const cited = new Set<string>(pkg.collected)
     for (const o of ops) {
@@ -153,6 +162,7 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
         address: r.address,
         revision: r.revision,
       })),
+      undo,
     }
     if (keyHash && requestHash) {
       await db.query(

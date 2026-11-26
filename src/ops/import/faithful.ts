@@ -15,6 +15,7 @@ import { newId } from '../../core/ids.ts'
 import { UnzipError } from '../../core/unzip.ts'
 import type { Db } from '../../db/db.ts'
 import type { Ctx } from '../../domain/context.ts'
+import { readLifetimes } from '../../domain/lapse.ts'
 import { isAddress } from '../../domain/wiki/model.ts'
 import { FAITHFUL_FORMAT, FAITHFUL_VERSION } from '../export/faithful.ts'
 import { addressOf, redactText } from './markdown.ts'
@@ -72,7 +73,7 @@ export const FILES: Record<string, Spec> = {
     columns:
       `id session_id type topic title content applies_to tags refs author on_behalf stamped_ref revision
       repeat_count norm_hash pinned review_after expires_at state forgotten_by forgotten_reason forgotten_at superseded_by
-      compiled created_at updated_at client`.split(/\s+/),
+      compiled created_at updated_at client lapse_from`.split(/\s+/),
     people: people('author_id', 'on_behalf_id', 'forgotten_by'),
     refs: { session_id: 'session', superseded_by: 'entry' },
     later: ['superseded_by'],
@@ -97,10 +98,9 @@ export const FILES: Record<string, Spec> = {
     table: 'pages',
     id: 'page',
     columns:
-      'id address type title summary body tags status superseded_by revision created_at updated_at'.split(
-        ' ',
-      ),
-    people: {},
+      `id address type title summary body tags status superseded_by revision created_at updated_at protected
+      protected_by protected_at`.split(/\s+/),
+    people: people('protected_by'),
     refs: { superseded_by: 'page' },
     later: ['superseded_by'],
   },
@@ -122,9 +122,9 @@ export const FILES: Record<string, Spec> = {
   },
   proposal_ops: {
     table: 'proposal_ops',
-    columns: 'proposal_id idx op status corrected_by base_reviewed_by applied_page applied_revision'.split(
-      ' ',
-    ),
+    columns:
+      `proposal_id idx op status corrected_by base_reviewed_by applied_page applied_revision hold_reason
+      stale_current`.split(/\s+/),
     people: people('corrected_by', 'base_reviewed_by'),
     refs: { proposal_id: 'proposal', applied_page: 'page' },
   },
@@ -151,9 +151,8 @@ export const FILES: Record<string, Spec> = {
   wiki_settings: {
     table: 'wiki_settings',
     columns:
-      'guide map_intro stale_days long_chars maintenance_every approvals_since usage_note meaning_excluded'.split(
-        ' ',
-      ),
+      `guide map_intro stale_days long_chars maintenance_every approvals_since usage_note meaning_excluded write_mode
+      entry_lifetimes`.split(/\s+/),
     people: {},
     refs: {},
   },
@@ -524,6 +523,8 @@ export async function writeFaithful(
       // An import line of the export named who imported in its text, a name this installation could not anonymise:
       // it says «Imported», and who it was is its actor (second pass on PR32).
       if (name === 'wiki_log' && row.kind === 'import') row.summary = 'Imported'
+      // A person imports: every page comes in reviewed (spec learning-memory A1); «Review later» starts empty here.
+      if (name === 'pages') row.reviewed_revision = row.revision
       if (name === 'sessions' && row.status === 'open') {
         row.status = 'closed'
         row.closed_at = row.last_activity_at ?? o.now
@@ -535,6 +536,15 @@ export async function writeFaithful(
       out.push(row)
     }
     if (name === 'wiki_settings' && out[0]) {
+      // The lifetimes of entries are read as a curator's would be: whole days of a type, or never (review R1).
+      const lifetimes = (out[0] as Record<string, unknown>).entry_lifetimes
+      if (lifetimes !== undefined) {
+        try {
+          readLifetimes(lifetimes)
+        } catch {
+          throw bad('the lifetimes of entries in wiki_settings are not whole days from 1 to 3650 of a type')
+        }
+      }
       const cols = spec.columns.filter((c) => c in (out[0] as object))
       await fits('wiki_settings', () =>
         db.query(

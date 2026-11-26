@@ -62,6 +62,7 @@ const CHECKED = {
         kind: s('The kind of link.'),
         direction: s('out: from that page; in: to it.'),
       }),
+      unreviewed: b('A change no person saw left it as it is (spec learning-memory A1).'),
     }),
     'The pages linked to what the change touches (at most 20), to read for contradictions in meaning.',
   ),
@@ -90,6 +91,20 @@ const WIKI_SETTINGS = obj({
     'Kept for API v1: since v0.6 a cleanup is suggested daily, not every so many approvals.',
   ),
   approvalsSince: n('Kept for API v1: approvals since a curator last asked for maintenance.'),
+  entryLifetimes: {
+    type: 'object',
+    description:
+      'How long each type of entry lasts without use, in days, as in force in this brain: {"step": 7, …}; null: never. A date set by hand on an entry wins; pinned entries and entries cited by a current page do not lapse.',
+  },
+  writeMode: s(
+    'When agents change the wiki: auto (they apply at once and a curator reviews them later) or ask_first (they wait for a curator).',
+    { enum: ['auto', 'ask_first'] },
+  ),
+  entryLifetimesDefault: {
+    type: 'object',
+    description:
+      'The same, as rsc-brain sets it: step 7, attempt 14, summary and note 30, learning 60, the rest never.',
+  },
 })
 const MEMBER_SET = obj({
   accountId: s('Account id.'),
@@ -188,14 +203,18 @@ const BRAIN = obj({
   createdAt: s('When.', { format: 'date-time' }),
   updatedAt: s('When it last changed.', { format: 'date-time' }),
 })
-const STATS = obj({
-  pages: n('Wiki pages that are not retired.'),
-  entries: n('Active journal entries.'),
-  uncompiled: n('Active entries no proposal has gathered yet.'),
-  conflicts: n('Open contradictions between entries.'),
-  pendingProposals: n('Proposals waiting for a curator.'),
-  lastActivityAt: nul(s('The last write, session or proposal.', { format: 'date-time' })),
-})
+const STATS = obj(
+  {
+    pages: n('Wiki pages that are not retired.'),
+    entries: n('Active journal entries.'),
+    uncompiled: n('Active entries no proposal has gathered yet.'),
+    conflicts: n('Open contradictions between entries.'),
+    pendingProposals: n('Proposals with parts waiting for a curator.'),
+    pendingReview: n('Changes agents made that no person reviewed yet («Review later»).'),
+    lastActivityAt: nul(s('The last write, session or proposal.', { format: 'date-time' })),
+  },
+  ['pendingReview'],
+)
 const BRAIN_ROLE = {
   ...BRAIN,
   properties: {
@@ -229,33 +248,42 @@ const SESSION = obj({
   lastActivityAt: s('Last write.', { format: 'date-time' }),
   closedAt: nul(s('When.', { format: 'date-time' })),
 })
-const ENTRY = obj({
-  id: s('Entry id (ent_…).'),
-  brainId: s('Its brain.'),
-  sessionId: s('Its session.'),
-  type: s('decision, learning, attempt, correction, preference, fact, step, summary or note.'),
-  topic: nul(s('Topic key, for what evolves.')),
-  title: s('Title.'),
-  content: s('The entry, already redacted.'),
-  appliesTo: nul(s('The agent, account or label it applies to.')),
-  tags: list(s('A tag.')),
-  refs: list(
-    s('A file, link or id; a correction written in the web names "page:<address>" or "entry:<id>".'),
-  ),
-  authorId: s('The account that wrote it.'),
-  onBehalfId: nul(s('The person a service relayed it for.')),
-  ref: nul(s('The external reference stamped by the short key that wrote it.')),
-  revision: n('Its revision, for corrections against it.'),
-  repeatCount: n('How many times it was saved.'),
-  pinned: b('Always in the start context (curators pin).'),
-  reviewAfter: nul(s('After this, it is to review.', { format: 'date-time' })),
-  expiresAt: nul(s('After this, it leaves the default context.', { format: 'date-time' })),
-  state: s('active, forgotten or purged.'),
-  supersededBy: nul(s('The entry that supersedes it.')),
-  compiled: b('A wiki proposal gathered it.'),
-  createdAt: s('When.', { format: 'date-time' }),
-  updatedAt: s('When it last changed.', { format: 'date-time' }),
-})
+const ENTRY = obj(
+  {
+    id: s('Entry id (ent_…).'),
+    brainId: s('Its brain.'),
+    sessionId: s('Its session.'),
+    type: s('decision, learning, attempt, correction, preference, fact, step, summary or note.'),
+    topic: nul(s('Topic key, for what evolves.')),
+    title: s('Title.'),
+    content: s('The entry, already redacted.'),
+    appliesTo: nul(s('The agent, account or label it applies to.')),
+    tags: list(s('A tag.')),
+    refs: list(
+      s('A file, link or id; a correction written in the web names "page:<address>" or "entry:<id>".'),
+    ),
+    authorId: s('The account that wrote it.'),
+    onBehalfId: nul(s('The person a service relayed it for.')),
+    ref: nul(s('The external reference stamped by the short key that wrote it.')),
+    revision: n('Its revision, for corrections against it.'),
+    repeatCount: n('How many times it was saved.'),
+    pinned: b('Always in the start context (curators pin).'),
+    reviewAfter: nul(s('After this, it is to review.', { format: 'date-time' })),
+    expiresAt: nul(s('After this, it leaves the default context.', { format: 'date-time' })),
+    lapsesAt: nul(
+      s(
+        "When it leaves search and context: the date set by hand, else its type's lifetime from when it was written (or its topic revised); null when it does not lapse. Only when an entry is read alone.",
+        { format: 'date-time' },
+      ),
+    ),
+    state: s('active, forgotten or purged.'),
+    supersededBy: nul(s('The entry that supersedes it.')),
+    compiled: b('A wiki proposal gathered it.'),
+    createdAt: s('When.', { format: 'date-time' }),
+    updatedAt: s('When it last changed.', { format: 'date-time' }),
+  },
+  ['lapsesAt'],
+)
 const NAMED = obj({ id: s('Account id.'), name: s('Name.') })
 // An entry as a person reads it (the journal in the web, B6 PR20): who wrote it and with what, and, for a
 // forgotten one (only curators see it), who forgot it, when and why.
@@ -424,9 +452,27 @@ export const EVENT = obj(
 const PAGE = obj({ items: list({ type: 'object' }), next: NEXT })
 
 // Proposals as the inbox of the web reads and decides them (spec B2 «Revisar una propuesta», B6 PR21).
-const PROPOSAL_STATUS = s('pending, approved, partially_approved, returned, withdrawn or superseded.', {
-  enum: ['pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'],
-})
+// Spec learning-memory (plan §8.3 M2): applied — every part applied at once; partially_applied — some applied, some wait
+// for a person; stale — every part came back (written on an old revision); pending — every part waits (or the brain asks
+// first). approved, partially_approved and returned come after a person or a key with the permission decides what
+// waits. «returned» as a status is always a curator returning it; the «returned» list of a proposal's answer is the
+// parts that came back to redo.
+const PROPOSAL_STATUS = s(
+  'pending (all of it waits for a person, or the brain asks first), applied (every part applied at once), partially_applied (some applied at once, some wait), stale (every part came back to redo on the current page), approved, partially_approved or returned (decided by a person or a key with the permission: returned is a curator returning it, not the "returned" list of an answer), withdrawn or superseded.',
+  {
+    enum: [
+      'pending',
+      'approved',
+      'partially_approved',
+      'returned',
+      'withdrawn',
+      'superseded',
+      'applied',
+      'partially_applied',
+      'stale',
+    ],
+  },
+)
 const PROPOSAL = obj(
   {
     id: s('Proposal id (prp_…).'),
@@ -457,12 +503,43 @@ const PROPOSAL_NAMED = {
 }
 const PROPOSAL_COUNTS = obj(
   Object.fromEntries(
-    ['pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'].map((k) => [
-      k,
-      n(`Proposals ${k.replace('_', ' ')}.`),
-    ]),
+    [
+      'pending',
+      'approved',
+      'partially_approved',
+      'returned',
+      'withdrawn',
+      'superseded',
+      'applied',
+      'partially_applied',
+      'stale',
+    ].map((k) => [k, n(`Proposals ${k.replace('_', ' ')}.`)]),
   ),
 )
+// A change for review (spec learning-memory A2).
+const CHANGE = obj({
+  id: s('chg_…'),
+  at: DATE,
+  actor: obj({ id: s('The account.'), name: s('Its name.') }),
+  keyName: nul(s('The key it came with, by its name then.')),
+  ref: nul(s('The session or run of a short key.')),
+  proposalId: nul(s('The proposal it applied, if any.')),
+  title: s('What it changed.'),
+  parts: n('How many pages it touched.'),
+  state: s('pending_review, kept, undone or partly_undone (a partly undone change still awaits review).'),
+  decidedBy: nul(s('Who kept or undid it.')),
+  decidedAt: nul(DATE),
+  pages: list(
+    obj({
+      address: s('The page, at its address now.'),
+      op: nul(s('The operation that touched it, when known.')),
+    }),
+    'The pages it touched, in the order of its parts.',
+  ),
+  comment: nul(s('Why it was undone; null otherwise, or once its proposal was purged.')),
+  correction: nul(s('The correction (an entry id) the comment of its undo became.')),
+})
+
 const INBOX = obj(
   {
     items: list(
@@ -484,7 +561,10 @@ const WARNING = obj({
   code: s('A stable code.'),
   message: s('What to look at.'),
 })
-const OP_STATUS = s('pending, approved or returned.', { enum: ['pending', 'approved', 'returned'] })
+const OP_STATUS = s(
+  'pending (waits for a person: see holdReason), approved or returned (decided), applied (at once), stale (came back: written on an old revision), undone (a person or key undid it).',
+  { enum: ['pending', 'approved', 'returned', 'applied', 'stale', 'undone'] },
+)
 const PROPOSAL_OP = obj(
   {
     index: n('Its number in the proposal, from 0.'),
@@ -493,12 +573,18 @@ const PROPOSAL_OP = obj(
       description: 'The operation (create, edit, move, link, unlink, status, merge or revert).',
     },
     status: OP_STATUS,
+    holdReason: nul(
+      s('Why a pending part waits: protected, correction, ask_first or depends.', {
+        enum: ['protected', 'correction', 'ask_first', 'depends', null],
+      }),
+    ),
+    staleCurrent: nul(n('The revision of its page when it came back.')),
     correctedBy: nul(s('The curator who corrected it before approving.')),
     baseReviewedBy: nul(s('The curator who marked its old base reviewed.')),
     appliedPage: nul(s('The page it changed.')),
     appliedRevision: nul(n('The revision it made.')),
   },
-  ['correctedBy', 'baseReviewedBy', 'appliedPage', 'appliedRevision'],
+  ['correctedBy', 'baseReviewedBy', 'appliedPage', 'appliedRevision', 'holdReason', 'staleCurrent'],
 )
 const PAGE_STATE = {
   type: ['object', 'null'],
@@ -556,6 +642,7 @@ const REVIEW = obj({
 const DECISION = obj({
   proposal: PROPOSAL_NAMED,
   ops: list(PROPOSAL_OP),
+  undo: nul(s('The change in «Review later» when a key applied it (chg_…); null in the web.')),
   applied: list(
     obj(
       {
@@ -577,21 +664,30 @@ const PAGE_TYPE = s('topic, entity, decision, guide, agent, source or overview.'
 const PAGE_STATUS = s('current, stale, superseded or retired.', {
   enum: ['current', 'stale', 'superseded', 'retired'],
 })
-const WIKI_PAGE = obj({
-  id: s('Page id.'),
-  brainId: s('Its brain.'),
-  address: s('Its current address.'),
-  type: PAGE_TYPE,
-  title: s('Title.'),
-  summary: s('One sentence.'),
-  body: s('Markdown; [[address]] mentions another page.'),
-  tags: list(s('Tag.')),
-  status: PAGE_STATUS,
-  supersededBy: nul(s('The page that replaces it, when superseded.')),
-  revision: n('Its current revision: edit against it.'),
-  createdAt: s('When.', { format: 'date-time' }),
-  updatedAt: s('When it last changed.', { format: 'date-time' }),
-})
+const WIKI_PAGE = obj(
+  {
+    id: s('Page id.'),
+    brainId: s('Its brain.'),
+    address: s('Its current address.'),
+    type: PAGE_TYPE,
+    title: s('Title.'),
+    summary: s('One sentence.'),
+    body: s('Markdown; [[address]] mentions another page.'),
+    tags: list(s('Tag.')),
+    status: PAGE_STATUS,
+    supersededBy: nul(s('The page that replaces it, when superseded.')),
+    revision: n('Its current revision: edit against it.'),
+    createdAt: s('When.', { format: 'date-time' }),
+    updatedAt: s('When it last changed.', { format: 'date-time' }),
+    protected: b(
+      "Protected by a curator: only a person in the web or a key with the wiki write permission writes it; other keys' changes to it wait for a person.",
+    ),
+    unreviewed: b(
+      'A change no person saw left it at this revision; Keep in «Review later» or an edit by hand takes it off.',
+    ),
+  },
+  ['protected', 'unreviewed'],
+)
 const LINK_VIEW = obj({
   kind: s('mentions, related, depends-on, contradicts, supersedes, part-of or example-of.'),
   address: s('The other page.'),
@@ -633,8 +729,9 @@ const PAGE_READING = obj(
       }),
     ),
     corrections: list(PAGE_CORRECTION),
+    reviewChange: nul(s('The latest change awaiting review that touched it (chg_…), for «Review it».')),
   },
-  ['redirectedFrom', 'notice'],
+  ['redirectedFrom', 'notice', 'reviewChange'],
 )
 const REVISION_SUMMARY = {
   revision: n('Its number.'),
@@ -707,6 +804,7 @@ const HAND: Record<string, Op> = {
       status:
         'Only these statuses: one or more of current, stale, superseded and retired, separated by commas.',
       tag: 'Only pages with this tag.',
+      unreviewed: '1: only the pages a change no person saw left as they are.',
       linkKind:
         'Only pages with a link of this kind, either way: mentions, related, depends-on, contradicts, supersedes, part-of or example-of.',
       sort: 'address (the default), title, type, status, in, out or updatedAt; "-" before it for the other way.',
@@ -724,6 +822,7 @@ const HAND: Record<string, Op> = {
           in: n('Pages linking to it.'),
           out: n('Pages it links to.'),
           updatedAt: s('When it last changed.', { format: 'date-time' }),
+          unreviewed: b('A change no person saw left it as it is («Review later»).'),
         }),
       ),
       next: NEXT,
@@ -805,13 +904,19 @@ const HAND: Record<string, Op> = {
               type: PAGE_TYPE,
               area: s('First part of the address.'),
               pages: list(
-                obj({
-                  address: s('Address.'),
-                  title: s('Title.'),
-                  summary: s('Summary.'),
-                  tags: list(s('Tag.')),
-                  status: PAGE_STATUS,
-                }),
+                obj(
+                  {
+                    address: s('Address.'),
+                    title: s('Title.'),
+                    summary: s('Summary.'),
+                    tags: list(s('Tag.')),
+                    status: PAGE_STATUS,
+                    unreviewed: b(
+                      'Only when true: a change no person saw left it as it is («Review later»).',
+                    ),
+                  },
+                  ['unreviewed'],
+                ),
               ),
             }),
           ),
@@ -891,7 +996,7 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/wiki/log': {
     summary: 'One line per change applied to the wiki, newest first.',
     query: {
-      kind: 'proposal, direct, revert, purge or write.',
+      kind: 'proposal, direct, revert, purge, write, undo or protect.',
       page: 'Only lines that touched this address.',
       cursor: 'The "next" of the previous page.',
       limit: 'Lines per answer.',
@@ -904,8 +1009,8 @@ const HAND: Record<string, Op> = {
           actorId: s('Who.'),
           actorName: s('Their name.'),
           kind: s(
-            'proposal (approved), direct (by hand in the web), revert, purge, or write (written directly by a key with the permission).',
-            { enum: ['proposal', 'direct', 'revert', 'purge', 'write'] },
+            'proposal (approved), direct (by hand in the web), revert, purge, write (written directly by a key with the permission), undo (a change undone from Review later) or protect (a page protected or unprotected).',
+            { enum: ['proposal', 'direct', 'revert', 'purge', 'write', 'undo', 'protect'] },
           ),
           proposalId: nul(s('The proposal it applied.')),
           summary: s('What changed.'),
@@ -944,6 +1049,7 @@ const HAND: Record<string, Op> = {
         'sources',
         'lastChange',
         'corrections',
+        'reviewChange',
         'history',
         'revision',
         'a',
@@ -1846,6 +1952,98 @@ const HAND: Record<string, Op> = {
     },
     reply: INBOX,
   },
+  'GET /v1/brains/{slug}/wiki/changes': {
+    summary:
+      '«Review later» (spec learning-memory A2): the changes to the wiki a person in the web did not make, oldest first, with who, which key, from which session or run and how many parts. For the curators of the brain and the keys with the permission to write to its wiki (403 otherwise).',
+    query: {
+      state:
+        'pending_review (the default: awaiting review, partly undone changes included), kept, undone, partly_undone, or all.',
+      since: 'Only changes made from this date and time on (ISO 8601).',
+      cursor: 'The next page.',
+      limit: 'How many (1–200).',
+    },
+    reply: obj({ items: list(CHANGE, 'Oldest first.'), next: NEXT, total: n('How many in this state.') }),
+  },
+  'GET /v1/wiki/changes/{id}': {
+    summary:
+      'A change for review and its parts, one per page it touched: the revisions before and after, whether it created the page, the parts it needs to stay, and the difference of the body ("purged" when a revision was purged).',
+    reply: obj({
+      change: CHANGE,
+      parts: list(
+        obj({
+          part: n('Its number.'),
+          op: nul(s('The operation that made it, when known (a proposal).')),
+          address: s('The page, at its address now.'),
+          revisionBefore: nul(n('The revision before; null for a page it created.')),
+          revisionAfter: n('The revision it left.'),
+          created: b('It created the page.'),
+          dependsOn: list(n('Part.'), 'Parts that cannot be undone while this one stays.'),
+          diff: s('A unified diff of the body, or "purged".'),
+          state: s('applied or undone.'),
+          operation: nul(
+            obj(
+              {
+                op: s('create, edit, move, link, unlink, status, merge or revert.'),
+                reason: nul(s('Why, as the agent wrote it.')),
+                kind: s('The kind of link (link, unlink).'),
+                to: s('The page linked (link, unlink) or the new address (move).'),
+                from: s('The old address (move) or the page taken in (merge).'),
+                status: s('The status set (status).'),
+              },
+              ['kind', 'to', 'from', 'status'],
+            ),
+          ),
+        }),
+      ),
+    }),
+  },
+  'POST /v1/wiki/changes/{id}/keep': {
+    summary:
+      'Keep a change (curators, in the rsc-brain web): its pages count as reviewed up to the revisions it left. Keeping again changes nothing. 403 web_only with a key; 409 already_undone for an undone change.',
+    reply: obj({ change: CHANGE }),
+  },
+  'POST /v1/wiki/changes/{id}/undo': {
+    summary:
+      'Undo a change of «Review later» (curators in the web, or a key with the permission to write to the wiki), whole or the parts in "parts": each page goes back exactly as it was (a page it created is retired). 400 missing_dependencies when a part that stays needs one undone; 409 undo_conflict when anything about a page changed since the change — its revision, status, addresses, links out, the links into it from other pages, or a page of the change that links to it — with "pages" (per page: "differs", the links added or removed, who wrote last and when), and nothing changes; send "overwrite" with their addresses to undo each page’s own state anyway (the links into it from other pages stay as they are). "addresses" names an address another page took, which overwrite does not take; 409 undo_purged when a revision it would go back to was purged (nothing is undone). Parts of the proposal still waiting that need an undone part are discarded with it ("discarded"). Undoing twice answers alreadyUndone. A "comment" becomes a correction for whoever made the change.',
+    body: obj(
+      {
+        parts: list(n('Part number.'), 'Undo only these parts.'),
+        comment: s('Why; it becomes a correction for whoever made the change.'),
+        overwrite: list(s('Address.'), 'Pages written again since, to undo over.'),
+        requestKey: s('Any unique text: a retry with it returns the same answer.'),
+      },
+      ['parts', 'comment', 'overwrite', 'requestKey'],
+    ),
+    reply: {
+      oneOf: [
+        obj(
+          {
+            change: CHANGE,
+            undone: list(obj({ address: s('The page.'), revision: n('Its revision now.') })),
+            discarded: list(
+              n('Operation.'),
+              'Parts of the proposal still waiting that needed an undone part: discarded.',
+            ),
+            correction: s('The correction left for whoever made the change.'),
+            overwritten: list(
+              obj({
+                address: s('The page.'),
+                revisions: list(n('Revision.'), 'The later revisions it replaced.'),
+                editedBy: list(s('Name.'), 'Who wrote them.'),
+                leftAsIs: list(
+                  s('links_in, addresses, status, links_out or linked_page:<address>.'),
+                  'What changed since and was left as it is: links into the page from other pages are never touched.',
+                ),
+              }),
+              'With "overwrite": what came after the change and was replaced (it stays in the history).',
+            ),
+          },
+          ['correction', 'overwritten'],
+        ),
+        obj({ alreadyUndone: b('It was undone already; nothing changed.') }),
+      ],
+    },
+  },
   'GET /v1/proposals/{id}/review': {
     summary:
       'A proposal as a person reviews it in the web: each operation with the page before and after, what it depends on, and an old base in three versions. Any member reads it in the web; only a curator decides. A key reads it, and decides, only with the permission to write to the wiki (403 web_only otherwise).',
@@ -1889,7 +2087,8 @@ const HAND: Record<string, Op> = {
     reply: DECISION,
   },
   'POST /v1/brains/{slug}/proposals': {
-    summary: 'Send a wiki proposal for a person to approve.',
+    summary:
+      'Send changes to the wiki (spec learning-memory A1). In a brain that applies automatically (the default) they apply at once, part by part, and enter «Review later»; parts on protected pages (without the wiki write permission), against a person’s correction, or in a brain set to ask first wait for a person ("held"); edits written on an old revision come back with the page now ("returned"), to redo. Parts that depend on one another share their fate. A retry with the same requestKey returns the same receipt.',
     status: 201,
     body: obj(
       {
@@ -1901,13 +2100,63 @@ const HAND: Record<string, Op> = {
         maintenance: b(
           'This is a cleanup of the wiki (a maintenance pass): approved, it counts as the daily cleanup.',
         ),
+        requestKey: s(
+          'Repeating the request with the same key returns the same receipt (409 request_key_reused if it differs).',
+        ),
       },
-      ['reason', 'collected', 'supersedes', 'maintenance'],
+      ['reason', 'collected', 'supersedes', 'maintenance', 'requestKey'],
     ),
-    reply: {
-      type: 'object',
-      description: 'The proposal, its operations, its warnings, and (v0.6) coherence and neighbours.',
-    },
+    reply: obj({
+      proposal: PROPOSAL,
+      ops: list(PROPOSAL_OP),
+      warnings: list(WARNING),
+      ...CHECKED,
+      status: s(
+        "The receipt (R1): applied (something applied at once), held (nothing applied; something waits for a person), returned (everything came back to redo). The proposal's own status follows its parts: applied, partially_applied, pending or stale.",
+        { enum: ['applied', 'held', 'returned'] },
+      ),
+      review: nul(
+        s('pending-review when what applied entered «Review later»; null otherwise.', {
+          enum: ['pending-review', null],
+        }),
+      ),
+      pages: list(
+        obj({
+          page: s('The page, at its address now.'),
+          revision: n('The revision it left.'),
+          change: s('created or updated.', { enum: ['created', 'updated'] }),
+        }),
+        'The pages that changed at once.',
+      ),
+      undo: nul(
+        s(
+          'The change in «Review later» that undoes it (chg_…); null when nothing applied or a person in the web sent it.',
+        ),
+      ),
+      held: list(
+        obj({
+          op: n('The operation.'),
+          address: s('The page that makes it wait.'),
+          reason: s('protected, correction, ask_first or depends.', {
+            enum: ['protected', 'correction', 'ask_first', 'depends'],
+          }),
+          detail: s('Why, in words.'),
+        }),
+        'Parts that wait for a curator in the web or a key with the permission (brain_decide).',
+      ),
+      returned: list(
+        obj({
+          op: n('The operation.'),
+          address: s('The page.'),
+          reason: s('stale (written on an old revision) or depends (needs one that came back).', {
+            enum: ['stale', 'depends'],
+          }),
+          currentRevision: nul(n('The revision of the page now.')),
+          current: nul({ ...WIKI_PAGE, description: 'The page now, to redo the part on.' }),
+        }),
+        'Parts that came back to redo: not the "returned" status, which is a curator returning a proposal.',
+      ),
+    }),
   },
   'POST /v1/brains/{slug}/wiki/check': {
     summary:
@@ -1947,6 +2196,7 @@ const HAND: Record<string, Op> = {
       ...CHECKED,
       applied: b('Always true: it was written.'),
       logId: s('Its line in the log of the wiki.'),
+      undo: nul(s('The change in «Review later» that undoes it (chg_…).')),
       revised: list(
         obj({ index: n('The operation.'), address: s('The page.'), revision: n('The revision it made.') }, [
           'index',
@@ -2401,6 +2651,14 @@ const HAND: Record<string, Op> = {
         staleDays: n('Days after which a page with new entries counts as stale (1–3650).'),
         longChars: n('Characters after which a page counts as long (1000–100000).'),
         maintenanceEvery: n('Kept for API v1 (1–1000); since v0.6 it decides nothing.'),
+        writeMode: s('auto or ask_first. Each change is an audit line (wiki.mode).', {
+          enum: ['auto', 'ask_first'],
+        }),
+        entryLifetimes: {
+          type: 'object',
+          description:
+            'Some types of entry, each with its days without use (1–3650) or null for never: {"note": 90}. The types not sent keep theirs. Lapsed entries leave search and context; search can still ask for them (include=expired).',
+        },
       },
       [
         'revision',
@@ -2411,6 +2669,8 @@ const HAND: Record<string, Op> = {
         'staleDays',
         'longChars',
         'maintenanceEvery',
+        'entryLifetimes',
+        'writeMode',
       ],
     ),
     reply: {
@@ -2420,6 +2680,12 @@ const HAND: Record<string, Op> = {
         unchanged: b('Only a base was sent and it still holds: nothing was changed.'),
       },
     },
+  },
+  'PUT /v1/brains/{slug}/protection/{address}': {
+    summary:
+      "Protect a page or take the protection off (curators, in the rsc-brain web). On a protected page only a person in the web or a key with the wiki write permission writes; other keys' changes to it wait for a person. Each change is a line in the wiki log (protect), not a revision; asking for what it already is changes nothing. 403 protect_web_only with a key.",
+    body: obj({ protected: b('true to protect, false to unprotect.') }),
+    reply: PAGE_READING,
   },
   'POST /v1/brains/{slug}/members': {
     summary: 'Add a person or service account that already has an account (curators, or the administration).',

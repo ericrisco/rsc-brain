@@ -664,7 +664,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
   let doc: Json
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     fresh = await world({ fresh: true })
     eric = await w.person('Eric')
   })
@@ -1744,6 +1744,95 @@ describe('the v1 contract', { skip: skipPg }, () => {
     await add(
       'request_key_reused',
       w.call(eric.key, 'POST', '/v1/brains/contract/entries', { ...keyed, content: 'Another.' }),
+    )
+    // «Review later» (spec learning-memory A2, A4), in a brain that applies agents' changes at once.
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'contract-undo', purpose: 'Undo refusals.' })
+    await w.callWeb(ericWeb, 'PUT', '/v1/brains/contract-undo/wiki/settings', { writeMode: 'auto' })
+    const undoEntry = String(
+      (
+        (
+          await w.call(eric.key, 'POST', '/v1/brains/contract-undo/entries', {
+            type: 'learning',
+            title: 'Undo',
+            content: 'Undo refusals.',
+          })
+        ).body.receipt as Json
+      ).entryId,
+    )
+    const applied = await w.call(eric.key, 'POST', '/v1/brains/contract-undo/proposals', {
+      title: 'Applied at once',
+      ops: [{ ...page('undo/one'), sources: [{ entryId: undoEntry }] }],
+    })
+    const chg = String(applied.body.undo)
+    await w.callWeb(ericWeb, 'PATCH', '/v1/brains/contract-undo/pages/undo/one', {
+      baseRevision: 1,
+      body: 'By hand.',
+    })
+    await add('undo_conflict', w.callWeb(ericWeb, 'POST', `/v1/wiki/changes/${chg}/undo`, {}))
+    await add(
+      'protect_web_only',
+      w.call(eric.key, 'PUT', '/v1/brains/contract-undo/protection/undo/one', { protected: true }),
+    )
+    await w.callWeb(ericWeb, 'POST', `/v1/wiki/changes/${chg}/undo`, { overwrite: ['undo/one'] })
+    await add('already_undone', w.callWeb(ericWeb, 'POST', `/v1/wiki/changes/${chg}/keep`))
+    // A revision the undo would go back to, purged since.
+    await w.callWeb(ericWeb, 'POST', '/v1/brains/contract-undo/wiki/changes', {
+      op: 'create',
+      address: 'undo/two',
+      type: 'topic',
+      title: 'Two',
+      summary: 'Two.',
+      body: 'A secret word.',
+      reason: 'Contract.',
+    })
+    const edited = await w.call(eric.key, 'POST', '/v1/brains/contract-undo/proposals', {
+      title: 'Edit two',
+      ops: [{ op: 'edit', address: 'undo/two', baseRevision: 1, body: 'Plain words.', reason: 'Contract.' }],
+    })
+    const purged = await w.callWeb(bossWeb, 'POST', '/v1/brains/contract-undo/wiki/purge', {
+      address: 'undo/two',
+      revision: 1,
+      text: ['A secret word.'],
+      reason: 'Contract.',
+    })
+    assert.equal(purged.status, 200, purged.text)
+    await add('undo_purged', w.callWeb(ericWeb, 'POST', `/v1/wiki/changes/${edited.body.undo}/undo`, {}))
+    // A proposal with one part applied and one waiting on a protected page.
+    await w.callWeb(ericWeb, 'POST', '/v1/brains/contract-undo/wiki/changes', {
+      op: 'create',
+      address: 'undo/guard',
+      type: 'topic',
+      title: 'Guard',
+      summary: 'Guard.',
+      body: 'Guard.',
+      reason: 'Contract.',
+    })
+    await w.callWeb(ericWeb, 'PUT', '/v1/brains/contract-undo/protection/undo/guard', { protected: true })
+    const half = await w.call(eric.key, 'POST', '/v1/brains/contract-undo/proposals', {
+      title: 'Half',
+      ops: [
+        { ...page('undo/half'), sources: [{ entryId: undoEntry }] },
+        { op: 'link', address: 'undo/guard', kind: 'related', to: 'undo/half', reason: 'See.' },
+      ],
+    })
+    const halfId = String((half.body.proposal as Json).id)
+    const halfSeen = async () =>
+      String((await w.callWeb(ericWeb, 'GET', `/v1/proposals/${halfId}/review`)).body.fingerprint)
+    await add(
+      'not_held',
+      w.callWeb(ericWeb, 'POST', `/v1/proposals/${halfId}/approve`, {
+        fingerprint: await halfSeen(),
+        approve: [0],
+      }),
+    )
+    // The applied part undone underneath (an undo discards what waits on it; this guards a decision that raced it).
+    await w.db.query("UPDATE proposal_ops SET status = 'undone' WHERE proposal_id = $1 AND idx = 0", [halfId])
+    await add(
+      'dependency_undone',
+      w.callWeb(ericWeb, 'POST', `/v1/proposals/${halfId}/approve`, {
+        fingerprint: await halfSeen(),
+        approve: [1],
+      }),
     )
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))

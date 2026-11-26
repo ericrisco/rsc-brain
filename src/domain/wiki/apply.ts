@@ -5,7 +5,7 @@
 import { AppError } from '../../core/errors.ts'
 import { newId } from '../../core/ids.ts'
 import type { Db, Row } from '../../db/db.ts'
-import type { Ctx } from '../context.ts'
+import { type Ctx, personInWeb } from '../context.ts'
 import { emit } from '../events.ts'
 import { type LinkKind, mentionsOf, type Op, type Source, sourceKey } from './model.ts'
 import { uses } from './review.ts'
@@ -21,10 +21,41 @@ export class ApplyError extends AppError {
   }
 }
 
-export type ApplyItem = { op: Op; index?: number; corrected?: boolean; baseReviewed?: boolean }
+// Undoing a change (spec learning-memory A2, R7; plan §2.5): put one page back as the change found it — its content,
+// sources and links out of the revision before, its status, its address and every address row, and the typed links into
+// it — or, for a page the change created, retire it and free its address (M7). Internal: never accepted from clients
+// (readOp knows no «restore»); only undo.ts builds it.
+export type RestoreOp = {
+  op: 'restore'
+  address: string
+  reason: string
+  pageId: string
+  created: boolean
+  revisionBefore: number | null
+  addressBefore: string | null
+  statusBefore: string | null
+  supersededByBefore: string | null
+  addressesBefore: string[]
+  addressesAdded: string[]
+  linksInBefore: { fromPage: string; kind: LinkKind }[]
+  // The links into it as the change left them (null for a change recorded before round 2: nothing is taken back). The
+  // undo is the exact inverse of that delta, never a guess from the other pages of the change (review round 2, V1–V2).
+  linksInAfter: { fromPage: string; kind: LinkKind }[] | null
+  // Put back the links into it from pages outside the change: only when undo.ts found them exactly as the change left
+  // them (nothing changed since); never for a page undone with «overwrite» (replanteo of CA-A10).
+  restoreIncoming: boolean
+  // Every page of the change: an address goes back only from one of them (review round 1, U4).
+  changePages: string[]
+  // Who held each address before the change, among the pages undone with it: a link out named by address goes to that
+  // page even while another page undone in the same call still holds the address (two merges undone together).
+  ownersBefore: Record<string, string>
+  note: string
+}
+export type ApplyItem = { op: Op | RestoreOp; index?: number; corrected?: boolean; baseReviewed?: boolean }
 export type ApplyMeta = {
   // 'write': a key with the permission wrote it directly (spec v0.6).
-  kind: 'proposal' | 'direct' | 'revert' | 'write'
+  // 'undo': a change of «Review later» undone (spec learning-memory A2).
+  kind: 'proposal' | 'direct' | 'revert' | 'write' | 'undo'
   proposalId?: string
   summary: string
   // Why, for a change by hand or a restore (a proposal keeps its reasons on itself and its operations).
@@ -36,21 +67,37 @@ export type ApplyMeta = {
 }
 export type Revised = { index?: number; pageId: string; address: string; revision: number }
 
+// What a page was before a call changed it, taken the first time the call locks it (spec learning-memory A2, plan §2.4):
+// what an exact undo puts back. A merge moves addresses and incoming links of other pages without a revision there,
+// and a revision does not keep the status, so they are kept here. Never the text of a page: that stays in
+// page_revisions, where a purge reaches it. `revision` is null for a page the call created.
+export type PageBefore = {
+  pageId: string
+  revision: number | null
+  address: string
+  status: string | null
+  supersededBy: string | null
+  addresses: string[]
+  linksIn: { fromPage: string; kind: LinkKind }[]
+  created: boolean
+}
+
 // The order operations apply in: the proposal's own, except that an operation using an address
 // another operation brings into being (a page it creates, the new address of a move) goes after it, so
 // a link listed before the page it points at still applies. Approval grouping (dependencies) is a
 // different question: "edit y" before "merge y into x" must still edit y, then merge.
 // The addresses an operation brings into being: the page it creates, or the new address of a move.
-function bornOf(o: Op): string[] {
+function bornOf(o: Op | RestoreOp): string[] {
   return o.op === 'create' ? [o.address] : o.op === 'move' ? [o.to] : []
 }
 
 // A cycle is one dependency group: finish its creates and links before any operation consuming it.
 // At most 50 operations (WIKI_LIMITS.ops), so transitive closure keeps the grouping small and explicit.
-function applyGroups(ops: Op[]): number[][] {
+function applyGroups(ops: (Op | RestoreOp)[]): number[][] {
   const born = ops.map(bornOf)
   const after = ops.map((o, i) => {
-    const mine = new Set(uses(o))
+    // A restore names its page by id: it needs nothing another operation brings into being.
+    const mine = new Set(o.op === 'restore' ? [] : uses(o))
     return ops.flatMap((_, j) => (j !== i && (born[j] ?? []).some((a) => mine.has(a)) ? [j] : []))
   })
   const reaches = after.map((deps, i) => new Set([i, ...deps]))
@@ -103,7 +150,7 @@ export async function applyOps(
   brainId: string,
   items: ApplyItem[],
   meta: ApplyMeta,
-): Promise<{ revised: Revised[]; pages: string[]; logId: string }> {
+): Promise<{ revised: Revised[]; pages: string[]; logId: string; before: PageBefore[] }> {
   // One writer per brain's wiki at a time: approvals, direct edits and reverts queue here.
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`wiki:${brainId}`])
   const now = ctx.clock()
@@ -115,6 +162,29 @@ export async function applyOps(
   // Each page's revision before this call: an edit's baseRevision is checked against it, not against
   // what earlier operations of the same approval made of the page (a move, then an edit of it).
   const startRevision = new Map<string, number>()
+  const before: PageBefore[] = []
+  const snapped = new Set<string>()
+  const snapshot = async (r: Row) => {
+    const id = String(r.id)
+    const addresses = await db.query<{ address: string }>(
+      'SELECT address FROM page_addresses WHERE page_id = $1 ORDER BY address',
+      [id],
+    )
+    const linksIn = await db.query<{ from_page: string; kind: LinkKind }>(
+      'SELECT from_page, kind FROM page_links WHERE to_page = $1 ORDER BY from_page, kind',
+      [id],
+    )
+    before.push({
+      pageId: id,
+      revision: Number(r.revision),
+      address: String(r.address),
+      status: String(r.status),
+      supersededBy: r.superseded_by == null ? null : String(r.superseded_by),
+      addresses: addresses.map((a) => a.address),
+      linksIn: linksIn.map((l) => ({ fromPage: l.from_page, kind: l.kind })),
+      created: false,
+    })
+  }
   // Creates that link each other (an index and its pages, which point back with part-of) have no order in
   // which every link finds its page, yet the proposal was accepted because each page "is created here". A
   // create's link to an address its dependency group still brings into being waits for that group,
@@ -133,6 +203,10 @@ export async function applyOps(
       [brainId, address],
     )
     if (r && !startRevision.has(String(r.id))) startRevision.set(String(r.id), Number(r.revision))
+    if (r && !snapped.has(String(r.id))) {
+      snapped.add(String(r.id))
+      await snapshot(r)
+    }
     return r ?? fail(it, `there is no page at "${address}".`)
   }
   const checkEntries = async (it: ApplyItem, sources: Source[]) => {
@@ -274,6 +348,17 @@ export async function applyOps(
             'INSERT INTO page_addresses (brain_id, address, page_id, created_at) VALUES ($1,$2,$3,$4)',
             [brainId, o.address, id, now],
           )
+          snapped.add(id)
+          before.push({
+            pageId: id,
+            revision: null,
+            address: o.address,
+            status: null,
+            supersededBy: null,
+            addresses: [],
+            linksIn: [],
+            created: true,
+          })
           await addSources(id, o.sources)
           await setMentions({ id, address: o.address }, o.body)
           for (const l of o.links) {
@@ -447,6 +532,140 @@ export async function applyOps(
           await setStatus(it, y, 'superseded', String(x.id))
           break
         }
+        case 'restore': {
+          const p = (await db.one('SELECT * FROM pages WHERE id = $1 AND brain_id = $2 FOR UPDATE', [
+            o.pageId,
+            brainId,
+          ])) as Row | undefined
+          if (!p) fail(it, `the page "${o.address}" is gone.`)
+          const row = p as Row
+          const id = String(row.id)
+          if (!startRevision.has(id)) startRevision.set(id, Number(row.revision))
+          if (!snapped.has(id)) {
+            snapped.add(id)
+            await snapshot(row)
+          }
+          if (o.created) {
+            // Created by the change: retired, out of search and context, its links gone and its address free (M7).
+            await db.query('DELETE FROM page_links WHERE from_page = $1', [id])
+            await db.query('DELETE FROM page_addresses WHERE page_id = $1', [id])
+            await bump(id, "status = 'retired', superseded_by = NULL", [])
+            await revise(it, id, o.note)
+            break
+          }
+          const old = (await db.one('SELECT * FROM page_revisions WHERE page_id = $1 AND revision = $2', [
+            id,
+            o.revisionBefore,
+          ])) as Row | undefined
+          if (!old || old.purged_at)
+            fail(it, `revision ${o.revisionBefore} of "${o.address}" is not there to go back to.`)
+          const was = old as Row
+          // Its address rows: those it had come back to it (a merge gave them to another page); those the change
+          // added go.
+          for (const a of o.addressesBefore) {
+            // Only from a page of the change (a merge): an address another page took since is a conflict undo.ts
+            // refused before getting here (review round 1, U4).
+            await db.query(
+              'UPDATE page_addresses SET page_id = $3 WHERE brain_id = $1 AND address = $2 AND page_id = ANY($4)',
+              [brainId, a, id, o.changePages],
+            )
+            await db.query(
+              `INSERT INTO page_addresses (brain_id, address, page_id, created_at) VALUES ($1, $2, $3, $4)
+               ON CONFLICT DO NOTHING`,
+              [brainId, a, id, now],
+            )
+          }
+          const keep = new Set(o.addressesBefore)
+          const drop = o.addressesAdded.filter((a) => !keep.has(a))
+          if (drop.length)
+            await db.query('DELETE FROM page_addresses WHERE page_id = $1 AND address = ANY($2)', [id, drop])
+          await bump(
+            id,
+            'type = $3, title = $4, summary = $5, body = $6, tags = $7, status = $8, superseded_by = $9, address = $10',
+            [
+              was.type,
+              was.title,
+              was.summary,
+              was.body,
+              was.tags,
+              o.statusBefore ?? was.status,
+              o.supersededByBefore,
+              o.addressBefore ?? row.address,
+            ],
+          )
+          // Sources purged since do not come back.
+          const before = (was.sources as Source[]) ?? []
+          const ids = before.flatMap((x) => ('entryId' in x ? [x.entryId] : []))
+          const alive = new Set(
+            ids.length === 0
+              ? []
+              : (
+                  await db.query(
+                    "SELECT id FROM entries WHERE brain_id = $1 AND id = ANY($2) AND state <> 'purged'",
+                    [brainId, ids],
+                  )
+                ).map((r) => String(r.id)),
+          )
+          await setSources(
+            id,
+            before.filter((x) => !('entryId' in x) || alive.has(x.entryId)),
+          )
+          // Its typed links out, as the revision lists them.
+          const want: { kind: LinkKind; to: string }[] = []
+          for (const l of (was.links as { kind: LinkKind; to: string }[]) ?? []) {
+            const owner = o.ownersBefore[l.to]
+            if (owner) {
+              if (owner !== id) want.push({ kind: l.kind, to: owner })
+              continue
+            }
+            const t = await db.one(
+              'SELECT p.id FROM page_addresses a JOIN pages p ON p.id = a.page_id WHERE a.brain_id = $1 AND a.address = $2',
+              [brainId, l.to],
+            )
+            if (t && t.id !== id) want.push({ kind: l.kind, to: String(t.id) })
+          }
+          await db.query(
+            `DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL
+               AND (kind, to_page) NOT IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
+            [id, want.map((l) => l.kind), want.map((l) => l.to)],
+          )
+          for (const l of want)
+            await db.query(
+              `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
+               ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
+              [brainId, id, l.kind, l.to],
+            )
+          // The links into it from pages outside the change, back as they were before (replanteo of CA-A10). undo.ts
+          // restores only when it found them exactly as the change left them, so this puts back what the change did and
+          // nothing else. Links from pages of the change are theirs: each page's own links out are set above.
+          if (o.linksInAfter && o.restoreIncoming) {
+            const ours = new Set(o.changePages)
+            const key = (l: { fromPage: string; kind: string }) => `${l.fromPage} ${l.kind}`
+            const outside = (l: { fromPage: string }) => l.fromPage !== id && !ours.has(l.fromPage)
+            const before = new Set(o.linksInBefore.filter(outside).map(key))
+            const after = new Set(o.linksInAfter.filter(outside).map(key))
+            for (const l of o.linksInAfter.filter(outside)) {
+              if (before.has(key(l))) continue
+              await db.query('DELETE FROM page_links WHERE from_page = $1 AND kind = $2 AND to_page = $3', [
+                l.fromPage,
+                l.kind,
+                id,
+              ])
+            }
+            for (const l of o.linksInBefore.filter(outside)) {
+              if (after.has(key(l))) continue
+              await db.query(
+                `INSERT INTO page_links (brain_id, from_page, kind, to_page)
+                 SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM pages WHERE id = $2)
+                 ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
+                [brainId, l.fromPage, l.kind, id],
+              )
+            }
+          }
+          await setMentions({ id, address: String(o.addressBefore ?? row.address) }, String(was.body))
+          await revise(it, id, o.note)
+          break
+        }
         case 'revert': {
           const p = await page(it, o.address)
           const r = await db.one('SELECT * FROM page_revisions WHERE page_id = $1 AND revision = $2', [
@@ -526,6 +745,11 @@ export async function applyOps(
     deferred.clear()
   }
 
+  // A person in the web saw what they wrote: their revisions are reviewed (spec learning-memory A1, CA-A9).
+  if (personInWeb(ctx) && revised.length > 0)
+    await db.query('UPDATE pages SET reviewed_revision = revision WHERE id = ANY($1)', [
+      [...new Set(revised.map((r) => r.pageId))],
+    ])
   const pages = [...touched]
   const logId = newId('wlg')
   await db.query(
@@ -553,5 +777,5 @@ export async function applyOps(
     targetId: meta.proposalId ?? null,
     label: meta.summary,
   })
-  return { revised, pages, logId }
+  return { revised, pages, logId, before }
 }

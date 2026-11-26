@@ -21,6 +21,8 @@ export type BrainStats = {
   uncompiled: number
   conflicts: number
   pendingProposals: number
+  // Changes agents made that no person reviewed yet («Review later», spec learning-memory A2).
+  pendingReview: number
   lastActivityAt: string | null
 }
 export type BrainWithStats = BrainListed & { stats: BrainStats; notifyProposals: boolean }
@@ -40,8 +42,11 @@ async function statsOf(
             (SELECT count(*)::int FROM entries e WHERE e.brain_id = b.id AND e.state = 'active'
                 AND NOT e.compiled AND e.type <> 'summary') AS uncompiled,
             (SELECT count(*)::int FROM relations r WHERE r.brain_id = b.id AND ${OPEN_CONFLICT}) AS conflicts,
-            (SELECT count(*)::int FROM proposals p WHERE p.brain_id = b.id AND p.status = 'pending')
-              AS pending_proposals,
+            (SELECT count(*)::int FROM proposals p WHERE p.brain_id = b.id
+                AND p.status IN ('pending', 'partially_applied')) AS pending_proposals,
+            (SELECT count(*)::int FROM wiki_changes c WHERE c.brain_id = b.id
+                AND c.state IN ('pending_review', 'partly_undone'))
+              AS pending_review,
             greatest((SELECT max(s.last_activity_at) FROM sessions s WHERE s.brain_id = b.id),
                      (SELECT max(p.created_at) FROM proposals p WHERE p.brain_id = b.id),
                      (SELECT max(l.at) FROM wiki_log l WHERE l.brain_id = b.id)) AS last_activity_at,
@@ -58,6 +63,7 @@ async function statsOf(
         uncompiled: Number(r.uncompiled),
         conflicts: Number(r.conflicts),
         pendingProposals: Number(r.pending_proposals),
+        pendingReview: Number(r.pending_review),
         lastActivityAt: r.last_activity_at == null ? null : (r.last_activity_at as Date).toISOString(),
       },
       notifyProposals: Boolean(r.notify_proposals),
@@ -72,6 +78,7 @@ const ZERO: BrainStats = {
   uncompiled: 0,
   conflicts: 0,
   pendingProposals: 0,
+  pendingReview: 0,
   lastActivityAt: null,
 }
 

@@ -637,7 +637,7 @@
       "required": ["type", "title", "content", "refs", "requestKey"],
       "properties": {
         "type": {
-          "enum": ["preference"]
+          "enum": ["preference", "learning"]
         },
         "title": {
           "type": "string"

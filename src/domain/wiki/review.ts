@@ -145,6 +145,8 @@ export type ReviewedOp = {
   index: number
   op: Op
   status: ProposalOp['status']
+  // Why a pending part waits (spec learning-memory A1): protected, correction, ask_first or depends.
+  holdReason: ProposalOp['holdReason']
   corrected: boolean
   before: PageState | null
   after: Partial<PageState> | null
@@ -275,6 +277,7 @@ export async function buildReview(ctx: Ctx, row: Row, curator: boolean): Promise
       index: o.index,
       op: o.op,
       status: o.status,
+      holdReason: o.holdReason,
       corrected: o.correctedBy !== null,
       before,
       after,
@@ -326,6 +329,7 @@ export function compactReview(review: Review & { canDecide?: boolean }): Record<
         index: o.index,
         op: { ...op, ...('body' in o.op ? { bodyChars: (o.op as { body: string }).body.length } : {}) },
         status: o.status,
+        holdReason: o.holdReason,
         corrected: o.corrected,
         before: o.before
           ? {

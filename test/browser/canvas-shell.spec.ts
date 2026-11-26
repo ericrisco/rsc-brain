@@ -131,7 +131,7 @@ test('folded, a name shows as a tooltip on keyboard focus and on hover; Esc hide
   await expect(wiki).toBeVisible()
   const shown = async () => ((await tip.boundingBox())?.width ?? 0) > 20
   // Keyboard: Tab from the link before it.
-  await nav.getByRole('link', { name: /^Proposals/ }).focus()
+  await nav.getByRole('link', { name: /^Review later/ }).focus()
   await page.keyboard.press('Tab')
   await expect(wiki).toBeFocused()
   await expect.poll(shown).toBe(true)
@@ -247,7 +247,7 @@ test('at 1920×1080 the overview shows its figures in one row and its three part
   expect(today?.x ?? 0).toBeLessThan(waiting?.x ?? 0)
   expect(waiting?.x ?? 0).toBeLessThan(health?.x ?? 0)
   const tiles = page.getByRole('region', { name: 'In numbers' }).getByRole('listitem')
-  await expect(tiles).toHaveCount(5)
+  await expect(tiles).toHaveCount(6)
   const tops = await tiles.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)))
   expect(new Set(tops).size, 'one row of figures').toBe(1)
   const widths = await tiles.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width))

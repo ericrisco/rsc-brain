@@ -38,7 +38,7 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
   }
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric', { isAdmin: true })
     ana = await w.person('Ana', { canCreateBrains: false })
     bo = await w.person('Bo')
@@ -128,6 +128,7 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
         uncompiled: 0,
         conflicts: 0,
         pendingProposals: 0,
+        pendingReview: 0,
         lastActivityAt: null,
       })
       assert.equal(empty?.notifyProposals, false)
@@ -169,6 +170,8 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
           uncompiled: 2,
           conflicts: 1,
           pendingProposals: 1,
+          // «Review later»: nothing applied here (this brain asks first).
+          pendingReview: 0,
           lastActivityAt: 'string',
         },
       )

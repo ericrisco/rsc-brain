@@ -28,6 +28,8 @@ export type Stats = {
   uncompiled: number
   conflicts: number
   pendingProposals: number
+  // Changes no person reviewed yet (spec learning-memory A2); older servers do not send it.
+  pendingReview?: number
   lastActivityAt: string | null
 }
 export type BrainRow = {
@@ -203,6 +205,13 @@ function Card({ b }: { b: BrainRow }) {
           T.home.waiting(waiting)
         )}
       </p>
+      {b.role === 'curator' && b.stats.pendingReview ? (
+        <p class="review">
+          <a class="review-link" href={`/b/${encodeURIComponent(b.slug)}/review-later`}>
+            {T.home.awaitingReview(b.stats.pendingReview)}
+          </a>
+        </p>
+      ) : null}
       <p class="meta">{when ? T.home.lastActivity(when) : T.home.noActivity}</p>
     </li>
   )

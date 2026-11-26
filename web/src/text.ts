@@ -198,6 +198,7 @@ const english = {
     graph: 'Graph',
     journal: 'Journal',
     proposals: 'Proposals',
+    reviewLater: 'Review later',
     health: 'Health',
     activity: 'Activity',
     pending: 'pending',
@@ -450,6 +451,7 @@ const english = {
     waiting: (n: number) =>
       n === 1 ? '1 proposal waiting for a curator' : `${n} proposals waiting for a curator`,
     nothingToReview: 'Nothing to review',
+    awaitingReview: (n: number) => (n === 1 ? '1 change awaiting review' : `${n} changes awaiting review`),
     lastActivity: (when: string) => `Last activity ${when}`,
     noActivity: 'No activity yet',
     inviteTitle: 'Invite people',
@@ -692,6 +694,9 @@ const english = {
     uncompiled: (n: number) => [fmt(n), 'not in the wiki yet'] as const,
     conflicts: (n: number) => [fmt(n), n === 1 ? 'conflict' : 'conflicts'] as const,
     pending: (n: number) => [fmt(n), 'waiting for review'] as const,
+    // What agents changed and no person looked at yet («Review later»).
+    awaitingReview: (n: number) =>
+      [fmt(n), n === 1 ? 'change awaiting review' : 'changes awaiting review'] as const,
     today: "Today's sessions",
     noToday: 'No sessions today.',
     noTodayHow: 'Sessions appear here as soon as an agent works in this brain.',
@@ -846,6 +851,7 @@ const english = {
     tabs: {
       members: 'Members',
       agents: 'Agents',
+      memory: 'Memory',
       health: 'Health thresholds',
       import: 'Import and export',
       archive: 'Archive',
@@ -914,6 +920,34 @@ const english = {
     meaningOut: 'Leave this brain out of meaning search',
     meaningOutHint:
       'Its stored meanings are deleted now and nothing more is sent. Word search keeps working.',
+    // Spec learning-memory A4, B2.
+    writeMode: 'When agents change the wiki',
+    writeModeLead:
+      'Applied at once, every change goes to «Review later» with an undo. Asking first, nothing changes until a curator approves it.',
+    writeAuto: 'Apply automatically',
+    writeAutoHint:
+      'The default. Parts on protected pages or against a person’s correction still wait for a curator.',
+    writeAsk: 'Ask first',
+    writeAskHint: 'Every change waits in Proposals for a curator, as before.',
+    lifetimes: 'How long entries last without use',
+    lifetimesLead:
+      'After this many days an entry leaves search and the context agents get. It is not deleted: search can still ask for it. A pinned entry, or one a current page cites, stays.',
+    lifetimeType: (type: string) => `Days for ${type}`,
+    lifetimeNever: 'never',
+    lifetimeDefault: (d: number | null) => (d === null ? 'default: never' : `default: ${d}`),
+    lifetimeHint: 'Whole days from 1 to 3650, or leave empty for never.',
+    lifetimeProblem: 'Write whole days from 1 to 3650, or leave it empty for never.',
+    entryTypes: {
+      decision: 'decisions',
+      learning: 'learnings',
+      attempt: 'attempts',
+      correction: 'corrections',
+      preference: 'preferences',
+      fact: 'facts',
+      step: 'steps',
+      summary: 'summaries',
+      note: 'notes',
+    } as Record<string, string>,
     health: 'Health thresholds',
     healthLead:
       'When a page shows in Health as stale or long. Agents are asked for a cleanup when nobody cleaned the wiki in a day.',
@@ -1513,6 +1547,20 @@ const english = {
       retired: 'Retired',
     } as Record<string, string>,
     // The status of a page in words, never by colour alone.
+    // Spec learning-memory A1, A3.
+    unreviewed: 'Unreviewed',
+    unreviewedTitle: 'An agent changed it and no person has looked at it yet.',
+    unreviewedOnly: 'Unreviewed only',
+    openReview: 'Review it',
+    protectedTag: 'Protected',
+    protection: 'Protection',
+    protectLabel: 'Protected',
+    protectOn: 'On',
+    protectOff: 'Off',
+    protectHint:
+      'Only people in the web and keys with the wiki write permission write a protected page; other agents’ changes to it wait for a curator.',
+    protectedNow: 'Protected. Agents’ changes to it now wait for a curator.',
+    unprotectedNow: 'Not protected any more.',
     statusLong: {
       stale: 'Stale: this page may be out of date; a curator should review it.',
       retired: 'Retired: kept for its history only. Agents no longer get it.',
@@ -2192,6 +2240,113 @@ const english = {
     open: 'Open',
   },
 
+  // «Review later» (spec learning-memory A2).
+  review: {
+    title: 'Review later',
+    lead: 'What agents changed in the wiki and no person has looked at yet, oldest first. Keep it, or undo it — whole or in parts.',
+    list: 'Changes awaiting review',
+    count: (n: number) => plural(n, 'change'),
+    states: {
+      pending_review: 'Awaiting review',
+      kept: 'Kept',
+      undone: 'Undone',
+      partly_undone: 'Partly undone',
+      all: 'All',
+    } as Record<string, string>,
+    nav: 'Changes by state',
+    by: (who: string, key: string | null) => (key ? `by ${who} with ${key}` : `by ${who}`),
+    run: (ref: string) => `run ${ref}`,
+    parts: (n: number) => plural(n, 'part'),
+    ago: (when: string) => `applied ${when}`,
+    noneTitle: 'Nothing to review',
+    noneLead: 'When an agent changes the wiki, the change shows here until a curator keeps or undoes it.',
+    noneIn: (state: string) => `No changes: ${state.toLowerCase()}.`,
+    keys: 'j and k move through the list; Enter opens a change.',
+    back: '← Review later',
+    notFound: 'This change is not here',
+    partsTitle: 'Parts',
+    part: (n: number, address: string) => `Part ${n + 1}: ${address}`,
+    created: 'new page',
+    revisions: (before: number | null, after: number) =>
+      before === null ? `created at revision ${after}` : `revision ${before} → ${after}`,
+    needs: (parts: number[]) => `goes with part ${parts.map((p) => p + 1).join(', ')}`,
+    purgedDiff: 'A revision of this part was purged: its difference cannot be shown.',
+    noDiff: 'The text did not change (links, status or address did).',
+    partUndone: 'undone',
+    keep: 'Keep',
+    keeping: 'Keeping…',
+    kept: 'Kept. Its pages count as reviewed.',
+    keepHint: 'Keep says you looked at it: the pages lose the «Unreviewed» mark.',
+    undo: 'Undo…',
+    undoTitle: 'Undo this change',
+    undoLead: 'Each page goes back exactly as it was before this change. A page it created is retired.',
+    undoAll: 'All of it',
+    undoSome: 'Only some parts',
+    undoPart: (n: number, address: string) => `Part ${n + 1}: ${address}`,
+    undoNeeds: (parts: number[]) => `Comes with part ${parts.map((p) => p + 1).join(', ')}, which needs it.`,
+    comment: 'Comment (optional)',
+    commentHint: 'It teaches the agent: it becomes a correction for whoever made the change.',
+    confirmUndo: 'Undo',
+    undoing: 'Undoing…',
+    undone: (n: number) => `Undone: ${plural(n, 'page')} back as they were.`,
+    alreadyUndone: 'It was undone already; nothing changed.',
+    discarded: (n: number) => `${plural(n, 'waiting part')} of its proposal went with it.`,
+    conflictTitle: 'Some pages changed after this change',
+    conflictLead:
+      'Undoing over them replaces what came after; it stays in the history and can be brought back. Choose the pages to undo over, or undo only other parts.',
+    conflictLeadOne:
+      'Undoing over it replaces what came after; it stays in the history and can be brought back.',
+    conflictPage: (address: string, change: number, now: number) =>
+      `${address} — this change left revision ${change}; it is at ${now} now`,
+    overwrite: (address: string) => `Undo over the later changes of ${address}`,
+    addressTaken: (address: string, page: string) => `${address} is now the address of ${page}`,
+    addressHow: 'An address another page took stays with it. Move or retire that page by hand first.',
+    cancel: 'Cancel',
+    readOnly: 'Only curators review changes here.',
+    since: 'Since',
+    sinceOptions: { all: 'Any time', today: 'Today', '7d': 'The last 7 days' } as Record<string, string>,
+    applied: (when: string) => `applied ${when}`,
+    // What each operation did to a page, in a tray row.
+    touched: (op: string | null, address: string) =>
+      op === 'create'
+        ? `New page ${address}`
+        : op === 'link'
+          ? `Link ${address}`
+          : op === 'unlink'
+            ? `Unlink ${address}`
+            : op === 'move'
+              ? `Move ${address}`
+              : op === 'merge'
+                ? `Merge into ${address}`
+                : op === 'status'
+                  ? `Status of ${address}`
+                  : `Edit ${address}`,
+    why: (reason: string) => `Why: ${reason}`,
+    linkedTo: (to: string, kind: string) => `Linked to ${to} (${kind})`,
+    unlinkedFrom: (to: string, kind: string) => `Took away the link to ${to} (${kind})`,
+    movedFrom: (from: string, to: string) => `Moved from ${from} to ${to}`,
+    mergedFrom: (from: string, into: string) => `Merged ${from} into ${into}`,
+    statusSet: (status: string) => `Set the status to ${status}`,
+    next: 'Next change →',
+    editedAfter: (who: string, address: string, when: string) =>
+      `${who || 'Someone'} edited ${address} after this change, on ${when}.`,
+    overwriteNote: 'Undoing replaces that edit; it stays in the page history.',
+    linkChanged: (from: string, kind: string, now: string) =>
+      now === 'added'
+        ? `${from} linked to it (${kind}) after this change.`
+        : `${from} took away its link (${kind}) after this change.`,
+    linkedPageChanged: (address: string) =>
+      `${address}, a page of this change that links to it, was written since.`,
+    otherChanged: (what: string) => `Its ${what} changed since.`,
+    overwriteKeeps:
+      'Undoing over it puts back its own text, status, addresses and links out; links into it from other pages stay as they are.',
+    leftAsIs: (address: string) => `Links into ${address} from other pages were left as they are.`,
+    replaced: (revisions: number[], address: string, who: string[]) =>
+      `Replaced ${revisions.length === 1 ? 'revision' : 'revisions'} ${revisions.join(', ')} of ${address}${who.length ? ` (by ${who.join(', ')})` : ''}.`,
+    pageHistory: 'Page history',
+    undoneWhy: (comment: string) => `Why it was undone: ${comment}`,
+    viewCorrection: 'View the correction',
+  },
   proposals: {
     title: 'Proposals',
     lead: 'What agents propose to change in the wiki. A curator approves it, approves part of it, or returns it with a comment the agent learns from.',
@@ -2203,6 +2358,9 @@ const english = {
       returned: 'Returned',
       withdrawn: 'Withdrawn',
       superseded: 'Replaced',
+      applied: 'Applied',
+      partially_applied: 'Partly applied',
+      stale: 'Came back',
     } as Record<string, string>,
     // The status as a word beside a proposal (never colour alone).
     statusWord: {
@@ -2212,6 +2370,9 @@ const english = {
       returned: 'returned',
       withdrawn: 'withdrawn',
       superseded: 'replaced',
+      applied: 'applied',
+      partially_applied: 'partly applied',
+      stale: 'came back',
     } as Record<string, string>,
     count: (n: number) => plural(n, 'proposal'),
     list: (status: string) => `${status} proposals`,
@@ -2253,7 +2414,21 @@ const english = {
     openSource: 'Open',
     sourceEntry: 'Journal entry',
     noSources: 'No sources.',
-    opStatus: { pending: 'pending', approved: 'approved', returned: 'returned' } as Record<string, string>,
+    opStatus: {
+      pending: 'pending',
+      approved: 'approved',
+      returned: 'returned',
+      applied: 'applied at once',
+      stale: 'came back to redo',
+      undone: 'undone',
+    } as Record<string, string>,
+    // Why a part waits for a person (spec learning-memory A1).
+    holdReasons: {
+      protected: 'waits: the page is protected',
+      correction: 'waits: a person’s correction points at this page',
+      ask_first: 'waits: this brain asks first',
+      depends: 'waits: it needs a part that waits',
+    } as Record<string, string>,
     corrected: 'edited by a curator',
     editedByYou: 'edited by you, not sent yet',
     baseReviewedTag: 'newer changes will be replaced',

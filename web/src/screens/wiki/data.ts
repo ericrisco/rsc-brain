@@ -16,6 +16,9 @@ export type WikiPage = {
   tags: string[]
   status: string
   supersededBy: string | null
+  // Spec learning-memory A3, A1 (older servers do not send them).
+  protected?: boolean
+  unreviewed?: boolean
   revision: number
   createdAt: string
   updatedAt: string
@@ -49,6 +52,8 @@ export type Reading = {
   corrections?: PageCorrection[]
   // Its revisions, read with the page (one read of the page per visit, not two).
   history?: RevisionSummary[]
+  // The latest change awaiting review that touched it, for «Review it».
+  reviewChange?: string | null
 }
 export type RevisionSummary = {
   revision: number
@@ -198,6 +203,7 @@ export type PageRow = {
   in: number
   out: number
   updatedAt: string
+  unreviewed?: boolean
 }
 
 // The full list beside the graph (G9), by pages, filtered and sorted.

@@ -84,6 +84,12 @@ export const ROUTE_TABLE = {
   proposalReview: { route: 'GET /v1/proposals/{id}/review' },
   approveProposal: { route: 'POST /v1/proposals/{id}/approve' },
   returnProposal: { route: 'POST /v1/proposals/{id}/return' },
+  // «Review later» and protected pages (spec learning-memory A2, A3).
+  changes: { route: 'GET /v1/brains/{slug}/wiki/changes' },
+  change: { route: 'GET /v1/wiki/changes/{id}' },
+  keepChange: { route: 'POST /v1/wiki/changes/{id}/keep' },
+  undoChange: { route: 'POST /v1/wiki/changes/{id}/undo' },
+  protectPage: { route: 'PUT /v1/brains/{slug}/protection/{address}' },
   // Health (PR23).
   wikiHealth: { route: 'GET /v1/brains/{slug}/wiki/health' },
   // A brain's settings (PR25a).

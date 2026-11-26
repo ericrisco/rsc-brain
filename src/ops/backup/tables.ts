@@ -53,7 +53,7 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
     `id brain_id session_id type topic title content applies_to tags refs author_id credential_id on_behalf_id
      stamped_ref revision repeat_count norm_hash pinned review_after expires_at state forgotten_by
      forgotten_reason forgotten_at purged_by purged_reason purged_at superseded_by compiled created_at updated_at
-     client`,
+     client lapse_from`,
   ),
   t(
     'entry_revisions',
@@ -72,12 +72,14 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
   ),
   t(
     'proposal_ops',
-    'proposal_id idx op status corrected_by base_reviewed_by applied_page applied_revision',
+    `proposal_id idx op status corrected_by base_reviewed_by applied_page applied_revision hold_reason
+     stale_current`,
     'proposal_id idx',
   ),
   t(
     'pages',
-    'id brain_id address type title summary body tags status superseded_by revision created_at updated_at',
+    `id brain_id address type title summary body tags status superseded_by revision created_at updated_at protected
+     protected_by protected_at reviewed_revision`,
   ),
   t('page_addresses', 'brain_id address page_id created_at', 'brain_id address'),
   t(
@@ -104,11 +106,24 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
   t('trail_counts', 'brain_id target_id reads searches contexts until', 'brain_id target_id'),
   t(
     'wiki_log',
-    'id brain_id at actor_id kind proposal_id summary pages reason credential_id key_name maintenance',
+    'id brain_id at actor_id kind proposal_id summary pages reason credential_id key_name maintenance change_id',
+  ),
+  t(
+    'wiki_changes',
+    `id brain_id log_id proposal_id actor_id credential_id key_name ref session_id created_at state decided_by
+     decided_at comment undo_log_id correction_id`,
+  ),
+  t(
+    'wiki_change_parts',
+    `change_id part op_index page_id created revision_before revision_after address_before address_after status_before
+     superseded_by_before addresses_before addresses_added links_in_before sources_added state undone_by_person
+     undo_revision links_in_after status_after superseded_by_after addresses_after links_out_after`,
+    'change_id part',
   ),
   t(
     'wiki_settings',
-    `brain_id guide map_intro stale_days long_chars maintenance_every approvals_since usage_note meaning_excluded`,
+    `brain_id guide map_intro stale_days long_chars maintenance_every approvals_since usage_note meaning_excluded
+     write_mode entry_lifetimes`,
     'brain_id',
   ),
   t(

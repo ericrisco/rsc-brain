@@ -39,7 +39,7 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     w.callWeb(session, 'PATCH', `/v1/brains/yt/pages/${address}`, { baseRevision, ...fields })
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     ana = await w.person('Ana')
     admin = await w.person('Admin', { isAdmin: true })

@@ -29,6 +29,7 @@ import { exportZip } from './export.ts'
 import * as G from './graph.ts'
 import * as J from './journal.ts'
 import * as P from './proposals.ts'
+import * as W from './wiki.ts'
 import {
   changeWiki,
   decisionsOf,
@@ -95,6 +96,8 @@ export type Screen =
   | 'connect'
   | 'export'
   | 'import'
+  | 'review-later'
+  | 'review-change'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -211,6 +214,9 @@ type FxSettings = {
   longChars: number
   maintenanceEvery: number
   approvalsSince: number
+  // Spec learning-memory A4, B2.
+  writeMode?: 'auto' | 'ask_first'
+  entryLifetimes?: Record<string, number | null>
 }
 type FxService = {
   id: string
@@ -1004,7 +1010,13 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       const mine = brainsOf(s, who)
       if (st === 'empty') return { status: 200, body: { brains: [] } }
       if (st === 'much-data') return { status: 200, body: { brains: [...mine, ...MANY] } }
-      return { status: 200, body: { brains: mine } }
+      // «Review later» counts what agents changed in a curator's brains (spec learning-memory A2).
+      const counted = mine.map((b) =>
+        b.role === 'curator' && b.slug === 'growth'
+          ? { ...b, stats: { ...b.stats, pendingReview: W.pendingReviewOf(wikiOf(s, b.slug)) } }
+          : b,
+      )
+      return { status: 200, body: { brains: counted } }
     },
   },
   'POST /v1/brains': {
@@ -1056,7 +1068,12 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         status: 200,
         body: {
           cursor: String(s.seq),
-          stats: fresh && st === 'empty' ? ZERO : b.stats,
+          stats:
+            fresh && st === 'empty'
+              ? ZERO
+              : b.role === 'curator' && b.slug === 'growth'
+                ? { ...b.stats, pendingReview: W.pendingReviewOf(wikiOf(s, b.slug)) }
+                : b.stats,
           todaySessions: fresh || st === 'empty' ? [] : sessionsOf(b.slug, st === 'much-data' ? 20 : 3),
           pending: fresh
             ? []
@@ -1708,6 +1725,8 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         'staleDays',
         'longChars',
         'maintenanceEvery',
+        'writeMode',
+        'entryLifetimes',
       ]
       const base = body.base
       if (
@@ -1724,8 +1743,16 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           'Fix "base".',
         )
       if (base) {
+        const now = settingsView(x) as Record<string, unknown>
         const moved = Object.entries(base as Record<string, unknown>)
-          .filter(([k, v]) => x[k as keyof FxSettings] !== v)
+          .filter(([k, v]) =>
+            k === 'entryLifetimes'
+              ? JSON.stringify(now.entryLifetimes) !==
+                JSON.stringify({ ...ENTRY_LIFETIMES, ...(v as object) })
+              : k === 'writeMode'
+                ? now.writeMode !== v
+                : x[k as keyof FxSettings] !== v,
+          )
           .map(([k]) => k)
         if (moved.length)
           return {
@@ -1771,6 +1798,35 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       if (typeof body.meaningExcluded === 'boolean') x.meaningExcluded = body.meaningExcluded
       for (const k of ['staleDays', 'longChars', 'maintenanceEvery'] as const)
         if (typeof body[k] === 'number') x[k] = body[k] as number
+      if (body.writeMode !== undefined) {
+        if (body.writeMode !== 'auto' && body.writeMode !== 'ask_first')
+          return err(
+            400,
+            'invalid_request',
+            '"writeMode" is "auto" (apply agents\' changes at once) or "ask_first" (they wait for a curator).',
+            'Fix "writeMode".',
+          )
+        x.writeMode = body.writeMode
+      }
+      if (body.entryLifetimes !== undefined) {
+        const l = body.entryLifetimes as Record<string, unknown>
+        const ok =
+          typeof l === 'object' &&
+          l !== null &&
+          Object.entries(l).every(
+            ([t, d]) =>
+              t in ENTRY_LIFETIMES &&
+              (d === null || (Number.isSafeInteger(d) && (d as number) >= 1 && (d as number) <= 3650)),
+          )
+        if (!ok)
+          return err(
+            400,
+            'invalid_request',
+            'The lifetime of a type goes from 1 to 3650 days, or null for never.',
+            'Send "entryLifetimes" as {"<type>": days or null}.',
+          )
+        x.entryLifetimes = { ...(x.entryLifetimes ?? {}), ...(l as Record<string, number | null>) }
+      }
       return { status: 200, body: settingsView(x) }
     },
   },
@@ -2300,6 +2356,44 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   'POST /v1/brains/{slug}/wiki/changes': {
     run: (c) => inWiki(c, (w, curator) => changeWiki(w, c.who as Account, curator, c.body)),
   },
+  'GET /v1/brains/{slug}/wiki/changes': {
+    screen: 'review-later',
+    run: (c) =>
+      inWiki(c, (w, curator) =>
+        c.s.states.get('review-later') === 'empty'
+          ? { status: 200, body: { items: [], next: null, total: 0 } }
+          : W.changesOf(w, curator, c.query),
+      ),
+  },
+  'GET /v1/wiki/changes/{id}': {
+    screen: 'review-change',
+    run: (c) => inChange(c, (w) => W.changeOf(w, c.params.id as string)),
+  },
+  'POST /v1/wiki/changes/{id}/keep': {
+    run: (c) =>
+      inChange(c, (w, curator) =>
+        c.web
+          ? W.keepChange(w, c.params.id as string, c.who as Account, curator)
+          : {
+              status: 403,
+              body: {
+                error: {
+                  code: 'web_only',
+                  message: 'Keep is done in the rsc-brain web.',
+                  howToProceed: 'Open «Review later» in the web.',
+                },
+              },
+            },
+      ),
+  },
+  'POST /v1/wiki/changes/{id}/undo': {
+    run: (c) =>
+      inChange(c, (w, curator) => W.undoChange(w, c.params.id as string, c.who as Account, curator, c.body)),
+  },
+  'PUT /v1/brains/{slug}/protection/{address}': {
+    run: (c) =>
+      inWiki(c, (w, curator) => W.protectPage(w, curator, c.web, c.params.address as string, c.body)),
+  },
   'GET /v1/brains/{slug}/trail': {
     screen: 'trail',
     run: (c) =>
@@ -2520,6 +2614,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         return { status: 200, body: { items: [], next: null } }
       // The pages of the hand-made wiki first (they open), then the seeded ones; all in the first brain.
       // A snippet is a piece of the body, markdown and all, as the server's.
+      const live = wikiOf(s, 'growth')
       const hand = freshWiki().pages.map((p) => {
         const r = p.revs[p.revs.length - 1] as {
           address: string
@@ -2536,6 +2631,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           title: r.title,
           summary: r.summary,
           snippet: r.body.slice(0, 160),
+          unreviewed: W.isUnreviewed(live, r.address),
         }
       })
       const pages =
@@ -2554,6 +2650,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
                 title: p.title,
                 snippet: p.snippet,
                 ...words,
+                ...('unreviewed' in p && p.unreviewed ? { unreviewed: true } : {}),
                 at: AT,
               }))
       // Journal entries of each brain asked, as the server mixes them in.
@@ -2689,6 +2786,11 @@ const PRIVATE = new Set([
   'POST /v1/brains/{slug}/import',
   'GET /v1/brains/{slug}/wiki/settings',
   'PUT /v1/brains/{slug}/wiki/settings',
+  'GET /v1/brains/{slug}/wiki/changes',
+  'GET /v1/wiki/changes/{id}',
+  'POST /v1/wiki/changes/{id}/keep',
+  'POST /v1/wiki/changes/{id}/undo',
+  'PUT /v1/brains/{slug}/protection/{address}',
   'POST /v1/brains/{slug}/members',
   'PUT /v1/brains/{slug}/members/{account}',
   'DELETE /v1/brains/{slug}/members/{account}',
@@ -2842,6 +2944,24 @@ function decision(c: Ctx, b: Brain, p: P.FxProposal, d: P.Decided): Answer {
 }
 
 // The wiki of a brain the person is in, made when first read; `curator`: may edit it by hand.
+// A change of «Review later», in whichever of the viewer's brains holds it.
+function inChange(c: Ctx, run: (w: Wiki, curator: boolean) => Answer): Answer {
+  for (const b of brainsOf(c.s, c.who)) {
+    const w = wikiOf(c.s, b.slug)
+    if (W.findChange(w, c.params.id as string)) return run(w, b.role === 'curator' && b.status === 'active')
+  }
+  return {
+    status: 404,
+    body: {
+      error: {
+        code: 'not_found',
+        message: 'No change with that id is available to you.',
+        howToProceed: 'Check the change id.',
+      },
+    },
+  }
+}
+
 function inWiki(c: Ctx, run: (w: Wiki, curator: boolean) => Answer): Answer {
   const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
   const slug = b?.slug ?? 'growth'
@@ -3034,7 +3154,22 @@ const settingsView = (x: FxSettings) => ({
   longChars: x.longChars,
   maintenanceEvery: x.maintenanceEvery,
   approvalsSince: x.approvalsSince,
+  // Spec learning-memory B2: the lifetimes of each type (the web edits them with T010).
+  entryLifetimes: { ...ENTRY_LIFETIMES, ...(x.entryLifetimes ?? {}) },
+  entryLifetimesDefault: { ...ENTRY_LIFETIMES },
+  writeMode: x.writeMode ?? 'auto',
 })
+const ENTRY_LIFETIMES = {
+  decision: null,
+  learning: 60,
+  attempt: 14,
+  correction: null,
+  preference: null,
+  fact: null,
+  step: 7,
+  summary: 30,
+  note: 30,
+}
 
 // Another curator changes the settings of a brain meanwhile (the conflict of a save).
 export function settingsBehind(s: Scen, slug: string, change: Partial<FxSettings>): void {

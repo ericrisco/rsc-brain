@@ -30,6 +30,7 @@ import { Profile } from './screens/Profile.tsx'
 import { ProposalsInbox } from './screens/proposals/Inbox.tsx'
 import { ProposalScreen } from './screens/proposals/Proposal.tsx'
 import { Reset } from './screens/Reset.tsx'
+import { ChangeScreen, ReviewList } from './screens/review/ReviewLater.tsx'
 import { BrainSettings } from './screens/Settings.tsx'
 import { Setup } from './screens/Setup.tsx'
 import { SignIn } from './screens/SignIn.tsx'
@@ -118,6 +119,13 @@ function ProposalPage({ slug, id }: { slug?: string; id?: string }) {
   return <ProposalScreen key={`${slug}/${id}`} slug={slug ?? ''} id={id ?? ''} />
 }
 
+function ReviewPage({ slug }: { slug?: string }) {
+  return <ReviewList key={slug} slug={slug ?? ''} />
+}
+function ChangePage({ slug, id }: { slug?: string; id?: string }) {
+  return <ChangeScreen key={`${slug}/${id}`} slug={slug ?? ''} id={id ?? ''} />
+}
+
 function AboutPage({ slug }: { slug?: string }) {
   return <JournalAbout key={slug} slug={slug ?? ''} />
 }
@@ -132,6 +140,9 @@ function SettingsPage({ slug }: { slug?: string }) {
 }
 function SettingsAgentsPage({ slug }: { slug?: string }) {
   return <BrainSettings key={slug} slug={slug ?? ''} tab="agents" />
+}
+function SettingsMemoryPage({ slug }: { slug?: string }) {
+  return <BrainSettings key={slug} slug={slug ?? ''} tab="memory" />
 }
 function SettingsHealthPage({ slug }: { slug?: string }) {
   return <BrainSettings key={slug} slug={slug ?? ''} tab="health" />
@@ -202,6 +213,8 @@ function SignedIn() {
           <Route path="/b/:slug" component={BrainPage} />
           <Route path="/b/:slug/proposals" component={InboxPage} />
           <Route path="/b/:slug/proposals/:id" component={ProposalPage} />
+          <Route path="/b/:slug/review-later" component={ReviewPage} />
+          <Route path="/b/:slug/review-later/:id" component={ChangePage} />
           <Route path="/b/:slug/wiki" component={MapPage} />
           <Route path="/b/:slug/wiki/decisions" component={DecisionsPage} />
           <Route path="/b/:slug/wiki/log" component={LogPage} />
@@ -219,6 +232,7 @@ function SignedIn() {
           <Route path="/b/:slug/health" component={HealthPage} />
           <Route path="/b/:slug/settings" component={SettingsPage} />
           <Route path="/b/:slug/settings/agents" component={SettingsAgentsPage} />
+          <Route path="/b/:slug/settings/memory" component={SettingsMemoryPage} />
           <Route path="/b/:slug/settings/health" component={SettingsHealthPage} />
           <Route path="/b/:slug/settings/import" component={SettingsImportPage} />
           <Route path="/b/:slug/settings/archive" component={SettingsArchivePage} />

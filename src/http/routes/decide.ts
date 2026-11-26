@@ -4,6 +4,15 @@
 // not change.
 
 import { invalid } from '../../core/errors.ts'
+import { readLifetimes } from '../../domain/lapse.ts'
+import { limitOf } from '../../domain/listing.ts'
+import {
+  CHANGE_STATES,
+  type ChangeState,
+  getChange,
+  keepChange,
+  listChanges,
+} from '../../domain/wiki/changes.ts'
 import { setDebate } from '../../domain/wiki/debates.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
 import {
@@ -14,10 +23,13 @@ import {
   type SettingsField,
   setWikiSettings,
 } from '../../domain/wiki/direct.ts'
+import type { WriteMode } from '../../domain/wiki/pages.ts'
+import { setProtection } from '../../domain/wiki/protect.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
 import { compactReview } from '../../domain/wiki/review.ts'
+import { undoChange } from '../../domain/wiki/undo.ts'
 import { chunkedReply } from '../chunked-reply.ts'
-import { bool, compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
+import { bool, compact, int, type Obj, obj, oneOf, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -30,7 +42,55 @@ function indices(b: Obj, key: string): number[] | undefined {
   return v as number[]
 }
 
+const q = (v: string | null) => (v === null || v === '' ? undefined : v)
+
+// «since» of the tray: a date and time (ISO 8601), as the web sends it for today or the last 7 days.
+function sinceOf(v: string | null): string | undefined {
+  if (v === null || v === '') return undefined
+  if (!/^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:\d{2})?)?$/.test(v) || Number.isNaN(Date.parse(v)))
+    throw invalid('"since" is a date and time, such as 2026-11-25T00:00:00Z.', 'Fix "since".')
+  return new Date(v).toISOString()
+}
+
 export const decideRoutes: Route[] = [
+  // «Review later» (spec learning-memory A2): what agents changed, oldest first; the detail; Keep (a person, in the web).
+  route('GET /v1/brains/:slug/wiki/changes', async (r) => ({
+    body: await listChanges(
+      ctxOf(r),
+      r.params.slug as string,
+      compact({
+        state: oneOf({ state: q(r.query.get('state')) }, 'state', [...CHANGE_STATES, 'all']) as
+          | ChangeState
+          | 'all'
+          | undefined,
+        cursor: q(r.query.get('cursor')),
+        limit: limitOf(r.query.get('limit')),
+        since: sinceOf(r.query.get('since')),
+      }),
+    ),
+  })),
+  route('GET /v1/wiki/changes/:id', async (r) => ({
+    body: await getChange(ctxOf(r), r.params.id as string),
+  })),
+  route('POST /v1/wiki/changes/:id/keep', async (r) => ({
+    body: await keepChange(ctxOf(r), r.params.id as string),
+  })),
+  // Undo (spec learning-memory A2): whole or by parts, with a comment that teaches, over a conflict only when told.
+  route('POST /v1/wiki/changes/:id/undo', async (r) => {
+    const b = obj(r.body)
+    return {
+      body: await undoChange(
+        ctxOf(r),
+        r.params.id as string,
+        compact({
+          parts: indices(b, 'parts'),
+          comment: str(b, 'comment'),
+          overwrite: strList(b, 'overwrite'),
+          requestKey: str(b, 'requestKey', { max: 200 }),
+        }),
+      ),
+    }
+  }),
   route('GET /v1/proposals/:id/review', async (r) => {
     // The web reads the whole pages; an agent asks for the compact view (diffs and changed fields).
     const view = r.query.get('view') ?? 'full'
@@ -125,8 +185,22 @@ export const decideRoutes: Route[] = [
           staleDays: int(b, 'staleDays'),
           longChars: int(b, 'longChars'),
           maintenanceEvery: int(b, 'maintenanceEvery'),
+          entryLifetimes: b.entryLifetimes === undefined ? undefined : readLifetimes(b.entryLifetimes),
+          writeMode: str(b, 'writeMode') as WriteMode | undefined,
         }),
       ),
+    }
+  }),
+  // Spec learning-memory A3: a curator, in the web, protects a page or takes the protection off.
+  route('PUT /v1/brains/:slug/protection/*address', async (r) => {
+    const b = obj(r.body)
+    if (typeof b.protected !== 'boolean')
+      throw invalid(
+        '"protected" is true or false.',
+        'Send "protected": true to protect the page, false to unprotect it.',
+      )
+    return {
+      body: await setProtection(ctxOf(r), r.params.slug as string, r.params.address as string, b.protected),
     }
   }),
   route('POST /v1/brains/:slug/wiki/maintenance-asked', async (r) => ({
@@ -184,7 +258,9 @@ function baseOf(v: unknown): Partial<Record<SettingsField, unknown>> | undefined
   const out: Partial<Record<SettingsField, unknown>> = {}
   for (const [k, x] of Object.entries(v)) {
     if (!(SETTINGS_FIELDS as readonly string[]).includes(k)) throw bad()
-    if (x !== null && !['string', 'number', 'boolean'].includes(typeof x)) throw bad()
+    // The lifetimes are read as a whole: {type: days or null} (spec learning-memory B2).
+    const lifetimes = k === 'entryLifetimes' && x !== null && typeof x === 'object' && !Array.isArray(x)
+    if (x !== null && !lifetimes && !['string', 'number', 'boolean'].includes(typeof x)) throw bad()
     out[k as SettingsField] = x
   }
   return out

@@ -4,9 +4,11 @@
 import { AppError, invalid } from '../../core/errors.ts'
 import type { Db, Row } from '../../db/db.ts'
 import { type Ctx, inBrain } from '../context.ts'
+import { type Lifetimes, lifetimesOf, notLapsed } from '../lapse.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
 import { checkFilters } from './graph.ts'
 import type { LinkKind, PageStatus, PageType, Source } from './model.ts'
+import { hasPermission } from './writers.ts'
 
 export const pageNotFound = (address: string) =>
   new AppError(
@@ -30,6 +32,10 @@ export type WikiPage = {
   revision: number
   createdAt: string
   updatedAt: string
+  // Only a person in the web or a key with the wiki write permission writes it (spec learning-memory A3).
+  protected: boolean
+  // A change no person saw left it at this revision (spec learning-memory A1, CA-A9).
+  unreviewed: boolean
 }
 
 export const pageOf = (r: Row): WikiPage => ({
@@ -46,6 +52,8 @@ export const pageOf = (r: Row): WikiPage => ({
   revision: Number(r.revision),
   createdAt: (r.created_at as Date).toISOString(),
   updatedAt: (r.updated_at as Date).toISOString(),
+  protected: Boolean(r.protected),
+  unreviewed: r.reviewed_revision != null && Number(r.revision) > Number(r.reviewed_revision),
 })
 
 // The page an address leads to, through any address it ever had.
@@ -167,7 +175,7 @@ async function correctionsOf(ctx: Ctx, page: { id: string; brainId: string }): P
     `SELECT e.id, e.title, e.applies_to, e.created_at, a.id AS a_id, a.name AS a_name
        FROM entries e JOIN accounts a ON a.id = e.author_id
       WHERE e.brain_id = $1 AND e.type = 'correction' AND e.state = 'active' AND e.superseded_by IS NULL
-        AND (e.expires_at IS NULL OR e.expires_at > $2) AND e.refs && $3::text[]
+        AND ${notLapsed('e', '$2')} AND e.refs && $3::text[]
       ORDER BY e.created_at DESC, e.id LIMIT 20`,
     [page.brainId, ctx.clock(), await pageRefs(ctx.db, page.brainId, [page.id])],
   )
@@ -189,6 +197,8 @@ export type PageReading = {
   // Who saved the revision the page is at (an edit that meets a newer revision names them).
   lastChange: { revision: number; authorId: string; authorName: string; at: string } | null
   corrections: PageCorrection[]
+  // The latest change still awaiting review that touched it, for «Review it» (usability T1, B1); null otherwise.
+  reviewChange?: string | null
 }
 
 async function lastChangeOf(db: Db, pageId: string, revision: number): Promise<PageReading['lastChange']> {
@@ -207,8 +217,13 @@ async function lastChangeOf(db: Db, pageId: string, revision: number): Promise<P
     : null
 }
 
+async function mayReview(ctx: Ctx, brain: { id: string }, role: string): Promise<boolean> {
+  if (role === 'curator') return true
+  return ctx.who.credential.kind !== 'web' && (await hasPermission(ctx.db, brain.id, ctx.who.credential))
+}
+
 export async function getPage(ctx: Ctx, slug: string, address: string): Promise<PageReading> {
-  const { brain } = await inBrain(ctx, { slug })
+  const { brain, role } = await inBrain(ctx, { slug })
   const row = await resolve(ctx.db, brain.id, address)
   if (!row) throw pageNotFound(address)
   const page = pageOf(row)
@@ -218,6 +233,18 @@ export async function getPage(ctx: Ctx, slug: string, address: string): Promise<
     sources: await sourcesOf(ctx.db, page.id),
     lastChange: await lastChangeOf(ctx.db, page.id, page.revision),
     corrections: await correctionsOf(ctx, page),
+    // Only for who may open «Review later»: a curator, or a key a curator let write to the wiki (closing review R4).
+    reviewChange:
+      page.unreviewed && (await mayReview(ctx, brain, role))
+        ? ((
+            await ctx.db.one<{ id: string }>(
+              `SELECT c.id FROM wiki_changes c JOIN wiki_change_parts x ON x.change_id = c.id
+              WHERE x.page_id = $1 AND x.state = 'applied' AND c.state IN ('pending_review', 'partly_undone')
+              ORDER BY c.created_at DESC, c.id DESC LIMIT 1`,
+              [page.id],
+            )
+          )?.id ?? null)
+        : null,
   }
   if (page.address !== address) out.redirectedFrom = address
   if (page.status === 'retired') out.notice = 'retired: this page is kept for its history only.'
@@ -358,7 +385,8 @@ export async function wikiMap(
   const { brain } = await inBrain(ctx, { slug })
   const s = await settingsOf(ctx.db, brain.id)
   const rows = await ctx.db.query(
-    `SELECT address, type, title, summary, tags, status FROM pages
+    `SELECT address, type, title, summary, tags, status,
+            coalesce(revision > reviewed_revision, false) AS unreviewed FROM pages
       WHERE brain_id = $1 AND ($2 OR status = 'current')
       ORDER BY type, split_part(address, '/', 1), address, id`,
     [brain.id, Boolean(o.all)],
@@ -377,6 +405,7 @@ export async function wikiMap(
       summary: String(r.summary),
       tags: (r.tags as string[]) ?? [],
       status: r.status as PageStatus,
+      ...(r.unreviewed === true ? { unreviewed: true } : {}),
     })
   }
   return { intro: s.mapIntro, groups, count: rows.length }
@@ -417,7 +446,7 @@ export type LogLine = {
   maintenance: boolean
 }
 
-export const LOG_KINDS = ['proposal', 'direct', 'revert', 'purge', 'write'] as const
+export const LOG_KINDS = ['proposal', 'direct', 'revert', 'purge', 'write', 'undo', 'protect'] as const
 export type LogKind = (typeof LOG_KINDS)[number]
 
 // The log, newest first; by kind of change and by a page it touched, when asked.
@@ -475,7 +504,14 @@ export type WikiSettings = {
   longChars: number
   maintenanceEvery: number
   approvalsSince: number
+  // How long each type of entry lasts without use, in days (null: never), as in force (spec learning-memory B2).
+  entryLifetimes: Lifetimes
+  // Agents' changes apply at once («auto») or wait for a curator («ask_first», v0.7.15) (spec learning-memory A4).
+  writeMode: WriteMode
 }
+
+export const WRITE_MODES = ['auto', 'ask_first'] as const
+export type WriteMode = (typeof WRITE_MODES)[number]
 
 export const DEFAULT_GUIDE = `How to compile this brain's journal into its wiki.
 
@@ -501,6 +537,8 @@ export async function settingsOf(db: Db, brainId: string): Promise<WikiSettings>
     longChars: r ? Number(r.long_chars) : 20_000,
     maintenanceEvery: r ? Number(r.maintenance_every) : 20,
     approvalsSince: r ? Number(r.approvals_since) : 0,
+    entryLifetimes: lifetimesOf(r?.entry_lifetimes),
+    writeMode: r?.write_mode === 'ask_first' ? 'ask_first' : 'auto',
   }
 }
 
@@ -513,10 +551,14 @@ export type PageListItem = {
   in: number
   out: number
   updatedAt: string
+  // A change no person saw left it at this revision (usability T1, B1).
+  unreviewed: boolean
 }
 
 export type PageListQuery = {
   q?: string
+  // Only the pages a change no person saw left as they are.
+  unreviewed?: boolean
   prefix?: string
   // Only the pages at the level of `prefix` with no deeper part, as the graph gathers them.
   loose?: boolean
@@ -602,6 +644,7 @@ export async function listPages(
   if (o.type !== undefined) where.push(`p.type = ${p(o.type)}`)
   if (o.status !== undefined) where.push(`p.status = ANY(${p(o.status.split(','))}::text[])`)
   if (o.tag !== undefined) where.push(`${p(o.tag)} = ANY(p.tags)`)
+  if (o.unreviewed) where.push('p.revision > p.reviewed_revision')
   if (o.linkKind !== undefined) {
     // A semi-join on the set of pages with such a link (a hash, not a scan of the links for every page).
     const k = p(o.linkKind)
@@ -638,6 +681,7 @@ export async function listPages(
      o AS (SELECT from_page AS id, count(DISTINCT to_id)::int AS n FROM l GROUP BY from_page),
      i AS (SELECT to_id AS id, count(DISTINCT from_page)::int AS n FROM l GROUP BY to_id)
      SELECT p.address, p.title, p.type, p.status, p.tags, p.updated_at,
+            coalesce(p.revision > p.reviewed_revision, false) AS unreviewed,
             coalesce(o.n, 0) AS out_n, coalesce(i.n, 0) AS in_n
        FROM pages p LEFT JOIN o ON o.id = p.id LEFT JOIN i ON i.id = p.id
       WHERE ${filtered}${keyset}
@@ -654,6 +698,7 @@ export async function listPages(
       in: Number(r.in_n),
       out: Number(r.out_n),
       updatedAt: (r.updated_at as Date).toISOString(),
+      unreviewed: r.unreviewed === true,
     }),
   )
   const last = items.at(-1)

@@ -49,7 +49,7 @@ describe('the wiki as the web shows it (PR19 review)', { skip: skipPg }, () => {
   }
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     factory = await w.person('Factory')
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'rv', purpose: 'Review.' })

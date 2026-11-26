@@ -10,7 +10,16 @@ type Answer = { status: number; body: unknown }
 type Who = { id: string; name: string }
 type Op = { op: string; address: string; reason: string; [k: string]: unknown }
 type OpStatus = 'pending' | 'approved' | 'returned'
-type Status = 'pending' | 'approved' | 'partially_approved' | 'returned' | 'withdrawn' | 'superseded'
+type Status =
+  | 'pending'
+  | 'approved'
+  | 'partially_approved'
+  | 'returned'
+  | 'withdrawn'
+  | 'superseded'
+  | 'applied'
+  | 'partially_applied'
+  | 'stale'
 
 export type FxProposal = {
   id: string
@@ -43,6 +52,9 @@ const STATUSES: Status[] = [
   'returned',
   'withdrawn',
   'superseded',
+  'applied',
+  'partially_applied',
+  'stale',
 ]
 
 const err = (status: number, code: string, message: string, howToProceed: string, extra = {}): Answer => ({
@@ -506,6 +518,8 @@ const opsOut = (p: FxProposal) =>
     index,
     op: x.op,
     status: x.status,
+    holdReason: x.status === 'pending' ? 'ask_first' : null,
+    staleCurrent: null,
     correctedBy: x.corrected ? ERIC.id : null,
     baseReviewedBy: null,
     appliedPage: null,
@@ -692,7 +706,7 @@ export function approve(
   p.decidedAt = now
   p.comment = comment || null
   return {
-    answer: { status: 200, body: { proposal: plain(p), ops: opsOut(p), applied } },
+    answer: { status: 200, body: { proposal: plain(p), ops: opsOut(p), applied, undo: null } },
     event: { status: p.status, who },
   }
 }
@@ -717,7 +731,7 @@ export function giveBack(
   p.decidedAt = now
   p.comment = comment
   return {
-    answer: { status: 200, body: { proposal: plain(p), ops: opsOut(p), applied: [] } },
+    answer: { status: 200, body: { proposal: plain(p), ops: opsOut(p), applied: [], undo: null } },
     event: { status: 'returned', who },
   }
 }

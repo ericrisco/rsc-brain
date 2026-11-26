@@ -100,10 +100,21 @@ export async function world(
     companion?: CompanionConfig
     // The proxies believed (default: this machine, so tests can say what a proxy saw).
     trustedProxies?: string[]
+    // Every brain made in this world asks first (spec learning-memory A4): proposals wait for a person, as in v0.7.15.
+    // For the suites that test deciding on proposals; the apply-at-once path has its own (test/wiki/auto-apply.test.ts).
+    askFirst?: boolean
   } = {},
 ): Promise<World> {
   const t = await freshDatabase()
   await migrate(t.db)
+  if (o.askFirst)
+    await t.db.query(`
+      CREATE FUNCTION test_ask_first() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        INSERT INTO wiki_settings (brain_id, write_mode) VALUES (NEW.id, 'ask_first')
+          ON CONFLICT (brain_id) DO UPDATE SET write_mode = 'ask_first';
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER test_ask_first AFTER INSERT ON brains FOR EACH ROW EXECUTE FUNCTION test_ask_first();`)
   if (!o.fresh)
     await t.db.query(
       "UPDATE installation SET name = 'Test', public_url = 'http://localhost', setup_done_at = now() WHERE id = 1",

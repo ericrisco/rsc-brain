@@ -69,7 +69,7 @@ describe('the MCP endpoint', { skip: skipPg }, () => {
   }
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'alpha', purpose: 'The channel.' })
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'beta' })

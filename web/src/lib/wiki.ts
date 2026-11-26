@@ -17,20 +17,28 @@ export const LINK_KINDS = [
 // Mentions first (what the body says), then the typed links, the ones that warn last.
 const LINK_ORDER = ['mentions', 'related', 'depends-on', 'part-of', 'example-of', 'supersedes', 'contradicts']
 
-export type MapPage = { address: string; title: string; summary: string; tags: string[]; status?: string }
+export type MapPage = {
+  address: string
+  title: string
+  summary: string
+  tags: string[]
+  status?: string
+  unreviewed?: boolean
+}
 export type MapGroup = { type: string; area: string; pages: MapPage[] }
 export type MapFilter = {
   type?: string | undefined
   tag?: string | undefined
   q?: string | undefined
   status?: string | undefined
+  unreviewed?: string | undefined
 }
 
 const has = (text: string, q: string) => text.toLowerCase().includes(q)
 
 export function filterMap(groups: MapGroup[], f: MapFilter): MapGroup[] {
   const q = f.q?.trim().toLowerCase()
-  if (!f.type && !f.tag && !q && !f.status) return groups
+  if (!f.type && !f.tag && !q && !f.status && !f.unreviewed) return groups
   const out: MapGroup[] = []
   for (const g of groups) {
     if (f.type && g.type !== f.type) continue
@@ -38,6 +46,7 @@ export function filterMap(groups: MapGroup[], f: MapFilter): MapGroup[] {
       (p) =>
         (!f.tag || p.tags.includes(f.tag)) &&
         (!f.status || (p.status ?? 'current') === f.status) &&
+        (!f.unreviewed || p.unreviewed === true) &&
         (!q || has(p.title, q) || has(p.address, q) || has(p.summary, q)),
     )
     if (pages.length) out.push({ ...g, pages })

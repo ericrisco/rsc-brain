@@ -54,8 +54,8 @@ export async function writeDocs(
       const id = newId('ent')
       await db.query(
         `INSERT INTO entries (id, brain_id, session_id, type, title, content, tags, refs, author_id, credential_id,
-           norm_hash, created_at, updated_at, client)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13)`,
+           norm_hash, created_at, updated_at, client, lapse_from)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $12)`,
         [
           id,
           brainId,
@@ -86,8 +86,10 @@ export async function writeDocs(
     const id = newId('pg')
     idOf.set(p.address, id)
     await db.query(
-      `INSERT INTO pages (id, brain_id, address, type, title, summary, body, tags, status, revision, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10, $10)`,
+      // A person imports: the page counts as reviewed (spec learning-memory A1).
+      `INSERT INTO pages (id, brain_id, address, type, title, summary, body, tags, status, revision, created_at, updated_at,
+         reviewed_revision)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10, $10, 1)`,
       [id, brainId, p.address, p.type, p.title, p.summary, p.body, p.tags, p.status, now],
     )
     await db.query(

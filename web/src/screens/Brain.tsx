@@ -22,6 +22,7 @@ import { ErrorState, Skeleton } from '../ui/states.tsx'
 import type { BrainRow, Stats } from './Home.tsx'
 import { conflictsHref, sessionHref, sessionsHref } from './journal/common.tsx'
 import { inboxHref, proposalHref } from './proposals/data.ts'
+import { reviewHref } from './review/data.ts'
 
 export type BrainOne = BrainRow & { description: string }
 
@@ -135,7 +136,7 @@ function FirstSteps({
 
 // Each number that names work to do leads to it: what is not in the wiki yet to the sessions that hold
 // it, the conflicts to Conflicts, what waits for review to the proposals inbox.
-function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
+function Numbers({ slug, stats, curator }: { slug: string; stats: Stats; curator: boolean }) {
   const o = T.overview
   const items: Array<readonly [string, string, string?]> = [
     o.pages(stats.pages),
@@ -143,6 +144,10 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
     [...o.uncompiled(stats.uncompiled), `${sessionsHref(slug)}?uncompiled=1`],
     [...o.conflicts(stats.conflicts), conflictsHref(slug)],
     [...o.pending(stats.pendingProposals), inboxHref(slug)],
+    // What agents changed and nobody looked at yet, for those who review it (usability T1, M1).
+    ...(curator && stats.pendingReview
+      ? [[...o.awaitingReview(stats.pendingReview), reviewHref(slug)] as const]
+      : []),
   ]
   return (
     <section class="card pad" aria-labelledby="numbers-title">
@@ -365,7 +370,7 @@ export function Brain({ slug }: { slug: string }) {
       ) : (
         <div class="overview">
           {fresh ? <FirstSteps slug={b.slug} steps={o.firstSteps} curator={b.role === 'curator'} /> : null}
-          <Numbers slug={slug} stats={o.stats} />
+          <Numbers slug={slug} stats={o.stats} curator={b.role === 'curator'} />
           <div class="overview-grid">
             <Today slug={slug} sessions={o.todaySessions} />
             <div class="overview-side">

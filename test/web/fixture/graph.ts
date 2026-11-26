@@ -15,6 +15,8 @@ export type DataPage = {
   tags: string[]
   summary: string
   updatedAt: string
+  // A change no person saw left it as it is (usability T1, B1).
+  unreviewed?: boolean
 }
 // `to` may name no page (a mention of an address that does not exist): it counts as a link out, never drawn.
 export type DataLink = { from: string; to: string; kind: string }
@@ -184,6 +186,9 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
   const prefix = q.get('prefix')
   const tag = q.get('tag')
   const loose = q.get('loose')
+  const unreviewed = q.get('unreviewed')
+  if (unreviewed !== null && unreviewed !== '1')
+    return invalid('"unreviewed" is "1" or left out.', 'Send unreviewed=1 for the unreviewed pages only.')
   if (loose !== null && loose !== '1')
     return invalid('"loose" is "1" or left out.', 'Send loose=1 to open the pages gathered at a level.')
   // Addresses with a page that is not retired under them: not loose.
@@ -208,7 +213,8 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
         (!tag || p.tags.includes(tag)) &&
         (!prefix || p.address === prefix || p.address.startsWith(`${prefix}/`)) &&
         (!loose || isLoose(p.address)) &&
-        (!linkKind || kinded.has(p.address)),
+        (!linkKind || kinded.has(p.address)) &&
+        (!unreviewed || p.unreviewed === true),
     )
     .map((p) => ({
       address: p.address,
@@ -219,6 +225,7 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
       in: into.get(p.address)?.size ?? 0,
       out: out.get(p.address)?.size ?? 0,
       updatedAt: p.updatedAt,
+      unreviewed: p.unreviewed ?? false,
     }))
   const desc = sort.startsWith('-')
   const cmp = (a: string | number, b: string | number) => (a < b ? -1 : a > b ? 1 : 0)

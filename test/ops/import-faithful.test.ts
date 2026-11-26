@@ -47,7 +47,11 @@ const PEOPLE = new Set([
   'actor_id',
 ])
 // A session open in A comes in closed (its key is A's): its state is the one thing that may differ.
-const MAY_DIFFER: Record<string, string[]> = { sessions: ['status', 'closed_at'] }
+// An import is a person's act: its pages come in reviewed, whatever they were (spec learning-memory A1, plan §3.1).
+const MAY_DIFFER: Record<string, string[]> = {
+  sessions: ['status', 'closed_at'],
+  pages: ['reviewed_revision'],
+}
 const SCOPE: Record<string, string> = {
   sessions: 'brain_id = $1',
   pages: 'brain_id = $1',
@@ -105,7 +109,7 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
   let bWeb: string
 
   before(async () => {
-    a = await world()
+    a = await world({ askFirst: true })
     b = await world({ secret: 'another-installation-secret-of-32-characters-at-least' })
     const person = async (w: World, name: string, email: string, o: Json = {}) => {
       const p = await w.person(name, { email, ...o })
@@ -290,6 +294,11 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
     }
     // The ids are the original ones (no clash in B).
     assert.ok(await b.db.one('SELECT 1 FROM entries WHERE id = $1', [ids.e1]))
+    const unreviewed = await b.db.one(
+      `SELECT count(*)::int AS n FROM pages p JOIN brains b ON b.id = p.brain_id
+        WHERE b.slug = 'copy' AND p.reviewed_revision <> p.revision`,
+    )
+    assert.equal(unreviewed?.n, 0, 'every imported page is reviewed')
   })
 
   it("finds people by email only among the brain's members; everyone else is an author who never signs in", async () => {
@@ -451,6 +460,13 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
       // A value the schema refuses.
       ['bad value', tamper('pages.ndjson', (r) => r.map((x) => ({ ...x, type: 'weapon' })))],
       ['purged', tamper('entries.ndjson', (r) => r.map((x) => ({ ...x, state: 'purged' })))],
+      // Lifetimes of entries that are not whole days from 1 to 3650, or not of a type (review round 1, R1).
+      ...[{ step: 7.5 }, { step: 'x' }, { note: 1e300 }, { step: 0 }, { weapon: 5 }, []].map(
+        (v): [string, Map<string, Buffer | string>] => [
+          `entry_lifetimes ${JSON.stringify(v)}`,
+          tamper('wiki_settings.ndjson', (r) => r.map((x) => ({ ...x, entry_lifetimes: v }))),
+        ],
+      ),
       [
         'newer',
         new Map<string, Buffer | string>([

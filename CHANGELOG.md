@@ -4,6 +4,28 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.8.0
+
+- **Agents' changes apply at once, with an undo.** A proposal no longer waits by default: each part applies as soon as
+  it is sent and enters **Review later**, where a curator keeps it or undoes it, whole or in parts. When nothing
+  changed since, an undo puts each page back exactly as it was. When anything did (an edit, a link to or from the page,
+  a move), the undo is refused whole and says what and who; the curator can then undo a page's own text, status and
+  links over it, and the links other pages made stay. Nothing a person did later is lost silently.
+  The receipt says what applied, what waits and what came back to redo.
+- **Curators are told.** After the update each curator sees a notice once per brain: the wiki now applies agents'
+  changes at once, with undo, and where to change that. The brain's audit records the switch.
+- **Going back to Ask first.** Settings → Memory → "When agents change the wiki" → Ask first: every change waits in
+  Proposals for a curator, as before.
+- **What still waits.** Parts on a **protected** page (a curator's switch on the page), parts against a person's
+  correction, and every part in a brain set to Ask first wait for a curator or a key with the wiki write permission.
+- **Unreviewed pages.** A page an agent changed and no person looked at carries an "Unreviewed" mark in the page, the
+  wiki map (with a filter) and search, until it is kept or edited by hand.
+- **Entries expire by type.** Steps, attempts, summaries, notes and learnings leave search and context after a number
+  of days without use; decisions, facts, preferences and corrections never do. Each brain sets its own days in
+  Settings → Memory. Nothing is deleted, pinned entries and entries a current page cites stay, and the clock starts
+  at the update for entries written before it.
+- MCP: `brain_changes` and `brain_undo`; new descriptions for `brain_propose` and `brain_decide`.
+
 ## v0.7.15
 
 - Fix web search, graph communities, proposal review and known debates (#72)

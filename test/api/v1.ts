@@ -157,6 +157,11 @@ export const V1 = [
   'PUT /v1/admin/settings',
   'PUT /v1/brains/{slug}/members/{account}',
   'PUT /v1/brains/{slug}/notify',
+  'PUT /v1/brains/{slug}/protection/{address}',
+  'GET /v1/brains/{slug}/wiki/changes',
+  'GET /v1/wiki/changes/{id}',
+  'POST /v1/wiki/changes/{id}/keep',
+  'POST /v1/wiki/changes/{id}/undo',
   'PUT /v1/brains/{slug}/wiki/debates',
   'PUT /v1/brains/{slug}/wiki/settings',
   'PUT /v1/brains/{slug}/wiki/writers/{keyId}',
@@ -257,6 +262,16 @@ export const ERROR_STATUS: Record<string, number> = {
   key_not_allowed: 403,
   // A request key used again for another request (rsc-factory reads it as "not written": plan T010).
   request_key_reused: 409,
+  // «Review later» and the protect switch (spec learning-memory A2, A4): an undo over pages written since; keeping
+  // an undone change; protecting with a key.
+  undo_conflict: 409,
+  already_undone: 409,
+  protect_web_only: 403,
+  // An undo over a revision purged since; approving a part whose dependency was undone; deciding a part that does not
+  // wait (review round 2, V4).
+  undo_purged: 409,
+  dependency_undone: 409,
+  not_held: 400,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

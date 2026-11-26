@@ -421,6 +421,11 @@ function Card({
         {pending ? null : (
           <span class={`tag${o.status === 'returned' ? ' warn' : ''}`}>{w.opStatus[o.status]}</span>
         )}
+        {pending && o.holdReason ? (
+          <span class="tag warn" data-hold={o.holdReason}>
+            {w.holdReasons[o.holdReason] ?? o.holdReason}
+          </span>
+        ) : null}
         {o.corrected ? <span class="tag">{w.corrected}</span> : null}
         {correction && pending ? <span class="tag warn">{w.editedByYou}</span> : null}
         {o.stale && pending ? <span class="tag warn">{w.stale}</span> : null}
@@ -681,7 +686,8 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
   }
   const p = review.proposal
   const pendingOps = review.ops.filter((o) => o.status === 'pending')
-  const act = review.canDecide && p.status === 'pending' && !notice && !result
+  const waits = p.status === 'pending' || p.status === 'partially_applied'
+  const act = review.canDecide && waits && !notice && !result
   const several = pendingOps.length > 1
   const b = blockers(review.ops, choices)
   const groups = groupsOf(review.ops)
@@ -768,14 +774,13 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
   )
   // Decided meanwhile: who and when when a curator did it; the author's withdrawal says so; else the
   // server's own words.
-  const decidedLine =
-    p.status === 'pending'
-      ? null
-      : p.decidedByName && p.decidedAt
-        ? w.decidedAlready(w.statuses[p.status] ?? p.status, p.decidedByName, T.date(p.decidedAt))
-        : p.status === 'withdrawn'
-          ? w.withdrawnMeanwhile
-          : (decidedMsg ?? w.decidedAlready(w.statuses[p.status] ?? p.status, '—', '—'))
+  const decidedLine = waits
+    ? null
+    : p.decidedByName && p.decidedAt
+      ? w.decidedAlready(w.statuses[p.status] ?? p.status, p.decidedByName, T.date(p.decidedAt))
+      : p.status === 'withdrawn'
+        ? w.withdrawnMeanwhile
+        : (decidedMsg ?? w.decidedAlready(w.statuses[p.status] ?? p.status, '—', '—'))
   const decided = decidedMeanwhile && decidedLine
 
   return (
@@ -838,8 +843,8 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
           </span>
         </p>
       ) : null}
-      {p.lastError && p.status === 'pending' ? <p class="alert">{w.lastError(p.lastError)}</p> : null}
-      {review.canDecide || p.status !== 'pending' ? null : <ReadOnlyLine brain={brain} slug={slug} />}
+      {p.lastError && waits ? <p class="alert">{w.lastError(p.lastError)}</p> : null}
+      {review.canDecide || !waits ? null : <ReadOnlyLine brain={brain} slug={slug} />}
 
       {/* Wide: why and the changes in the main column, the decision beside them. */}
       <div class="proposal-body">

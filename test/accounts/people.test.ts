@@ -26,7 +26,7 @@ describe('people and keys', { skip: skipPg }, () => {
     w.db.query(`SELECT * FROM audit WHERE action = $1 ${extra} ORDER BY id`, [action])
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric', { isAdmin: true })
     ana = await w.person('Ana')
     adminWeb = await w.web(eric.id)

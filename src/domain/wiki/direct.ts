@@ -4,11 +4,21 @@
 // current version comes back (CA10). Also the curator's settings: the compile guide and the map intro.
 import { conflict, invalid } from '../../core/errors.ts'
 import { redact } from '../../privacy/redact.ts'
+import { audit } from '../audit.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
+import { DEFAULT_LIFETIMES, type Lifetimes, lifetimesOf } from '../lapse.ts'
 import { lockMeaning } from '../meaning.ts'
 import { applyOps, type Revised } from './apply.ts'
 import { type Problem, readOp } from './model.ts'
-import { DEFAULT_GUIDE, getPage, type PageReading, settingsOf, type WikiSettings } from './pages.ts'
+import {
+  DEFAULT_GUIDE,
+  getPage,
+  type PageReading,
+  settingsOf,
+  type WikiSettings,
+  WRITE_MODES,
+  type WriteMode,
+} from './pages.ts'
 import { problemsOf } from './proposals.ts'
 import { webOnly } from './review.ts'
 
@@ -74,6 +84,10 @@ export type SettingsInput = {
   staleDays?: number
   longChars?: number
   maintenanceEvery?: number
+  // Some types, each days or null for never (spec learning-memory B2); the others keep what they have.
+  entryLifetimes?: Partial<Lifetimes>
+  // «auto» or «ask_first» (spec learning-memory A4); each change is an audit line.
+  writeMode?: WriteMode
 }
 
 // The fields a person edits (not the count of approvals, which moves by itself).
@@ -85,20 +99,39 @@ export const SETTINGS_FIELDS = [
   'staleDays',
   'longChars',
   'maintenanceEvery',
+  'entryLifetimes',
+  'writeMode',
 ] as const
 export type SettingsField = (typeof SETTINGS_FIELDS)[number]
 
 // The settings as the brain's settings screen reads them (G11): the default texts beside the current ones.
-export type SettingsView = WikiSettings & { guideDefault: string; usageNoteDefault: string }
+export type SettingsView = WikiSettings & {
+  guideDefault: string
+  usageNoteDefault: string
+  entryLifetimesDefault: Lifetimes
+}
 export const USAGE_NOTE_DEFAULT = ''
 
 export function settingsView(s: WikiSettings): SettingsView {
-  return { ...s, guideDefault: DEFAULT_GUIDE, usageNoteDefault: USAGE_NOTE_DEFAULT }
+  return {
+    ...s,
+    guideDefault: DEFAULT_GUIDE,
+    usageNoteDefault: USAGE_NOTE_DEFAULT,
+    entryLifetimesDefault: { ...DEFAULT_LIFETIMES },
+  }
 }
 
-// A field as stored and compared: the guide is null while it is the default.
+// A field as stored and compared: the guide is null while it is the default; the lifetimes, type by type.
+const lifetimesKey = (l: unknown) => JSON.stringify(lifetimesOf(l))
 const stored = (s: WikiSettings, f: SettingsField): unknown =>
-  f === 'guide' ? (s.customGuide ? s.guide : null) : s[f]
+  f === 'guide'
+    ? s.customGuide
+      ? s.guide
+      : null
+    : f === 'entryLifetimes'
+      ? lifetimesKey(s.entryLifetimes)
+      : s[f]
+const baseValue = (f: SettingsField, v: unknown) => (f === 'entryLifetimes' ? lifetimesKey(v) : v)
 
 // Any member reads them: the guide and the note already reach every member's agents.
 export async function getWikiSettings(ctx: Ctx, slug: string): Promise<SettingsView> {
@@ -135,6 +168,11 @@ export async function setWikiSettings(
   range(s.staleDays, 'staleDays', 1, 3650)
   range(s.longChars, 'longChars', 1000, 100_000)
   range(s.maintenanceEvery, 'maintenanceEvery', 1, 1000)
+  if (s.writeMode !== undefined && !(WRITE_MODES as readonly string[]).includes(s.writeMode))
+    throw invalid(
+      '"writeMode" is "auto" (apply agents\' changes at once) or "ask_first" (they wait for a curator).',
+      'Fix "writeMode".',
+    )
   return ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
     const { brain, role } = await inBrain(c, { slug }, 'share')
@@ -147,7 +185,9 @@ export async function setWikiSettings(
       // Saves of this brain's settings take turns from here, so two on the same value cannot both pass.
       await db.query('SELECT 1 FROM wiki_settings WHERE brain_id = $1 FOR UPDATE', [brain.id])
       const now = await settingsOf(db, brain.id)
-      const moved = (Object.keys(s.base) as SettingsField[]).filter((f) => stored(now, f) !== s.base?.[f])
+      const moved = (Object.keys(s.base) as SettingsField[]).filter(
+        (f) => stored(now, f) !== baseValue(f, s.base?.[f]),
+      )
       if (moved.length) {
         const e = conflict(
           'settings_changed',
@@ -172,17 +212,36 @@ export async function setWikiSettings(
     set('stale_days', s.staleDays)
     set('long_chars', s.longChars)
     set('maintenance_every', s.maintenanceEvery)
+    set('write_mode', s.writeMode)
+    // The types sent replace their value; the others keep theirs.
+    if (s.entryLifetimes !== undefined) {
+      values.push(JSON.stringify(s.entryLifetimes))
+      sets.push(`entry_lifetimes = entry_lifetimes || $${values.length}::jsonb`)
+    }
     // Only a base: the person changed nothing, and asks whether what they see is still what is there.
     if (sets.length === 0 && s.base)
       return { ...settingsView(await settingsOf(db, brain.id)), unchanged: true }
     if (sets.length === 0)
       throw invalid(
         'Nothing to change.',
-        'Send guide, mapIntro, usageNote, meaningExcluded, staleDays, longChars or maintenanceEvery.',
+        'Send guide, mapIntro, usageNote, meaningExcluded, staleDays, longChars, maintenanceEvery, entryLifetimes or writeMode.',
       )
     // Waits for any vector being stored for this brain, so none lands after the exclusion.
     if (s.meaningExcluded !== undefined) await lockMeaning(db, brain.id)
+    const modeBefore = s.writeMode === undefined ? undefined : (await settingsOf(db, brain.id)).writeMode
     await db.query(`UPDATE wiki_settings SET ${sets.join(', ')} WHERE brain_id = $1`, values)
+    // A change of mode is written down (spec learning-memory A4, pack B7): who, when, to what.
+    if (s.writeMode !== undefined && s.writeMode !== modeBefore)
+      await audit(db, {
+        at: ctx.clock(),
+        actorId: ctx.who.accountId,
+        credentialId: ctx.who.credential.id,
+        action: 'wiki.mode',
+        brainId: brain.id,
+        target: slug,
+        outcome: 'ok',
+        detail: s.writeMode,
+      })
     // Excluding a brain from meaning search deletes its vectors now; nothing more of it is sent (CA8).
     if (s.meaningExcluded === true)
       await db.query('DELETE FROM meaning_vectors WHERE brain_id = $1', [brain.id])

@@ -43,6 +43,7 @@ test.describe('settings of a brain', () => {
     const parts: Record<string, string[]> = {
       Members: ['Members'],
       Agents: ['Repositories', 'Usage note', 'Compile guide', 'Meaning search'],
+      Memory: ['When agents change the wiki', 'How long entries last without use'],
       'Health thresholds': ['Health thresholds'],
       // Export sits beside Import, where people look for it (e2e finding 7).
       'Import and export': ['Export'],
@@ -582,7 +583,7 @@ test.describe('settings of a brain', () => {
     }) => {
       await scenario(context, baseURL as string, 'signed-in')
       await page.setViewportSize({ width, height: 800 })
-      for (const path of ['', '/agents', '/health', '/archive']) {
+      for (const path of ['', '/agents', '/memory', '/health', '/archive']) {
         await page.goto(`/b/growth/settings${path}`)
         await expect(page.getByRole('heading', { level: 2 }).first()).toBeVisible()
         if (path === '/agents')

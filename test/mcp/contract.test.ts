@@ -54,7 +54,7 @@ describe('the MCP contract', { skip: skipPg }, () => {
       .token as { id: string; secret: string }
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     ana = await w.person('Ana')
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'yt', purpose: 'Our channel.' })

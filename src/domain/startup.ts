@@ -7,6 +7,7 @@ import { invalid } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { words } from './entries.ts'
+import { lifetimesByBrain, notLapsedIn, sqlLiteral } from './lapse.ts'
 import { neighboursOf } from './search.ts'
 import { track } from './trail.ts'
 import { type Cleanup, cleanupDue } from './wiki/health.ts'
@@ -28,12 +29,11 @@ export type ContextItem = {
   type: string
   title: string
   address?: string
+  // A page a change no person saw left as it is (spec learning-memory A1, CA-A9).
+  unreviewed?: boolean
 }
 type Item = { id: string; block: string; lines?: string[]; about?: Omit<ContextItem, 'section'> }
 type Section = { name: string; title?: string; items: Item[] }
-
-const VIGENT =
-  "e.state = 'active' AND e.superseded_by IS NULL AND (e.expires_at IS NULL OR e.expires_at > $2)"
 
 // Text that imitates the delimiters cannot open or close a block.
 export const neutralize = (s: string) => s.replaceAll('<<<', '‹‹‹').replaceAll('>>>', '›››')
@@ -53,7 +53,8 @@ function block(r: Row, brainSlug: string): Item {
 
 function pageBlock(r: Row, brainSlug: string, via?: string): Item {
   const how = via ? ` via="${attr(via)}"` : ''
-  const head = `<<<page address=${r.address} type=${r.type} status=${r.status} brain=${brainSlug} updated=${(r.updated_at as Date).toISOString().slice(0, 10)}${how}>>>`
+  const unreviewed = r.reviewed_revision != null && Number(r.revision) > Number(r.reviewed_revision)
+  const head = `<<<page address=${r.address} type=${r.type} status=${r.status} brain=${brainSlug} updated=${(r.updated_at as Date).toISOString().slice(0, 10)}${unreviewed ? ' reviewed=no' : ''}${how}>>>`
   const summary = String(r.summary) ? `\n${neutralize(String(r.summary))}` : ''
   const body = `${neutralize(String(r.title))}${summary}\n\n${neutralize(String(r.body))}`
   return {
@@ -65,6 +66,7 @@ function pageBlock(r: Row, brainSlug: string, via?: string): Item {
       type: String(r.type),
       title: String(r.title),
       address: String(r.address),
+      ...(unreviewed ? { unreviewed: true } : {}),
     },
   }
 }
@@ -102,6 +104,15 @@ export async function startContext(
   ).trim()
   const now = ctx.clock()
   const p = [brain.id, now]
+  // Active, not superseded, not lapsed (spec learning-memory B2); $1 is the brain, $2 the time of the request. The
+  // limit of each type goes into the SQL as a date, so the queries keep their parameters.
+  const VIGENT = `e.state = 'active' AND e.superseded_by IS NULL AND ${notLapsedIn(
+    'e',
+    now,
+    await lifetimesByBrain(ctx.db, [brain.id]),
+    (v) => (v === now ? '$2' : sqlLiteral(v)),
+    'ARRAY[$1]',
+  )}`
 
   const taskWords = words(o.task ?? '')
   const relevantIds: string[] = taskWords.length

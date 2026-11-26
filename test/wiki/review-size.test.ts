@@ -42,7 +42,7 @@ describe('large proposal reviews (#52)', { skip: skipPg }, () => {
       },
     })
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     const p = await w.person('Reviewer')
     key = p.key
     session = await w.web(p.id)

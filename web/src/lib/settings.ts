@@ -93,6 +93,10 @@ export type SettingsRead = {
   meaningExcluded: boolean
   staleDays: number
   longChars: number
+  // Spec learning-memory A4, B2 (older servers do not send them).
+  writeMode?: 'auto' | 'ask_first'
+  entryLifetimes?: Record<string, number | null>
+  entryLifetimesDefault?: Record<string, number | null>
 }
 type Edit = Partial<{
   guide: string
@@ -100,7 +104,19 @@ type Edit = Partial<{
   meaningExcluded: boolean
   staleDays: number
   longChars: number
+  writeMode: 'auto' | 'ask_first'
+  entryLifetimes: Record<string, number | null>
 }>
+// The days a person typed for a type of entry: whole days from 1 to 3650, or empty for never (null). Undefined when
+// it is neither.
+export function lifetimeOf(v: string): number | null | undefined {
+  const t = v.trim()
+  if (!t) return null
+  if (!/^\d{1,4}$/.test(t)) return undefined
+  const n = Number(t)
+  return n >= 1 && n <= 3650 ? n : undefined
+}
+
 export type SettingsBody = Record<string, unknown> & { base: Record<string, unknown> }
 
 // What a save of one part sends (per-field compare-and-set): in "base", what every field the part shows
@@ -121,10 +137,18 @@ export function settingsSave(read: SettingsRead, edit: Edit): SettingsBody {
     out.base.usageNote = read.usageNote
     if (edit.usageNote.trim() !== read.usageNote) out.usageNote = edit.usageNote.trim()
   }
-  for (const k of ['meaningExcluded', 'staleDays', 'longChars'] as const) {
+  for (const k of ['meaningExcluded', 'staleDays', 'longChars', 'writeMode'] as const) {
     if (edit[k] === undefined) continue
     out.base[k] = read[k]
     if (edit[k] !== read[k]) out[k] = edit[k]
+  }
+  // The lifetimes are compared whole (as the server reads them in force); only the types changed are sent.
+  if (edit.entryLifetimes !== undefined && read.entryLifetimes) {
+    out.base.entryLifetimes = read.entryLifetimes
+    const changed = Object.fromEntries(
+      Object.entries(edit.entryLifetimes).filter(([t, d]) => read.entryLifetimes?.[t] !== d),
+    )
+    if (Object.keys(changed).length) out.entryLifetimes = changed
   }
   return out
 }

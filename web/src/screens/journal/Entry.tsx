@@ -110,7 +110,7 @@ function Notices({ slug, e }: { slug: string; e: EntryRead }) {
     )
   if (e.type === 'correction')
     out.push(
-      <p key="c" class="alert" role="note">
+      <p key="c" class="note" role="note">
         <span>{j.correctionNote}</span>
       </p>,
     )

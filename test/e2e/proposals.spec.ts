@@ -61,6 +61,14 @@ async function person(browser: Browser, admin: Page, name: string, role: string)
   return ctx
 }
 
+async function askFirst(page: Page, slug: string): Promise<void> {
+  const r = await page.request.put(`/v1/brains/${slug}/wiki/settings`, {
+    headers: WEB,
+    data: { writeMode: 'ask_first' },
+  })
+  expect(r.status(), await r.text()).toBe(200)
+}
+
 let agent = ''
 let entry = ''
 const ids: Record<string, string> = {}
@@ -86,6 +94,8 @@ test('a large review loads all changes and the curator approves them without a p
   expect(
     (await page.request.post('/v1/brains', { headers: WEB, data: { slug, name: 'Large reviews' } })).status(),
   ).toBe(201)
+  // The inbox is for brains that ask first (spec learning-memory A4); the default applies agents' changes at once.
+  await askFirst(page, slug)
   const token = await page.request.post('/v1/me/tokens', {
     headers: WEB,
     data: { name: 'large review agent', perm: 'write', brains: [slug], days: 30 },
@@ -166,6 +176,7 @@ test('an agent proposes; CA17: a reader sees the inbox read-only, with whom to a
       await page.request.post('/v1/brains', { headers: WEB, data: { slug: SLUG, name: 'Inbox e2e' } })
     ).status(),
   ).toBe(201)
+  await askFirst(page, SLUG)
   const t = await page.request.post('/v1/me/tokens', {
     headers: WEB,
     data: { name: 'e2e inbox agent', perm: 'write', brains: [SLUG], days: 30 },

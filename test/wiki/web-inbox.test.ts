@@ -44,7 +44,7 @@ describe('the proposals inbox of the web (PR21)', { skip: skipPg }, () => {
   }
 
   before(async () => {
-    w = await world()
+    w = await world({ askFirst: true })
     eric = await w.person('Eric')
     rita = await w.person('Rita')
     ana = await w.person('Ana')

@@ -23,7 +23,9 @@ export type PageState = {
 export type ReviewOp = {
   index: number
   op: Op
-  status: 'pending' | 'approved' | 'returned'
+  status: 'pending' | 'approved' | 'returned' | 'applied' | 'stale' | 'undone'
+  // Why a pending part waits (spec learning-memory A1).
+  holdReason?: string | null
   corrected: boolean
   before: PageState | null
   after: PageState | null

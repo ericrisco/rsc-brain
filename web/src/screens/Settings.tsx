@@ -25,6 +25,7 @@ import { fileProblem, type ImportReport, importAsk, importDone, whyText } from '
 import { focusOnArrival } from '../lib/screen.ts'
 import {
   fieldDrafts,
+  lifetimeOf,
   type MemberRow,
   memberRows,
   ROLES,
@@ -54,7 +55,7 @@ type Settings = SettingsRead
 type Member = { accountId: string; kind: string; name: string; email: string | null; role: string }
 type Repo = { repo: string; linkedAt: string }
 type BrainInfo = { slug: string; name: string; role: string; status: string }
-export type SettingsTab = 'members' | 'agents' | 'health' | 'import' | 'archive'
+export type SettingsTab = 'members' | 'agents' | 'memory' | 'health' | 'import' | 'archive'
 
 const settingsResource = (slug: string) =>
   resource<Settings>(`brain:${slug}:settings`, () => api.call<Settings>('wikiSettings', { path: { slug } }))
@@ -882,6 +883,181 @@ function Meaning({ slug, archived, account }: { slug: string; archived: boolean;
   )
 }
 
+// When agents change the wiki (spec learning-memory A4): applied at once with undo, or asking first. Each change is a
+// line in the brain's audit; going back to «Ask first» is one click.
+function WriteMode({ slug, archived }: { slug: string; archived: boolean }) {
+  const { r, base, pending, error, said, theirs, save } = usePart(slug)
+  const [mode, setMode] = useState<'auto' | 'ask_first' | null>(null)
+  useEffect(() => {
+    if (base) setMode(base.writeMode ?? 'auto')
+  }, [base])
+  const options = [
+    { v: 'auto' as const, label: S.writeAuto, hint: S.writeAutoHint },
+    { v: 'ask_first' as const, label: S.writeAsk, hint: S.writeAskHint },
+  ]
+  return (
+    <Part id="write-mode" title={S.writeMode} lead={S.writeModeLead}>
+      <PartBody r={r} rows={2} ready={base !== null && mode !== null}>
+        <form
+          class="settings-form"
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (mode) void save({ writeMode: mode })
+          }}
+        >
+          {archived ? <p class="note">{S.archivedNote}</p> : null}
+          <FormAlert error={error} />
+          {theirs ? (
+            <Conflict>
+              <p>{theirs.writeMode === 'ask_first' ? S.writeAsk : S.writeAuto}</p>
+            </Conflict>
+          ) : null}
+          <fieldset class="choice">
+            <legend class="sr-only">{S.writeMode}</legend>
+            {options.map((o) => (
+              <div key={o.v} class="pick">
+                <input
+                  type="radio"
+                  name="write-mode"
+                  id={`write-mode-${o.v}`}
+                  checked={mode === o.v}
+                  aria-describedby={`write-mode-${o.v}-hint`}
+                  onChange={() => {
+                    setMode(o.v)
+                    said.say(null)
+                  }}
+                />
+                <label for={`write-mode-${o.v}`}>{o.label}</label>
+                <p class="hint" id={`write-mode-${o.v}-hint`}>
+                  {o.hint}
+                </p>
+              </div>
+            ))}
+          </fieldset>
+          <Said text={said.said} id="write-mode-said" focus={said.focus} />
+          <div class="actions">
+            <Button
+              type="submit"
+              pending={pending}
+              pendingLabel={S.saving}
+              blocked={archived ? S.archivedNote : blocked()}
+            >
+              {S.save}
+            </Button>
+          </div>
+        </form>
+      </PartBody>
+    </Part>
+  )
+}
+
+const ENTRY_TYPE_ORDER = [
+  'step',
+  'attempt',
+  'summary',
+  'note',
+  'learning',
+  'decision',
+  'fact',
+  'preference',
+  'correction',
+]
+
+// How long each type of entry lasts without use (spec learning-memory B2): a row per type, days or empty for never,
+// with the default beside it.
+function Lifetimes({ slug, archived }: { slug: string; archived: boolean }) {
+  const { r, base, pending, error, said, theirs, save } = usePart(slug)
+  const [v, setV] = useState<Record<string, string> | null>(null)
+  const [problems, setProblems] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (base?.entryLifetimes)
+      setV(
+        Object.fromEntries(
+          ENTRY_TYPE_ORDER.map((t) => [
+            t,
+            base.entryLifetimes?.[t] == null ? '' : String(base.entryLifetimes[t]),
+          ]),
+        ),
+      )
+  }, [base])
+  if (base && !base.entryLifetimes) return null
+  return (
+    <Part id="lifetimes" title={S.lifetimes} lead={S.lifetimesLead}>
+      <PartBody r={r} rows={4} ready={base !== null && v !== null}>
+        {v ? (
+          <form
+            class="settings-form"
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault()
+              const p: Record<string, string> = {}
+              const next: Record<string, number | null> = {}
+              for (const t of ENTRY_TYPE_ORDER) {
+                const d = lifetimeOf(v[t] ?? '')
+                if (d === undefined) p[t] = S.lifetimeProblem
+                else next[t] = d
+              }
+              setProblems(p)
+              const first = ENTRY_TYPE_ORDER.find((t) => p[t])
+              if (first) {
+                document.getElementById(`lifetime-${first}`)?.focus()
+                return
+              }
+              void save({ entryLifetimes: next })
+            }}
+          >
+            {archived ? <p class="note">{S.archivedNote}</p> : null}
+            <FormAlert error={error} />
+            {theirs?.entryLifetimes ? (
+              <Conflict>
+                <ul class="theirs-values">
+                  {ENTRY_TYPE_ORDER.map((t) => (
+                    <li key={t}>
+                      {S.entryTypes[t] ?? t}: <strong>{theirs.entryLifetimes?.[t] ?? S.lifetimeNever}</strong>
+                    </li>
+                  ))}
+                </ul>
+              </Conflict>
+            ) : null}
+            <p class="hint">{S.lifetimeHint}</p>
+            <div class="thresholds lifetimes">
+              {ENTRY_TYPE_ORDER.map((t) => (
+                <Field
+                  key={t}
+                  id={`lifetime-${t}`}
+                  label={S.lifetimeType(S.entryTypes[t] ?? t)}
+                  hint={S.lifetimeDefault(base?.entryLifetimesDefault?.[t] ?? null)}
+                  inputMode="numeric"
+                  placeholder={S.lifetimeNever}
+                  value={v[t] ?? ''}
+                  problem={problems[t] ?? null}
+                  onValue={(x) => {
+                    setV({ ...v, [t]: x })
+                    said.say(null)
+                    if (problems[t]) setProblems({ ...problems, [t]: '' })
+                  }}
+                />
+              ))}
+            </div>
+            <Said text={said.said} id="lifetimes-said" focus={said.focus} />
+            <div class="actions">
+              <Button
+                type="submit"
+                pending={pending}
+                pendingLabel={S.saving}
+                blocked={archived ? S.archivedNote : blocked()}
+              >
+                {S.save}
+              </Button>
+            </div>
+          </form>
+        ) : null}
+      </PartBody>
+    </Part>
+  )
+}
+
 function Health({ slug, archived, account }: { slug: string; archived: boolean; account: string }) {
   const { r, base, pending, error, said, theirs, save, follow } = usePart(slug)
   const [v, setV] = useState<Record<ThresholdName, string> | null>(null)
@@ -1451,6 +1627,7 @@ function TabFocus({ tab }: { tab: SettingsTab }) {
 const TABS: Array<{ tab: SettingsTab; path: string; label: string }> = [
   { tab: 'members', path: '', label: S.tabs.members },
   { tab: 'agents', path: '/agents', label: S.tabs.agents },
+  { tab: 'memory', path: '/memory', label: S.tabs.memory },
   { tab: 'health', path: '/health', label: S.tabs.health },
   { tab: 'import', path: '/import', label: S.tabs.import },
   { tab: 'archive', path: '/archive', label: S.tabs.archive },
@@ -1522,6 +1699,12 @@ export function BrainSettings({ slug, tab }: { slug: string; tab: SettingsTab })
             <TextPart slug={brain.slug} archived={archived} account={who.account.id} part="usage" />
             <TextPart slug={brain.slug} archived={archived} account={who.account.id} part="guide" />
             <Meaning slug={brain.slug} archived={archived} account={who.account.id} />
+          </>
+        ) : null}
+        {tab === 'memory' ? (
+          <>
+            <WriteMode slug={brain.slug} archived={archived} />
+            <Lifetimes slug={brain.slug} archived={archived} />
           </>
         ) : null}
         {tab === 'health' ? <Health slug={brain.slug} archived={archived} account={who.account.id} /> : null}

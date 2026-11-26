@@ -4385,6 +4385,11 @@ dialog.search-dialog {
   gap: 12px;
 }
 
+/* The lifetimes by type (spec learning-memory B2): nine short day fields, two or three to a row. */
+.thresholds.lifetimes {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr));
+}
+
 .member-actions select {
   min-width: 130px;
 }
@@ -4564,7 +4569,8 @@ dialog.search-dialog {
   accent-color: var(--accent);
 }
 
-.pick .reason {
+.pick .reason,
+.pick .hint {
   grid-column: 2;
 }
 
