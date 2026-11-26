@@ -248,6 +248,8 @@ describe('undo, exact, whole or in parts (spec learning-memory A2)', { skip: ski
         currentRevision: 3,
         editedBy: 'Cole',
         editedAt: '2026-10-29T10:01:00.000Z',
+        differs: ['revision'],
+        links: [],
       },
     ])
     assert.equal(await revisionOf('cf'), 3)

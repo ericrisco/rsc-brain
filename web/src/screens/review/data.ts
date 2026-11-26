@@ -49,7 +49,7 @@ export type UndoAnswer =
       undone: Array<{ address: string; revision: number }>
       discarded: number[]
       correction?: string
-      overwritten?: Array<{ address: string; revisions: number[]; editedBy: string[] }>
+      overwritten?: Array<{ address: string; revisions: number[]; editedBy: string[]; leftAsIs?: string[] }>
     }
   | { alreadyUndone: true }
 export type Conflict = {
@@ -59,6 +59,8 @@ export type Conflict = {
     currentRevision: number
     editedBy?: string
     editedAt?: string
+    differs?: string[]
+    links?: Array<{ from: string; kind: string; now: 'added' | 'removed' }>
   }>
   addresses?: Array<{ address: string; heldBy: string }>
 }

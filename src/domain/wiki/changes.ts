@@ -79,11 +79,14 @@ export async function recordChange(
       'SELECT from_page, kind FROM page_links WHERE to_page = $1 ORDER BY from_page, kind',
       [b.pageId],
     )
+    // The rest of the state the change left the page in: an undo compares it with the page now (replanteo of CA-A10).
+    const state = await afterState(db, b.pageId)
     await db.query(
       `INSERT INTO wiki_change_parts (change_id, part, op_index, page_id, created, revision_before, revision_after,
          address_before, address_after, status_before, superseded_by_before, addresses_before, addresses_added,
-         links_in_before, sources_added, links_in_after)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         links_in_before, sources_added, links_in_after, status_after, superseded_by_after, addresses_after,
+         links_out_after)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [
         id,
         part,
@@ -101,12 +104,45 @@ export async function recordChange(
         JSON.stringify(b.linksIn),
         JSON.stringify(sourcesAdded),
         JSON.stringify(linksAfter.map((l) => ({ fromPage: l.from_page, kind: l.kind }))),
+        state.status,
+        state.supersededBy,
+        JSON.stringify(state.addresses),
+        JSON.stringify(state.linksOut),
       ],
     )
     part += 1
   }
   await db.query('UPDATE wiki_log SET change_id = $2 WHERE id = $1', [c.logId, id])
   return id
+}
+
+// The state of a page an undo compares (replanteo of CA-A10): status, what supersedes it, its addresses and its links
+// out (kind and the page, or the address of a mention that names no page), each sorted.
+export type AfterState = {
+  status: string
+  supersededBy: string | null
+  addresses: string[]
+  linksOut: string[]
+}
+export async function afterState(db: Db, pageId: string): Promise<AfterState> {
+  const p = await db.one<{ status: string; superseded_by: string | null }>(
+    'SELECT status, superseded_by FROM pages WHERE id = $1',
+    [pageId],
+  )
+  const addresses = await db.query<{ address: string }>(
+    'SELECT address FROM page_addresses WHERE page_id = $1 ORDER BY address',
+    [pageId],
+  )
+  const out = await db.query<{ k: string }>(
+    `SELECT kind || ' ' || coalesce(to_page, '@' || to_address) AS k FROM page_links WHERE from_page = $1 ORDER BY 1`,
+    [pageId],
+  )
+  return {
+    status: String(p?.status ?? ''),
+    supersededBy: p?.superseded_by == null ? null : String(p.superseded_by),
+    addresses: addresses.map((a) => a.address),
+    linksOut: out.map((l) => l.k),
+  }
 }
 
 // A returned or undone part becomes a person's correction that applies to whoever proposed (spec B2, CA8; spec

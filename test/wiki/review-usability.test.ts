@@ -162,14 +162,24 @@ describe('Review later, as people use it (usability T1)', { skip: skipPg }, () =
     assert.equal(clash.body.error?.code, 'undo_conflict')
     const pages = (clash.body.error as { pages?: Array<Json> }).pages ?? []
     assert.deepEqual(pages, [
-      { address: 'c/page', changeRevision: 2, currentRevision: 3, editedBy: 'Cora', editedAt: at },
+      {
+        address: 'c/page',
+        changeRevision: 2,
+        currentRevision: 3,
+        editedBy: 'Cora',
+        editedAt: at,
+        differs: ['revision'],
+        links: [],
+      },
     ])
     const over = await w.callWeb(coraWeb, 'POST', `/v1/wiki/changes/${id}/undo`, {
       overwrite: ['c/page'],
       comment: 'Keep the page as it was.',
     })
     assert.equal(over.status, 200, over.text)
-    assert.deepEqual(over.body.overwritten, [{ address: 'c/page', revisions: [3], editedBy: ['Cora'] }])
+    assert.deepEqual(over.body.overwritten, [
+      { address: 'c/page', revisions: [3], editedBy: ['Cora'], leftAsIs: [] },
+    ])
     const change = (await w.callWeb(coraWeb, 'GET', `/v1/wiki/changes/${id}`)).body.change as Json
     assert.equal(change.comment, 'Keep the page as it was.')
     assert.equal(change.correction, over.body.correction)

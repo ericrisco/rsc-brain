@@ -394,7 +394,20 @@ function UndoDialog({
                         />
                         <label for={`overwrite-${c.address}`}>{w.overwrite(c.address)}</label>
                       </div>
-                      {c.editedAt ? (
+                      {c.differs && !c.differs.includes('revision') ? (
+                        <p class="hint">
+                          {[
+                            ...(c.links ?? []).map((l) => w.linkChanged(l.from, l.kind, l.now)),
+                            ...c.differs
+                              .filter((d) => d.startsWith('linked_page:'))
+                              .map((d) => w.linkedPageChanged(d.slice(12))),
+                            ...c.differs
+                              .filter((d) => ['status', 'addresses', 'links_out'].includes(d))
+                              .map((d) => w.otherChanged(d.replace('_', ' '))),
+                          ].join(' ')}{' '}
+                          {w.overwriteKeeps}
+                        </p>
+                      ) : c.editedAt ? (
                         <p class="hint">
                           {w.editedAfter(c.editedBy ?? '', c.address, T.dateTime(c.editedAt))}{' '}
                           {w.overwriteNote}
@@ -526,7 +539,8 @@ export function ChangeScreen({ slug, id }: { slug: string; id: string }) {
         {replaced.map((x) => (
           <span key={x.address} class="replaced">
             {' '}
-            {w.replaced(x.revisions, x.address, x.editedBy)}{' '}
+            {x.revisions.length ? <>{w.replaced(x.revisions, x.address, x.editedBy)} </> : null}
+            {x.leftAsIs?.includes('links_in') ? <>{w.leftAsIs(x.address)} </> : null}
             <a href={`${pageHref(slug, x.address)}?view=history`}>{w.pageHistory}</a>
           </span>
         ))}

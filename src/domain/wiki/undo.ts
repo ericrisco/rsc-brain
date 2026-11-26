@@ -16,7 +16,15 @@ import type { Row } from '../../db/db.ts'
 import { redact } from '../../privacy/redact.ts'
 import { allow, type Ctx, personInWeb } from '../context.ts'
 import { type ApplyItem, applyOps, type RestoreOp } from './apply.ts'
-import { type ChangeView, changeOf, partsOf, recordChange, teach, viewOfChange } from './changes.ts'
+import {
+  afterState,
+  type ChangeView,
+  changeOf,
+  partsOf,
+  recordChange,
+  teach,
+  viewOfChange,
+} from './changes.ts'
 import { type Op, WIKI_LIMITS } from './model.ts'
 import { dependencies } from './review.ts'
 import { hasPermission } from './writers.ts'
@@ -28,11 +36,13 @@ export type Undone =
       undone: { address: string; revision: number }[]
       discarded: number[]
       correction?: string
-      // The later revisions an overwrite replaced, and who wrote them (usability T1, M4).
+      // The later revisions an overwrite replaced, who wrote them, and what it left as it is (usability T1, M4).
       overwritten?: Overwritten[]
     }
   | { alreadyUndone: true }
-export type Overwritten = { address: string; revisions: number[]; editedBy: string[] }
+export type Overwritten = { address: string; revisions: number[]; editedBy: string[]; leftAsIs: string[] }
+// As kept with a request key (plan §8.3 H4): ids, revisions and codes only; names are read when answering.
+type OverwrittenKept = { address: string; revisions: number[]; editedById: string[]; leftAsIs: string[] }
 
 // What a retry with the same request key gets: ids, addresses and revisions, never text (plan §8.3 H4).
 type Stored =
@@ -42,10 +52,32 @@ type Stored =
       undone: { address: string; revision: number }[]
       discarded: number[]
       correction?: string
-      overwritten?: Overwritten[]
+      overwritten?: OverwrittenKept[]
     }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
+
+// What an undo answers from what it kept: the change read again, and the names of whoever wrote what an overwrite
+// replaced, read now (a name is never kept with a request key).
+async function answerOf(db: Ctx['db'], s: Exclude<Stored, { alreadyUndone: true }>): Promise<Undone> {
+  const { overwritten, ...rest } = s
+  const named = overwritten
+    ? await Promise.all(
+        overwritten.map(async ({ editedById, ...o }) => ({
+          ...o,
+          editedBy: editedById.length
+            ? (
+                await db.query<{ name: string }>(
+                  'SELECT name FROM accounts WHERE id = ANY($1) ORDER BY array_position($1, id)',
+                  [editedById],
+                )
+              ).map((a) => a.name)
+            : [],
+        })),
+      )
+    : undefined
+  return { ...rest, change: await viewOfChange(db, s.changeId), ...(named ? { overwritten: named } : {}) }
+}
 
 export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promise<Undone> {
   const comment = input.comment === undefined ? undefined : redact(input.comment.trim()).text
@@ -58,6 +90,7 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
     throw invalid('A request key has 1 to 200 characters.', 'Use a fresh random id per request, e.g. a UUID.')
   return ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
+    const answer = (s: Exclude<Stored, { alreadyUndone: true }>) => answerOf(db, s)
     const { row, brain, role } = await changeOf(c, id, true)
     // A curator in the web, or a key a curator let write to the wiki (asked inside, so a revoke counts at once).
     const byKey = !personInWeb(c)
@@ -95,7 +128,7 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
           )
         const s = seen.receipt
         if ('alreadyUndone' in s) return s
-        return { ...s, change: await viewOfChange(db, s.changeId) }
+        return answer(s)
       }
       keep = async (s) => {
         await db.query(
@@ -106,7 +139,7 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
     }
     const done = async (s: Stored): Promise<Undone> => {
       await keep(s)
-      return 'alreadyUndone' in s ? s : { ...s, change: await viewOfChange(db, id) }
+      return 'alreadyUndone' in s ? s : answer(s)
     }
     // One writer of the brain's wiki at a time: the conflict check and the restore see the same pages.
     await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`wiki:${brain.id}`])
@@ -184,49 +217,152 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
         if (h && h.id !== p.pageId && !partPages.has(h.id)) taken.push({ address: a, heldBy: h.address })
       }
     }
-    // Who wrote after the change, and when: a person decides knowing whose edit an overwrite replaces (usability T1, M4).
-    const later = async (pageId: string, after: number) =>
-      db.query<{ revision: number; name: string; at: Date }>(
-        `SELECT r.revision, coalesce(a.name, '') AS name, r.created_at AS at FROM page_revisions r
-           LEFT JOIN accounts a ON a.id = r.author_id WHERE r.page_id = $1 AND r.revision > $2 ORDER BY r.revision`,
-        [pageId, after],
-      )
-    const conflicts: {
+    // Detect, never merge (replanteo of CA-A10): each page to undo is compared with the state the change left it in —
+    // revision, status, what supersedes it, addresses, links out, links in from pages outside the change — and every
+    // other page of the change that links to it or did must be as the change (or its earlier undo) left it. Anything
+    // different is a conflict for a person; nothing changes. «overwrite» undoes a page anyway, but only its own state:
+    // the links into it from outside the change and an address another page holds are left as they are.
+    type Diff = {
       address: string
       changeRevision: number
       currentRevision: number
       editedBy: string
       editedAt: string
-    }[] = []
-    const overwritten: Overwritten[] = []
+      differs: string[]
+      links: { from: string; kind: string; now: 'added' | 'removed' }[]
+    }
+    const byPart = new Map(parts.map((p) => [p.pageId, p]))
+    const set = (xs: string[]) => new Set(xs)
+    const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, k) => x === b[k])
+    const lastWrite = async (pageIds: string[]) =>
+      pageIds.length
+        ? await db.one<{ author_id: string; name: string; at: Date }>(
+            `SELECT r.author_id, coalesce(a.name, '') AS name, r.created_at AS at
+               FROM pages p JOIN page_revisions r ON r.page_id = p.id AND r.revision = p.revision
+               LEFT JOIN accounts a ON a.id = r.author_id WHERE p.id = ANY($1) ORDER BY r.created_at DESC LIMIT 1`,
+            [pageIds],
+          )
+        : undefined
+    const addressOf = async (pageId: string) =>
+      String(
+        (await db.one<{ address: string }>('SELECT address FROM pages WHERE id = $1', [pageId]))?.address ??
+          pageId,
+      )
+    const conflicts: Diff[] = []
+    const overwritten: OverwrittenKept[] = []
+    const incoming = new Map<string, boolean>()
     for (const p of todo) {
+      const r = rows.get(p.part) as Row
       const now = pages.get(p.pageId)
-      if (!now || Number(now.revision) <= p.revisionAfter) continue
-      const revs = await later(p.pageId, p.revisionAfter)
-      if (overwrite.has(p.address) || overwrite.has(now.address)) {
+      const differs: string[] = []
+      const links: Diff['links'] = []
+      const blame = new Set<string>()
+      if (!now || Number(now.revision) !== p.revisionAfter) {
+        differs.push('revision')
+        blame.add(p.pageId)
+      }
+      if (r.status_after != null || r.addresses_after != null || r.links_out_after != null) {
+        const st = await afterState(db, p.pageId)
+        if (
+          r.status_after != null &&
+          (st.status !== r.status_after || st.supersededBy !== (r.superseded_by_after ?? null))
+        )
+          differs.push('status')
+        if (r.addresses_after != null && !same(st.addresses, r.addresses_after as string[]))
+          differs.push('addresses')
+        if (r.links_out_after != null && !same(st.linksOut, r.links_out_after as string[]))
+          differs.push('links_out')
+      }
+      type L = { fromPage: string; kind: string }
+      const before = (r.links_in_before as L[] | null) ?? []
+      const after = (r.links_in_after as L[] | null) ?? null
+      const nowIn = (
+        await db.query<{ from_page: string; kind: string }>(
+          'SELECT from_page, kind FROM page_links WHERE to_page = $1',
+          [p.pageId],
+        )
+      ).map((l) => ({ fromPage: l.from_page, kind: l.kind }))
+      if (after) {
+        const outside = (l: L) => l.fromPage !== p.pageId && !partPages.has(l.fromPage)
+        const k = (l: L) => `${l.fromPage} ${l.kind}`
+        const want = set(after.filter(outside).map(k))
+        const have = set(nowIn.filter(outside).map(k))
+        for (const l of nowIn.filter(outside)) {
+          if (!want.has(k(l))) {
+            links.push({ from: await addressOf(l.fromPage), kind: l.kind, now: 'added' })
+            blame.add(l.fromPage)
+          }
+        }
+        for (const l of after.filter(outside)) {
+          if (!have.has(k(l))) {
+            links.push({ from: await addressOf(l.fromPage), kind: l.kind, now: 'removed' })
+            blame.add(l.fromPage)
+          }
+        }
+        if (links.length) differs.push('links_in')
+        // Pages of the change that link (or linked) to it: each must be as the change, or its own earlier undo, left it.
+        const related = new Set(
+          [...before, ...after, ...nowIn]
+            .map((l) => l.fromPage)
+            .filter((f) => f !== p.pageId && partPages.has(f)),
+        )
+        for (const f of related) {
+          const q = byPart.get(f)
+          if (!q || going.has(q.part)) continue
+          const qr = rows.get(q.part) as Row
+          const expected = q.state === 'applied' ? q.revisionAfter : Number(qr.undo_revision ?? -1)
+          const cur = await db.one<{ revision: number }>('SELECT revision FROM pages WHERE id = $1', [f])
+          if (Number(cur?.revision) !== expected) {
+            differs.push(`linked_page:${await addressOf(f)}`)
+            blame.add(f)
+          }
+        }
+      }
+      const address = now?.address ?? p.address
+      const forced = overwrite.has(p.address) || overwrite.has(address)
+      incoming.set(p.pageId, !forced)
+      if (!differs.length) continue
+      const later = await db.query<{ revision: number; author_id: string }>(
+        'SELECT revision, author_id FROM page_revisions WHERE page_id = $1 AND revision > $2 ORDER BY revision',
+        [p.pageId, p.revisionAfter],
+      )
+      if (forced) {
         overwritten.push({
-          address: now.address,
-          revisions: revs.map((r) => Number(r.revision)),
-          editedBy: [...new Set(revs.map((r) => r.name))],
+          address,
+          revisions: later.map((x) => Number(x.revision)),
+          editedById: [...new Set(later.map((x) => String(x.author_id)))],
+          leftAsIs: differs.filter((d) => d !== 'revision'),
         })
         continue
       }
-      const last = revs.at(-1)
+      const who = await lastWrite([...blame])
       conflicts.push({
-        address: now.address,
+        address,
         changeRevision: p.revisionAfter,
-        currentRevision: Number(now.revision),
-        editedBy: last?.name ?? '',
-        editedAt: last ? last.at.toISOString() : '',
+        currentRevision: Number(now?.revision ?? p.revisionAfter),
+        editedBy: who?.name ?? '',
+        editedAt: who ? who.at.toISOString() : '',
+        differs,
+        links,
       })
     }
     if (conflicts.length || taken.length) {
+      const said = (d: Diff) =>
+        `"${d.address}" (${d.differs
+          .map((x) =>
+            x === 'revision'
+              ? `revision ${d.changeRevision}, now ${d.currentRevision}`
+              : x === 'links_in'
+                ? `links into it ${d.links.map((l) => `${l.now} from "${l.from}" (${l.kind})`).join(', ')}`
+                : x.startsWith('linked_page:')
+                  ? `"${x.slice(12)}", a page of this change that links to it, was written since`
+                  : `${x.replace('_', ' ')} changed`,
+          )
+          .join('; ')})`
       const err = conflict(
         'undo_conflict',
         [
-          conflicts.length
-            ? `Some pages were written again after this change: ${conflicts.map((x) => `"${x.address}" (revision ${x.changeRevision}, now ${x.currentRevision})`).join(', ')}.`
-            : '',
+          conflicts.length ? `Some pages changed after this change: ${conflicts.map(said).join(', ')}.` : '',
           taken.length
             ? `Another page holds an address this change would give back: ${taken.map((x) => `"${x.address}" (now the page "${x.heldBy}")`).join(', ')}.`
             : '',
@@ -236,53 +372,18 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
           .join(' '),
         taken.length
           ? 'An address another page took stays with it: move or retire that page first, by hand, then undo again.'
-          : 'Look at what came after. To undo over it, send again with "overwrite": the addresses of those pages (what came after stays in the history); or undo only other parts.',
+          : 'Look at what came after. To undo a page anyway, send again with "overwrite": the addresses of those pages. Only each page\'s own text, status, addresses and links out go back; links into it from other pages stay as they are. What came after stays in the history.',
       )
       err.extra = { pages: conflicts, ...(taken.length ? { addresses: taken } : {}) }
       throw err
     }
     const items: ApplyItem[] = []
     const restore: { part: number; op: RestoreOp; lost: boolean }[] = []
-    // Round 3: the pages of parts that stay applied keep their links (W1); a link the change moved to another of its
-    // pages (a merge) comes back only while what it became is still there (W2), read now, before anything is undone.
-    const staying = parts.filter((p) => p.state === 'applied' && !going.has(p.part)).map((p) => p.pageId)
-    type L = { fromPage: string; kind: string }
-    const linksOf = (part: number, col: 'links_in_before' | 'links_in_after') =>
-      ((rows.get(part) as Row)[col] as L[] | null) ?? null
-    const k = (l: L) => `${l.fromPage} ${l.kind}`
-    const addedTo = parts.flatMap((q) => {
-      const b = new Set((linksOf(q.part, 'links_in_before') ?? []).map(k))
-      return (linksOf(q.part, 'links_in_after') ?? [])
-        .filter((l) => !b.has(k(l)))
-        .map((l) => ({ ...l, to: q.pageId }))
-    })
-    const alive = new Set(
-      addedTo.length === 0
-        ? []
-        : (
-            await db.query<{ from_page: string; kind: string; to_page: string }>(
-              `SELECT from_page, kind, to_page FROM page_links
-                WHERE (from_page, kind, to_page) IN (SELECT * FROM unnest($1::text[], $2::text[], $3::text[]))`,
-              [addedTo.map((l) => l.fromPage), addedTo.map((l) => l.kind), addedTo.map((l) => l.to)],
-            )
-          ).map((l) => `${l.from_page} ${l.kind} ${l.to_page}`),
-    )
-    const reviveOf = (p: { part: number; pageId: string }): string[] => {
-      const after = new Set((linksOf(p.part, 'links_in_after') ?? []).map(k))
-      return (linksOf(p.part, 'links_in_before') ?? [])
-        .filter((l) => !after.has(k(l)))
-        .filter((l) => {
-          const moved = addedTo.filter((m) => m.to !== p.pageId && k(m) === k(l))
-          return moved.length === 0 || moved.some((m) => alive.has(`${m.fromPage} ${m.kind} ${m.to}`))
-        })
-        .map(k)
+    const ownersBefore: Record<string, string> = {}
+    for (const p of todo) {
+      const r = rows.get(p.part) as Row
+      if (!r.created) for (const a of (r.addresses_before as string[]) ?? []) ownersBefore[a] = p.pageId
     }
-    const allLinksIn = new Map(
-      parts.map((p) => [
-        p.pageId,
-        ((rows.get(p.part) as Row).links_in_before as RestoreOp['linksInBefore']) ?? [],
-      ]),
-    )
     for (const p of todo) {
       const r = rows.get(p.part) as Row
       const addressesBefore = (r.addresses_before as string[]) ?? []
@@ -309,11 +410,11 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
           supersededByBefore: r.superseded_by_before == null ? null : String(r.superseded_by_before),
           addressesBefore,
           addressesAdded: (r.addresses_added as string[]) ?? [],
-          linksInBefore: allLinksIn.get(p.pageId) ?? [],
+          linksInBefore: (r.links_in_before as RestoreOp['linksInBefore']) ?? [],
           linksInAfter: (r.links_in_after as RestoreOp['linksInAfter']) ?? null,
-          staying,
-          revive: reviveOf(p),
+          restoreIncoming: incoming.get(p.pageId) ?? false,
           changePages: [...partPages],
+          ownersBefore,
           note: `undo of change ${id}`,
         },
       })

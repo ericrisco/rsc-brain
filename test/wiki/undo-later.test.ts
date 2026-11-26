@@ -3,7 +3,10 @@
 // person decides. A part that cannot be put back (its revision before was purged) stops the whole undo. Parts of the
 // proposal still waiting that need an undone part go with it. Spec learning-memory A2, CA-A10. Round 2 (V1–V3): the links
 // into a page come back as the exact inverse of what the change itself did to them, whatever other pages it touched; a
-// proposal left with nothing waiting stops counting as waiting.
+// proposal left with nothing waiting stops counting as waiting. Replanteo after the closing review (decisions.md,
+// 2026-11-26): an undo detects, never merges — if anything about a page changed since the change (its revision, status,
+// addresses, links out, links in from other pages, or a page of the change that links to it), the undo is a conflict
+// and nothing changes; «overwrite» undoes only the page's own state and leaves the links into it as they are.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { skipPg } from '../helpers/pg.ts'
@@ -49,6 +52,31 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
         [from],
       )
     ).map((l) => `${l.kind} ${l.to}`)
+  // The whole wiki of the brain, to show a refused undo changed nothing.
+  const wiki = async () =>
+    JSON.stringify([
+      await w.db.query(
+        `SELECT p.id, p.address, p.status, p.superseded_by, p.revision, p.body FROM pages p JOIN brains b ON b.id = p.brain_id
+          WHERE b.slug = 'ul' ORDER BY p.id`,
+      ),
+      await w.db.query(
+        `SELECT l.from_page, l.kind, l.to_page, l.to_address FROM page_links l JOIN brains b ON b.id = l.brain_id
+          WHERE b.slug = 'ul' ORDER BY 1, 2, 3, 4`,
+      ),
+      await w.db.query(
+        `SELECT a.address, a.page_id FROM page_addresses a JOIN brains b ON b.id = a.brain_id WHERE b.slug = 'ul' ORDER BY 1`,
+      ),
+    ])
+  // A refused undo: 409 undo_conflict, and the wiki exactly as before the call.
+  const refused = async (id: string, why: RegExp) => {
+    const before = await wiki()
+    const r = await undo(id)
+    assert.equal(r.status, 409, r.text)
+    assert.equal(r.body.error?.code, 'undo_conflict')
+    assert.match(String(r.body.error?.message), why)
+    assert.equal(await wiki(), before)
+    return r
+  }
   const holder = async (address: string) =>
     (
       await w.db.one<{ title: string }>(
@@ -84,15 +112,19 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
   })
   after(async () => w.close())
 
-  it('U1: a link into the page that a later page made stays after the undo', async () => {
+  it('U1 (replanteo): a link a later page made into the page is a conflict; overwrite keeps it', async () => {
     await plant('pa')
     const c = await w.call(cole.key, 'POST', '/v1/brains/ul/proposals', {
       title: 'Edit pa',
       ops: [{ op: 'edit', address: 'pa', baseRevision: 1, body: 'Agent words.', reason: 'R.' }],
     })
     await plant('qa', { links: [{ kind: 'related', to: 'pa' }] })
-    const r = await undo(String(c.body.undo))
-    assert.equal(r.status, 200, r.text)
+    const r = await refused(String(c.body.undo), /links into it added from "qa" \(related\)/)
+    const pages = (r.body.error as unknown as { pages: Array<{ differs: string[] }> }).pages
+    assert.deepEqual(pages[0]?.differs, ['links_in'])
+    const ok = await undo(String(c.body.undo), { overwrite: ['pa'] })
+    assert.equal(ok.status, 200, ok.text)
+    assert.deepEqual((ok.body.overwritten as Array<{ leftAsIs: string[] }>)[0]?.leftAsIs, ['links_in'])
     assert.deepEqual(await links('qa'), ['related pa'])
   })
 
@@ -172,19 +204,20 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
       })),
     })
 
-  it('V1: a link a person made later into another page of the change stays after the undo', async () => {
+  it('V1 (replanteo): a link a person made later into another page of the change is a conflict; overwrite keeps it', async () => {
     await plant('p1')
     await plant('b1')
     await plant('r1', { links: [{ kind: 'related', to: 'p1' }] })
     const c = await editBoth('Edit p1 and b1', ['p1', 'b1'])
     assert.ok(c.body.undo, c.text)
     await link('r1', 'related', 'b1')
-    const r = await undo(String(c.body.undo))
+    await refused(String(c.body.undo), /"b1"/)
+    const r = await undo(String(c.body.undo), { overwrite: ['p1', 'b1'] })
     assert.equal(r.status, 200, r.text)
     assert.deepEqual(await links('r1'), ['related b1', 'related p1'])
   })
 
-  it('V2: a link a person took away later does not come back because the change touched another page it points to', async () => {
+  it('V2 (replanteo): a link a person took away later is a conflict; overwrite does not bring it back', async () => {
     await plant('p3')
     await plant('b3')
     await plant('r3', {
@@ -195,54 +228,70 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
     })
     const c = await editBoth('Edit p3 and b3', ['p3', 'b3'])
     await unlink('r3', 'related', 'p3')
-    const r = await undo(String(c.body.undo))
+    await refused(String(c.body.undo), /removed from "r3"/)
+    const r = await undo(String(c.body.undo), { overwrite: ['p3', 'b3'] })
     assert.equal(r.status, 200, r.text)
     assert.deepEqual(await links('r3'), ['related b3'])
   })
 
-  it('V1–V2 by property: whatever people link and unlink later from other pages survives the undo', async () => {
-    // A small seeded generator: the same sequences on every run, many shapes of change and later edit.
-    let seed = 7
-    const rnd = (n: number) => {
-      seed = (seed * 1103515245 + 12345) % 2147483648
-      return seed % n
-    }
-    const kinds = ['related', 'depends-on', 'example-of']
-    for (let round = 0; round < 6; round++) {
-      const P = [0, 1, 2].map((i) => `prop${round}/p${i}`)
-      const R = [0, 1, 2].map((i) => `prop${round}/r${i}`)
-      for (const a of P) await plant(a)
-      for (const a of R) {
-        const out = P.filter(() => rnd(2) === 0).map((to) => ({ kind: kinds[rnd(3)] as string, to }))
-        await plant(a, { links: out })
-      }
-      const touched = P.filter((_, i) => i === 0 || rnd(2) === 0)
-      const ops: Json[] = touched.map((a) => ({
-        op: 'edit',
-        address: a,
-        baseRevision: 1,
-        body: `Agent words on ${a}.`,
-        reason: 'R.',
-      }))
-      // Sometimes the change links one of its pages to another.
-      if (touched.length > 1 && rnd(2) === 0)
-        ops.push({ op: 'link', address: touched[0], kind: 'related', to: touched[1], reason: 'R.' })
-      const before = Object.fromEntries(await Promise.all(P.map(async (a) => [a, await links(a)])))
-      const c = await w.call(cole.key, 'POST', '/v1/brains/ul/proposals', { title: `Round ${round}`, ops })
-      assert.ok(c.body.undo, c.text)
-      for (let k = 0; k < 4; k++) {
-        const from = R[rnd(3)] as string
-        const to = P[rnd(3)] as string
-        const kind = kinds[rnd(3)] as string
-        const has = (await links(from)).includes(`${kind} ${to}`)
-        await (has ? unlink(from, kind, to) : link(from, kind, to))
-      }
-      const later = Object.fromEntries(await Promise.all(R.map(async (a) => [a, await links(a)])))
-      const r = await undo(String(c.body.undo))
-      assert.equal(r.status, 200, r.text)
-      for (const a of R) assert.deepEqual(await links(a), later[a], `round ${round}: ${a}`)
-      for (const a of P) assert.deepEqual(await links(a), before[a], `round ${round}: ${a}`)
-    }
+  it('closing review R1: undo some parts, a person links the undone page again, undo the rest → conflict; overwrite keeps the link', async () => {
+    await plant('rx')
+    await plant('rp')
+    const c = await w.call(cole.key, 'POST', '/v1/brains/ul/proposals', {
+      title: 'Link and status',
+      ops: [
+        { op: 'link', address: 'rx', kind: 'related', to: 'rp', reason: 'R.' },
+        { op: 'status', address: 'rp', status: 'stale', reason: 'R.' },
+      ],
+    })
+    const id = String(c.body.undo)
+    const first = await undo(id, { parts: [await partOf(id, 'rx')] })
+    assert.equal(first.status, 200, first.text)
+    await link('rx', 'related', 'rp')
+    await refused(id, /"rx", a page of this change that links to it, was written since/)
+    const r = await undo(id, { overwrite: ['rp'] })
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await links('rx'), ['related rp'])
+  })
+
+  it('closing review R1: undo some parts, a person unlinks the undone page, undo the rest → conflict; overwrite keeps it unlinked', async () => {
+    await plant('qx')
+    await plant('qp')
+    await link('qx', 'related', 'qp')
+    const c = await w.call(cole.key, 'POST', '/v1/brains/ul/proposals', {
+      title: 'Unlink and status',
+      ops: [
+        { op: 'unlink', address: 'qx', kind: 'related', to: 'qp', reason: 'R.' },
+        { op: 'status', address: 'qp', status: 'stale', reason: 'R.' },
+      ],
+    })
+    const id = String(c.body.undo)
+    const first = await undo(id, { parts: [await partOf(id, 'qx')] })
+    assert.equal(first.status, 200, first.text)
+    assert.deepEqual(await links('qx'), ['related qp'])
+    await unlink('qx', 'related', 'qp')
+    await refused(id, /"qx", a page of this change that links to it, was written since/)
+    const r = await undo(id, { overwrite: ['qp'] })
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await links('qx'), [])
+  })
+
+  it('closing review R2: an overwrite kept with a request key holds account ids, never names', async () => {
+    await plant('kn')
+    const c = await w.call(cole.key, 'POST', '/v1/brains/ul/proposals', {
+      title: 'Edit kn',
+      ops: [{ op: 'edit', address: 'kn', baseRevision: 1, body: 'Agent words.', reason: 'R.' }],
+    })
+    await w.callWeb(coraWeb, 'PATCH', '/v1/brains/ul/pages/kn', { baseRevision: 2, body: 'Cora words.' })
+    const body = { overwrite: ['kn'], requestKey: 'r2-names' }
+    const r = await undo(String(c.body.undo), body)
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual((r.body.overwritten as Array<{ editedBy: string[] }>)[0]?.editedBy, ['Cora'])
+    const kept = await w.db.query<{ receipt: unknown }>('SELECT receipt FROM request_keys')
+    assert.ok(!JSON.stringify(kept).includes('Cora'), JSON.stringify(kept))
+    assert.ok(JSON.stringify(kept).includes(cora.id))
+    const again = await undo(String(c.body.undo), body)
+    assert.deepEqual(again.body.overwritten, r.body.overwritten)
   })
 
   it('V3: a proposal whose waiting parts went with the undo no longer waits, and the brain counts 0', async () => {
@@ -327,7 +376,7 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
     assert.deepEqual(await links('xd1'), [])
   })
 
-  it('W2: a link a merge moved does not come back to the old page if a person took it away from the new one', async () => {
+  it('W2 (replanteo): a person took away the link a merge moved → conflict; overwrite leaves it away', async () => {
     await plant('sc1')
     await plant('tc1')
     await plant('xc1', { links: [{ kind: 'related', to: 'sc1' }] })
@@ -348,7 +397,8 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
     assert.ok(c.body.undo, c.text)
     assert.deepEqual(await links('xc1'), ['related tc1'])
     await unlink('xc1', 'related', 'tc1')
-    const r = await undo(String(c.body.undo))
+    await refused(String(c.body.undo), /removed from "xc1"/)
+    const r = await undo(String(c.body.undo), { overwrite: ['tc1', 'sc1'] })
     assert.equal(r.status, 200, r.text)
     assert.deepEqual(await links('xc1'), [])
   })

@@ -2331,6 +2331,16 @@ const english = {
     editedAfter: (who: string, address: string, when: string) =>
       `${who || 'Someone'} edited ${address} after this change, on ${when}.`,
     overwriteNote: 'Undoing replaces that edit; it stays in the page history.',
+    linkChanged: (from: string, kind: string, now: string) =>
+      now === 'added'
+        ? `${from} linked to it (${kind}) after this change.`
+        : `${from} took away its link (${kind}) after this change.`,
+    linkedPageChanged: (address: string) =>
+      `${address}, a page of this change that links to it, was written since.`,
+    otherChanged: (what: string) => `Its ${what} changed since.`,
+    overwriteKeeps:
+      'Undoing over it puts back its own text, status, addresses and links out; links into it from other pages stay as they are.',
+    leftAsIs: (address: string) => `Links into ${address} from other pages were left as they are.`,
     replaced: (revisions: number[], address: string, who: string[]) =>
       `Replaced ${revisions.length === 1 ? 'revision' : 'revisions'} ${revisions.join(', ')} of ${address}${who.length ? ` (by ${who.join(', ')})` : ''}.`,
     pageHistory: 'Page history',

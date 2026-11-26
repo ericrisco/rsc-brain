@@ -2004,7 +2004,7 @@ const HAND: Record<string, Op> = {
   },
   'POST /v1/wiki/changes/{id}/undo': {
     summary:
-      'Undo a change of «Review later» (curators in the web, or a key with the permission to write to the wiki), whole or the parts in "parts": each page goes back exactly as it was (a page it created is retired). 400 missing_dependencies when a part that stays needs one undone; 409 undo_conflict with "pages" when a page was written again since (send "overwrite" with their addresses), and with "addresses" when another page took an address it would give back (overwrite does not take it); 409 undo_purged when a revision it would go back to was purged (nothing is undone). Parts of the proposal still waiting that need an undone part are discarded with it ("discarded"). Undoing twice answers alreadyUndone. A "comment" becomes a correction for whoever made the change.',
+      'Undo a change of «Review later» (curators in the web, or a key with the permission to write to the wiki), whole or the parts in "parts": each page goes back exactly as it was (a page it created is retired). 400 missing_dependencies when a part that stays needs one undone; 409 undo_conflict when anything about a page changed since the change — its revision, status, addresses, links out, the links into it from other pages, or a page of the change that links to it — with "pages" (per page: "differs", the links added or removed, who wrote last and when), and nothing changes; send "overwrite" with their addresses to undo each page’s own state anyway (the links into it from other pages stay as they are). "addresses" names an address another page took, which overwrite does not take; 409 undo_purged when a revision it would go back to was purged (nothing is undone). Parts of the proposal still waiting that need an undone part are discarded with it ("discarded"). Undoing twice answers alreadyUndone. A "comment" becomes a correction for whoever made the change.',
     body: obj(
       {
         parts: list(n('Part number.'), 'Undo only these parts.'),
@@ -2030,6 +2030,10 @@ const HAND: Record<string, Op> = {
                 address: s('The page.'),
                 revisions: list(n('Revision.'), 'The later revisions it replaced.'),
                 editedBy: list(s('Name.'), 'Who wrote them.'),
+                leftAsIs: list(
+                  s('links_in, addresses, status, links_out or linked_page:<address>.'),
+                  'What changed since and was left as it is: links into the page from other pages are never touched.',
+                ),
               }),
               'With "overwrite": what came after the change and was replaced (it stays in the history).',
             ),

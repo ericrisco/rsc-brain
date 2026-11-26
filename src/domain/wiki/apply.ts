@@ -41,13 +41,14 @@ export type RestoreOp = {
   // The links into it as the change left them (null for a change recorded before round 2: nothing is taken back). The
   // undo is the exact inverse of that delta, never a guess from the other pages of the change (review round 2, V1–V2).
   linksInAfter: { fromPage: string; kind: LinkKind }[] | null
-  // Pages of the change whose parts stay applied: their links stay as they are (review round 3, W1).
-  staying: string[]
-  // The links the change took away that may come back ("from kind"): a link a merge moved elsewhere comes back only
-  // while what it became is still there (review round 3, W2).
-  revive: string[]
+  // Put back the links into it from pages outside the change: only when undo.ts found them exactly as the change left
+  // them (nothing changed since); never for a page undone with «overwrite» (replanteo of CA-A10).
+  restoreIncoming: boolean
   // Every page of the change: an address goes back only from one of them (review round 1, U4).
   changePages: string[]
+  // Who held each address before the change, among the pages undone with it: a link out named by address goes to that
+  // page even while another page undone in the same call still holds the address (two merges undone together).
+  ownersBefore: Record<string, string>
   note: string
 }
 export type ApplyItem = { op: Op | RestoreOp; index?: number; corrected?: boolean; baseReviewed?: boolean }
@@ -612,6 +613,11 @@ export async function applyOps(
           // Its typed links out, as the revision lists them.
           const want: { kind: LinkKind; to: string }[] = []
           for (const l of (was.links as { kind: LinkKind; to: string }[]) ?? []) {
+            const owner = o.ownersBefore[l.to]
+            if (owner) {
+              if (owner !== id) want.push({ kind: l.kind, to: owner })
+              continue
+            }
             const t = await db.one(
               'SELECT p.id FROM page_addresses a JOIN pages p ON p.id = a.page_id WHERE a.brain_id = $1 AND a.address = $2',
               [brainId, l.to],
@@ -629,30 +635,28 @@ export async function applyOps(
                ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
               [brainId, id, l.kind, l.to],
             )
-          // The typed links into it (from, kind, to = this page), as the exact inverse of what the change did to them
-          // (review round 2): a link the change added goes if it is still there; a link the change took away (a merge
-          // moved it to another page, an unlink, a body that dropped it) comes back if it is still missing and its page
-          // exists. Any other link into the page — whatever a later write made or took away — is left as it is.
-          if (o.linksInAfter) {
+          // The links into it from pages outside the change, back as they were before (replanteo of CA-A10). undo.ts
+          // restores only when it found them exactly as the change left them, so this puts back what the change did and
+          // nothing else. Links from pages of the change are theirs: each page's own links out are set above.
+          if (o.linksInAfter && o.restoreIncoming) {
+            const ours = new Set(o.changePages)
             const key = (l: { fromPage: string; kind: string }) => `${l.fromPage} ${l.kind}`
-            const before = new Set(o.linksInBefore.filter((l) => l.fromPage !== id).map(key))
-            const after = new Set(o.linksInAfter.filter((l) => l.fromPage !== id).map(key))
-            const staying = new Set(o.staying)
-            const revive = new Set(o.revive)
-            for (const l of o.linksInAfter) {
-              if (l.fromPage === id || staying.has(l.fromPage) || before.has(key(l))) continue
+            const outside = (l: { fromPage: string }) => l.fromPage !== id && !ours.has(l.fromPage)
+            const before = new Set(o.linksInBefore.filter(outside).map(key))
+            const after = new Set(o.linksInAfter.filter(outside).map(key))
+            for (const l of o.linksInAfter.filter(outside)) {
+              if (before.has(key(l))) continue
               await db.query('DELETE FROM page_links WHERE from_page = $1 AND kind = $2 AND to_page = $3', [
                 l.fromPage,
                 l.kind,
                 id,
               ])
             }
-            for (const l of o.linksInBefore) {
-              if (l.fromPage === id || staying.has(l.fromPage) || after.has(key(l)) || !revive.has(key(l)))
-                continue
+            for (const l of o.linksInBefore.filter(outside)) {
+              if (after.has(key(l))) continue
               await db.query(
                 `INSERT INTO page_links (brain_id, from_page, kind, to_page)
-                 SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM pages WHERE id = $2 AND status <> 'retired')
+                 SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM pages WHERE id = $2)
                  ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
                 [brainId, l.fromPage, l.kind, id],
               )

@@ -1196,6 +1196,8 @@ export function undoChange(
         currentRevision: now,
         editedBy: r?.authorName ?? '',
         editedAt: r?.createdAt ?? AT,
+        differs: ['revision'],
+        links: [],
       },
     ]
   })
@@ -1210,6 +1212,7 @@ export function undoChange(
         address: x.address,
         revisions: revs.map((r) => r.revision),
         editedBy: [...new Set(revs.map((r) => r.authorName))],
+        leftAsIs: [],
       },
     ]
   })
