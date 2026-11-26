@@ -451,6 +451,7 @@ const english = {
     waiting: (n: number) =>
       n === 1 ? '1 proposal waiting for a curator' : `${n} proposals waiting for a curator`,
     nothingToReview: 'Nothing to review',
+    awaitingReview: (n: number) => (n === 1 ? '1 change awaiting review' : `${n} changes awaiting review`),
     lastActivity: (when: string) => `Last activity ${when}`,
     noActivity: 'No activity yet',
     inviteTitle: 'Invite people',
@@ -693,6 +694,9 @@ const english = {
     uncompiled: (n: number) => [fmt(n), 'not in the wiki yet'] as const,
     conflicts: (n: number) => [fmt(n), n === 1 ? 'conflict' : 'conflicts'] as const,
     pending: (n: number) => [fmt(n), 'waiting for review'] as const,
+    // What agents changed and no person looked at yet («Review later»).
+    awaitingReview: (n: number) =>
+      [fmt(n), n === 1 ? 'change awaiting review' : 'changes awaiting review'] as const,
     today: "Today's sessions",
     noToday: 'No sessions today.',
     noTodayHow: 'Sessions appear here as soon as an agent works in this brain.',
@@ -1546,10 +1550,13 @@ const english = {
     // Spec learning-memory A1, A3.
     unreviewed: 'Unreviewed',
     unreviewedTitle: 'An agent changed it and no person has looked at it yet.',
+    unreviewedOnly: 'Unreviewed only',
     openReview: 'Review it',
     protectedTag: 'Protected',
     protection: 'Protection',
     protectLabel: 'Protected',
+    protectOn: 'On',
+    protectOff: 'Off',
     protectHint:
       'Only people in the web and keys with the wiki write permission write a protected page; other agents’ changes to it wait for a curator.',
     protectedNow: 'Protected. Agents’ changes to it now wait for a curator.',
@@ -2287,6 +2294,8 @@ const english = {
     conflictTitle: 'Some pages changed after this change',
     conflictLead:
       'Undoing over them replaces what came after; it stays in the history and can be brought back. Choose the pages to undo over, or undo only other parts.',
+    conflictLeadOne:
+      'Undoing over it replaces what came after; it stays in the history and can be brought back.',
     conflictPage: (address: string, change: number, now: number) =>
       `${address} — this change left revision ${change}; it is at ${now} now`,
     overwrite: (address: string) => `Undo over the later changes of ${address}`,
@@ -2294,6 +2303,39 @@ const english = {
     addressHow: 'An address another page took stays with it. Move or retire that page by hand first.',
     cancel: 'Cancel',
     readOnly: 'Only curators review changes here.',
+    since: 'Since',
+    sinceOptions: { all: 'Any time', today: 'Today', '7d': 'The last 7 days' } as Record<string, string>,
+    applied: (when: string) => `applied ${when}`,
+    // What each operation did to a page, in a tray row.
+    touched: (op: string | null, address: string) =>
+      op === 'create'
+        ? `New page ${address}`
+        : op === 'link'
+          ? `Link ${address}`
+          : op === 'unlink'
+            ? `Unlink ${address}`
+            : op === 'move'
+              ? `Move ${address}`
+              : op === 'merge'
+                ? `Merge into ${address}`
+                : op === 'status'
+                  ? `Status of ${address}`
+                  : `Edit ${address}`,
+    why: (reason: string) => `Why: ${reason}`,
+    linkedTo: (to: string, kind: string) => `Linked to ${to} (${kind})`,
+    unlinkedFrom: (to: string, kind: string) => `Took away the link to ${to} (${kind})`,
+    movedFrom: (from: string, to: string) => `Moved from ${from} to ${to}`,
+    mergedFrom: (from: string, into: string) => `Merged ${from} into ${into}`,
+    statusSet: (status: string) => `Set the status to ${status}`,
+    next: 'Next change →',
+    editedAfter: (who: string, address: string, when: string) =>
+      `${who || 'Someone'} edited ${address} after this change, on ${when}.`,
+    overwriteNote: 'Undoing replaces that edit; it stays in the page history.',
+    replaced: (revisions: number[], address: string, who: string[]) =>
+      `Replaced ${revisions.length === 1 ? 'revision' : 'revisions'} ${revisions.join(', ')} of ${address}${who.length ? ` (by ${who.join(', ')})` : ''}.`,
+    pageHistory: 'Page history',
+    undoneWhy: (comment: string) => `Why it was undone: ${comment}`,
+    viewCorrection: 'View the correction',
   },
   proposals: {
     title: 'Proposals',

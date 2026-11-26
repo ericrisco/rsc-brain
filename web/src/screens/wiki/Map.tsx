@@ -11,7 +11,7 @@ import { T } from '../../text.ts'
 import { SectionHead } from '../../ui/Section.tsx'
 import { viewState } from '../../ui/state.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
-import { pageHref, StatusTag, useBrain, useFilters, WikiHead } from './common.tsx'
+import { pageHref, StatusTag, UnreviewedTag, useBrain, useFilters, WikiHead } from './common.tsx'
 import { mapResource } from './data.ts'
 
 const FEW = 12
@@ -35,6 +35,12 @@ function Group({ slug, group }: { slug: string; group: MapGroup }) {
                 <>
                   {' '}
                   <StatusTag status={p.status} />
+                </>
+              ) : null}
+              {p.unreviewed ? (
+                <>
+                  {' '}
+                  <UnreviewedTag />
                 </>
               ) : null}
             </p>
@@ -61,7 +67,7 @@ export function WikiMap({ slug }: { slug: string }) {
   const { brain, gate } = useBrain(slug)
   const r = mapResource(slug)
   useFresh(r)
-  const f = useFilters(['q', 'status', 'type', 'tag'] as const)
+  const f = useFilters(['q', 'status', 'type', 'tag', 'unreviewed'] as const)
   if (!brain) return gate
   const w = T.wiki
   const data = r.data.value
@@ -129,6 +135,19 @@ export function WikiMap({ slug }: { slug: string }) {
                 ))}
               </select>
             </div>
+            {data.groups.some((g) => g.pages.some((p) => p.unreviewed)) || f.values.unreviewed ? (
+              <div class="pick map-unreviewed">
+                <input
+                  id="map-unreviewed"
+                  type="checkbox"
+                  checked={f.values.unreviewed === '1'}
+                  onChange={(e) =>
+                    f.set({ unreviewed: (e.currentTarget as HTMLInputElement).checked ? '1' : '' })
+                  }
+                />
+                <label for="map-unreviewed">{w.unreviewedOnly}</label>
+              </div>
+            ) : null}
             {/* No tag in this wiki: no tag filter (it could only offer «All tags»). */}
             {mapTags(data.groups).length ? (
               <div class="field">

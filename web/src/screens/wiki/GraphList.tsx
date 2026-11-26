@@ -11,7 +11,7 @@ import { formatNumber } from '../../locale.ts'
 import { T } from '../../text.ts'
 import { Dash } from '../../ui/Dash.tsx'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
-import { pageHref, StatusTag } from './common.tsx'
+import { pageHref, StatusTag, UnreviewedTag } from './common.tsx'
 import { type PageRow, pagesResource } from './data.ts'
 import { groupName, type Target } from './Graph.tsx'
 
@@ -441,6 +441,12 @@ function PagesTable({
               <tr key={p.address} aria-current={selected === `p:${p.address}` ? 'true' : undefined}>
                 <th scope="row">
                   <a href={pageHref(slug, p.address)}>{p.title}</a>
+                  {p.unreviewed ? (
+                    <>
+                      {' '}
+                      <UnreviewedTag />
+                    </>
+                  ) : null}
                 </th>
                 <td class="mono">{p.address}</td>
                 <td>{T.wiki.types[p.type] ?? p.type}</td>

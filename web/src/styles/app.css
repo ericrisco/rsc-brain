@@ -4569,7 +4569,8 @@ dialog.search-dialog {
   accent-color: var(--accent);
 }
 
-.pick .reason {
+.pick .reason,
+.pick .hint {
   grid-column: 2;
 }
 

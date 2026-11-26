@@ -35,6 +35,7 @@ type Hit = {
   why: string
   reason: string
   at: string
+  unreviewed?: boolean
 }
 
 type Filters = Pick<SearchForm, 'what' | 'type' | 'from'>
@@ -373,6 +374,11 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
                             <span class="sr-only">{s.why}: </span>
                             <span class={`tag why-${h.why}`}>{h.reason}</span>
                             {s.states[h.state] ? <span class="tag warn">{s.states[h.state]}</span> : null}
+                            {h.unreviewed ? (
+                              <span class="tag warn" title={T.wiki.unreviewedTitle} data-mark="unreviewed">
+                                {T.wiki.unreviewed}
+                              </span>
+                            ) : null}
                           </span>
                         </li>
                       )

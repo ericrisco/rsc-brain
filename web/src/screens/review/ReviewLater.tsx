@@ -9,15 +9,17 @@ import { useLocation } from 'preact-iso'
 import type { ApiError } from '../../api/client.ts'
 import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
+import { ago } from '../../lib/brains.ts'
 import { useLive } from '../../live/follow.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
 import { Dialog } from '../../ui/Dialog.tsx'
 import { SectionHead } from '../../ui/Section.tsx'
 import { Empty, ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
+import { entryHref } from '../journal/common.tsx'
 import { More, usePages } from '../journal/Lists.tsx'
-import { blockedNow, isCurator, pageHref, Said, useBrain, WikiHead } from '../wiki/common.tsx'
-import { BodyDiff } from '../wiki/History.tsx'
+import { blockedNow, isCurator, pageHref, useBrain, WikiHead } from '../wiki/common.tsx'
+import { BodyDiff, BodyLines } from '../wiki/History.tsx'
 import {
   type Change,
   type ChangePage,
@@ -29,6 +31,8 @@ import {
   type Part,
   reviewed,
   reviewHref,
+  SINCE,
+  type Since,
   STATES,
   type State,
   type UndoAnswer,
@@ -39,9 +43,16 @@ const w = T.review
 
 // Who made it, with which key, from which run: «by Cole with Cole writer · run r_12».
 const whoLine = (c: Change) =>
-  [w.by(c.actor.name, c.keyName), c.ref ? w.run(c.ref) : null, w.parts(c.parts), w.ago(T.date(c.at))]
-    .filter(Boolean)
-    .join(' · ')
+  [w.by(c.actor.name, c.keyName), c.ref ? w.run(c.ref) : null, w.parts(c.parts)].filter(Boolean).join(' · ')
+
+// When, relative, with the exact time for a hover and for machines (usability T1, M1).
+function When({ at }: { at: string }) {
+  return (
+    <time dateTime={at} title={T.dateTime(at)}>
+      {w.applied(ago(at) ?? T.date(at))}
+    </time>
+  )
+}
 
 function StateTag({ state }: { state: Change['state'] }) {
   const tone = state === 'pending_review' ? ' warn' : state === 'kept' ? ' ok' : ''
@@ -71,11 +82,12 @@ function useListKeys(ref: { current: HTMLElement | null }) {
 
 export function ReviewList({ slug }: { slug: string }) {
   const { brain, gate } = useBrain(slug)
-  const { query } = useLocation()
+  const { query, route } = useLocation()
   const state = (STATES as readonly string[]).includes(query.state ?? '')
     ? (query.state as State)
     : 'pending_review'
-  const r = changesResource(slug, state)
+  const since = (SINCE as readonly string[]).includes(query.since ?? '') ? (query.since as Since) : 'all'
+  const r = changesResource(slug, state, since)
   useFresh(r)
   useLive(slug)
   const d = r.data.value
@@ -101,6 +113,29 @@ export function ReviewList({ slug }: { slug: string }) {
         ))}
       </nav>
       {brain.role !== 'curator' ? <p class="muted small">{w.readOnly}</p> : null}
+      <form class="filters" onSubmit={(e) => e.preventDefault()}>
+        <div class="field">
+          <label for="review-since">{w.since}</label>
+          <select
+            id="review-since"
+            value={since}
+            onChange={(e) => {
+              const v = (e.currentTarget as HTMLSelectElement).value
+              const q = new URLSearchParams()
+              if (state !== 'pending_review') q.set('state', state)
+              if (v !== 'all') q.set('since', v)
+              const qs = q.toString()
+              route(qs ? `${reviewHref(slug)}?${qs}` : reviewHref(slug), true)
+            }}
+          >
+            {SINCE.map((x) => (
+              <option key={x} value={x}>
+                {w.sinceOptions[x]}
+              </option>
+            ))}
+          </select>
+        </div>
+      </form>
       {!p.first ? (
         r.error.value ? (
           <ErrorState error={r.error.value} onRetry={() => void r.reload()} />
@@ -132,9 +167,14 @@ export function ReviewList({ slug }: { slug: string }) {
                   <a href={changeHref(slug, c.id)} data-row="">
                     {c.title}
                   </a>{' '}
-                  {state === 'all' ? <StateTag state={c.state} /> : null}
+                  {state === 'all' || c.state === 'partly_undone' ? <StateTag state={c.state} /> : null}
                 </p>
-                <p class="meta">{whoLine(c)}</p>
+                {c.pages?.length ? (
+                  <p class="meta touched">{c.pages.map((x) => w.touched(x.op, x.address)).join(' · ')}</p>
+                ) : null}
+                <p class="meta">
+                  {whoLine(c)} · <When at={c.at} />
+                </p>
               </li>
             ))}
           </ul>
@@ -163,8 +203,21 @@ export function sidesOf(diff: string): { a: string; b: string } {
   return { a: a.join('\n'), b: b.join('\n') }
 }
 
+// What a link, move, merge or status operation did, in words (usability T1, M2).
+function whatOf(p: Part): string | null {
+  const o = p.operation
+  if (!o) return null
+  if (o.op === 'link' && o.to) return w.linkedTo(o.to, o.kind ?? 'related')
+  if (o.op === 'unlink' && o.to) return w.unlinkedFrom(o.to, o.kind ?? 'related')
+  if (o.op === 'move' && o.from && o.to) return w.movedFrom(o.from, o.to)
+  if (o.op === 'merge' && o.from) return w.mergedFrom(o.from, p.address)
+  if (o.op === 'status' && o.status) return w.statusSet(T.wiki.statuses[o.status] ?? o.status)
+  return null
+}
+
 function PartView({ slug, p }: { slug: string; p: Part }) {
   const titleId = `part-${p.part}-title`
+  const what = whatOf(p)
   return (
     <article class="op-card" aria-labelledby={titleId} data-part={p.part}>
       <div class="op-head">
@@ -177,16 +230,24 @@ function PartView({ slug, p }: { slug: string; p: Part }) {
       </div>
       <p class="op-tags">
         {p.created ? <span class="tag">{w.created}</span> : null}
-        {p.op ? <span class="tag">{p.op}</span> : null}
         {p.state === 'undone' ? <span class="tag">{w.partUndone}</span> : null}
         <span class="meta">{w.revisions(p.revisionBefore, p.revisionAfter)}</span>
         {p.dependsOn.length ? <span class="meta"> · {w.needs(p.dependsOn)}</span> : null}
       </p>
+      {what ? <p class="op-what">{what}</p> : null}
+      {p.operation?.reason ? <p class="op-why">{w.why(p.operation.reason)}</p> : null}
       {p.diff === 'purged' ? (
         <p class="note">{w.purgedDiff}</p>
+      ) : p.diff && p.created ? (
+        // A new page: its text as added, without an empty «before» (usability T1, M2).
+        <BodyLines
+          lines={sidesOf(p.diff)
+            .b.split('\n')
+            .map((text) => ({ kind: 'added' as const, text }))}
+        />
       ) : p.diff ? (
         <BodyDiff {...sidesOf(p.diff)} fold />
-      ) : (
+      ) : what ? null : (
         <p class="muted small">{w.noDiff}</p>
       )}
     </article>
@@ -317,7 +378,7 @@ function UndoDialog({
             </p>
             {conflict.pages.length ? (
               <>
-                <p>{w.conflictLead}</p>
+                <p>{applied.length > 1 ? w.conflictLead : w.conflictLeadOne}</p>
                 <ul class="plain">
                   {conflict.pages.map((c) => (
                     <li key={c.address}>
@@ -333,9 +394,16 @@ function UndoDialog({
                         />
                         <label for={`overwrite-${c.address}`}>{w.overwrite(c.address)}</label>
                       </div>
-                      <p class="hint mono">
-                        {w.conflictPage(c.address, c.changeRevision, c.currentRevision)}
-                      </p>
+                      {c.editedAt ? (
+                        <p class="hint">
+                          {w.editedAfter(c.editedBy ?? '', c.address, T.dateTime(c.editedAt))}{' '}
+                          {w.overwriteNote}
+                        </p>
+                      ) : (
+                        <p class="hint mono">
+                          {w.conflictPage(c.address, c.changeRevision, c.currentRevision)}
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -393,10 +461,21 @@ export function ChangeScreen({ slug, id }: { slug: string; id: string }) {
   const { brain, gate } = useBrain(slug)
   const r = changeResource(slug, id)
   useFresh(r)
+  // The changes still awaiting review, for «Next change» (usability T1, M3).
+  const awaiting = changesResource(slug, 'pending_review')
+  useFresh(awaiting)
   const [keeping, setKeeping] = useState(false)
   const [said, setSaid] = useState<string | null>(null)
+  const [replaced, setReplaced] = useState<
+    NonNullable<Extract<UndoAnswer, { undone: unknown }>['overwritten']>
+  >([])
   const [error, setError] = useState<ApiError | null>(null)
   const [undoing, setUndoing] = useState(false)
+  const status = useRef<HTMLParagraphElement>(null)
+  // After Keep or Undo, the keyboard goes to what happened (usability T1, M3).
+  useEffect(() => {
+    if (said) status.current?.focus()
+  }, [said])
   if (!brain) return gate
   const d = r.data.value
   if (!d) {
@@ -414,6 +493,7 @@ export function ChangeScreen({ slug, id }: { slug: string; id: string }) {
     )
   }
   const { change, parts } = d
+  const nextId = awaiting.data.value?.items.find((c) => c.id !== id)?.id ?? null
   const curator = isCurator(brain)
   const open = change.state === 'pending_review' || change.state === 'partly_undone'
   const keep = async () => {
@@ -441,7 +521,34 @@ export function ChangeScreen({ slug, id }: { slug: string; id: string }) {
       </WikiHead>
       <p class="meta">{whoLine(change)}</p>
       <FormAlert error={error} />
-      <Said text={said} />
+      <p class="said ok" role="status" tabIndex={-1} ref={status}>
+        {said}
+        {replaced.map((x) => (
+          <span key={x.address} class="replaced">
+            {' '}
+            {w.replaced(x.revisions, x.address, x.editedBy)}{' '}
+            <a href={`${pageHref(slug, x.address)}?view=history`}>{w.pageHistory}</a>
+          </span>
+        ))}
+      </p>
+      {said && nextId ? (
+        <p>
+          <a class="button" href={changeHref(slug, nextId)}>
+            {w.next}
+          </a>
+        </p>
+      ) : null}
+      {change.comment ? (
+        <p class="note undone-why">
+          {w.undoneWhy(change.comment)}
+          {change.correction ? (
+            <>
+              {' '}
+              <a href={entryHref(slug, change.correction)}>{w.viewCorrection}</a>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {curator && open ? (
         <div class="actions review-actions">
           <Button
@@ -477,6 +584,7 @@ export function ChangeScreen({ slug, id }: { slug: string; id: string }) {
             setUndoing(false)
             if ('alreadyUndone' in a) setSaid(w.alreadyUndone)
             else {
+              setReplaced(a.overwritten ?? [])
               setSaid(
                 [w.undone(a.undone.length), a.discarded.length ? w.discarded(a.discarded.length) : '']
                   .filter(Boolean)

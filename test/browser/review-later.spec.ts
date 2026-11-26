@@ -121,7 +121,7 @@ test.describe('Review later', () => {
     await dialog.getByRole('button', { name: 'Undo', exact: true }).click()
     const alert = dialog.locator('[data-state="undo-conflict"]')
     await expect(alert).toContainText('Some pages changed after this change')
-    await expect(alert).toContainText('this change left revision 2; it is at 3 now')
+    await expect(alert).toContainText('Eric edited audience/retention after this change')
     await audit(page, 'undo conflict')
     await dialog.getByLabel('Undo over the later changes of audience/retention').check()
     await dialog.getByRole('button', { name: 'Undo', exact: true }).click()

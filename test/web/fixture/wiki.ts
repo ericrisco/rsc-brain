@@ -515,7 +515,9 @@ export function readPage(w: Wiki, address: string, query: Q): Answer {
 export function mapOf(w: Wiki, extra: GenPage[], every = false) {
   const shown = (status: string) => every || status === 'current'
   const all = [
-    ...w.pages.filter((p) => shown(last(p).status)).map((p) => ({ ...last(p), tags: last(p).tags })),
+    ...w.pages
+      .filter((p) => shown(last(p).status))
+      .map((p) => ({ ...last(p), tags: last(p).tags, unreviewed: unreviewedAt(w, p) })),
     ...extra.filter((g) => shown(g.status)).map((g) => ({ ...g, body: '' })),
   ].sort((a, b) =>
     a.type !== b.type
@@ -538,7 +540,14 @@ export function mapOf(w: Wiki, extra: GenPage[], every = false) {
       g = { type: r.type, area, pages: [] }
       groups.push(g)
     }
-    g.pages.push({ address: r.address, title: r.title, summary: r.summary, tags: r.tags, status: r.status })
+    g.pages.push({
+      address: r.address,
+      title: r.title,
+      summary: r.summary,
+      tags: r.tags,
+      status: r.status,
+      ...('unreviewed' in r && r.unreviewed ? { unreviewed: true } : {}),
+    })
   }
   return {
     intro: 'The audience, the product and how we decide. Start with the overview pages.',

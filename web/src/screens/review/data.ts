@@ -18,6 +18,9 @@ export type Change = {
   state: 'pending_review' | 'kept' | 'undone' | 'partly_undone'
   decidedBy: string | null
   decidedAt: string | null
+  pages?: Array<{ address: string; op: string | null }>
+  comment?: string | null
+  correction?: string | null
 }
 export type ChangePage = { items: Change[]; total: number; next: string | null }
 export type Part = {
@@ -30,6 +33,14 @@ export type Part = {
   dependsOn: number[]
   diff: string
   state: 'applied' | 'undone'
+  operation?: {
+    op: string
+    reason: string | null
+    kind?: string
+    to?: string
+    from?: string
+    status?: string
+  } | null
 }
 export type ChangeDetail = { change: Change; parts: Part[] }
 export type UndoAnswer =
@@ -38,10 +49,17 @@ export type UndoAnswer =
       undone: Array<{ address: string; revision: number }>
       discarded: number[]
       correction?: string
+      overwritten?: Array<{ address: string; revisions: number[]; editedBy: string[] }>
     }
   | { alreadyUndone: true }
 export type Conflict = {
-  pages: Array<{ address: string; changeRevision: number; currentRevision: number }>
+  pages: Array<{
+    address: string
+    changeRevision: number
+    currentRevision: number
+    editedBy?: string
+    editedAt?: string
+  }>
   addresses?: Array<{ address: string; heldBy: string }>
 }
 
@@ -52,10 +70,23 @@ export const reviewHref = (slug: string, state?: string) =>
   state && state !== 'pending_review' ? `${base(slug)}?state=${state}` : base(slug)
 export const changeHref = (slug: string, id: string) => `${base(slug)}/${encodeURIComponent(id)}`
 
-export const changesResource = (slug: string, state: State) =>
-  resource(`brain:${slug}:review:list:${state}`, () =>
-    api.call<ChangePage>('changes', { path: { slug }, query: { state, limit: PAGE_SIZE } }),
-  )
+// «Since» of the tray, as the server takes it: a date and time.
+export const SINCE = ['all', 'today', '7d'] as const
+export type Since = (typeof SINCE)[number]
+export function sinceOf(s: Since, now = new Date()): string | undefined {
+  if (s === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+  if (s === '7d') return new Date(now.getTime() - 7 * 86_400_000).toISOString()
+  return undefined
+}
+
+export const changesResource = (slug: string, state: State, since: Since = 'all') =>
+  resource(`brain:${slug}:review:list:${state}:${since}`, () => {
+    const from = sinceOf(since)
+    return api.call<ChangePage>('changes', {
+      path: { slug },
+      query: { state, limit: PAGE_SIZE, ...(from ? { since: from } : {}) },
+    })
+  })
 export const changeResource = (slug: string, id: string) =>
   resource(`brain:${slug}:review:one:${id}`, () => api.call<ChangeDetail>('change', { path: { id } }))
 

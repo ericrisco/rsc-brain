@@ -23,7 +23,7 @@ import { viewState } from '../../ui/state.ts'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import type { BrainOne } from '../Brain.tsx'
 import { correctHref, entryHref } from '../journal/common.tsx'
-import { reviewHref } from '../review/data.ts'
+import { changeHref, reviewHref } from '../review/data.ts'
 import { blockedNow, isCurator, mapHref, pageHref, Said, StatusTag, TypeTag, useBrain } from './common.tsx'
 import { entryResource, type LinkView, pageResource, type Reading, readersResource } from './data.ts'
 import { PageEdit, UnsavedEdit, wikiNotice } from './Edit.tsx'
@@ -341,6 +341,7 @@ function Protection({ slug, reading }: { slug: string; reading: Reading }) {
             {on ? '●' : '○'}
           </span>{' '}
           {w.protectLabel}
+          <span class="switch-state">{on ? w.protectOn : w.protectOff}</span>
         </Button>
       </div>
       <p class="hint" id="protect-hint">
@@ -494,7 +495,10 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
         </section>
         {page.unreviewed && isCurator(brain) ? (
           <p class="note">
-            {T.wiki.unreviewedTitle} <a href={reviewHref(slug)}>{T.wiki.openReview}</a>
+            {T.wiki.unreviewedTitle}{' '}
+            <a href={reading.reviewChange ? changeHref(slug, reading.reviewChange) : reviewHref(slug)}>
+              {T.wiki.openReview}
+            </a>
           </p>
         ) : null}
         {isCurator(brain) ? <Protection slug={slug} reading={reading} /> : null}

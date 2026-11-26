@@ -377,7 +377,8 @@ export async function wikiMap(
   const { brain } = await inBrain(ctx, { slug })
   const s = await settingsOf(ctx.db, brain.id)
   const rows = await ctx.db.query(
-    `SELECT address, type, title, summary, tags, status FROM pages
+    `SELECT address, type, title, summary, tags, status,
+            coalesce(revision > reviewed_revision, false) AS unreviewed FROM pages
       WHERE brain_id = $1 AND ($2 OR status = 'current')
       ORDER BY type, split_part(address, '/', 1), address, id`,
     [brain.id, Boolean(o.all)],
@@ -396,6 +397,7 @@ export async function wikiMap(
       summary: String(r.summary),
       tags: (r.tags as string[]) ?? [],
       status: r.status as PageStatus,
+      ...(r.unreviewed === true ? { unreviewed: true } : {}),
     })
   }
   return { intro: s.mapIntro, groups, count: rows.length }

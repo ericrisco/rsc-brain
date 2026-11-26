@@ -904,13 +904,19 @@ const HAND: Record<string, Op> = {
               type: PAGE_TYPE,
               area: s('First part of the address.'),
               pages: list(
-                obj({
-                  address: s('Address.'),
-                  title: s('Title.'),
-                  summary: s('Summary.'),
-                  tags: list(s('Tag.')),
-                  status: PAGE_STATUS,
-                }),
+                obj(
+                  {
+                    address: s('Address.'),
+                    title: s('Title.'),
+                    summary: s('Summary.'),
+                    tags: list(s('Tag.')),
+                    status: PAGE_STATUS,
+                    unreviewed: b(
+                      'Only when true: a change no person saw left it as it is («Review later»).',
+                    ),
+                  },
+                  ['unreviewed'],
+                ),
               ),
             }),
           ),

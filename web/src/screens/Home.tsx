@@ -205,6 +205,13 @@ function Card({ b }: { b: BrainRow }) {
           T.home.waiting(waiting)
         )}
       </p>
+      {b.role === 'curator' && b.stats.pendingReview ? (
+        <p class="review">
+          <a class="review-link" href={`/b/${encodeURIComponent(b.slug)}/review-later`}>
+            {T.home.awaitingReview(b.stats.pendingReview)}
+          </a>
+        </p>
+      ) : null}
       <p class="meta">{when ? T.home.lastActivity(when) : T.home.noActivity}</p>
     </li>
   )

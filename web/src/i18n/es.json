@@ -1816,7 +1816,17 @@
     "waits: the page is protected": "espera: la página está protegida",
     "waits: a person’s correction points at this page": "espera: una corrección de una persona apunta a esta página",
     "waits: this brain asks first": "espera: este cerebro pregunta antes",
-    "waits: it needs a part that waits": "espera: necesita una parte que espera"
+    "waits: it needs a part that waits": "espera: necesita una parte que espera",
+    "Unreviewed only": "Solo sin revisar",
+    "Since": "Desde",
+    "Any time": "Cualquier fecha",
+    "Today": "Hoy",
+    "The last 7 days": "Los últimos 7 días",
+    "Next change →": "Siguiente cambio →",
+    "Undoing replaces that edit; it stays in the page history.": "Deshacer sustituye esa edición; queda en el historial de la página.",
+    "Page history": "Historial de la página",
+    "View the correction": "Ver la corrección",
+    "Undoing over it replaces what came after; it stays in the history and can be brought back.": "Deshacer encima sustituye lo que vino después; queda en el historial y se puede recuperar."
   },
   "functions": {
     "shell.yourRole": {

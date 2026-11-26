@@ -1068,7 +1068,12 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         status: 200,
         body: {
           cursor: String(s.seq),
-          stats: fresh && st === 'empty' ? ZERO : b.stats,
+          stats:
+            fresh && st === 'empty'
+              ? ZERO
+              : b.role === 'curator' && b.slug === 'growth'
+                ? { ...b.stats, pendingReview: W.pendingReviewOf(wikiOf(s, b.slug)) }
+                : b.stats,
           todaySessions: fresh || st === 'empty' ? [] : sessionsOf(b.slug, st === 'much-data' ? 20 : 3),
           pending: fresh
             ? []

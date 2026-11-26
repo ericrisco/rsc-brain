@@ -42,6 +42,15 @@ export function StatusTag({ status }: { status: string }) {
   return <span class={`tag status-${status}${tone}`}>{word}</span>
 }
 
+// A change no person saw left the page as it is («Review later»): a sign and the word, wherever pages are listed.
+export function UnreviewedTag() {
+  return (
+    <span class="tag warn" title={T.wiki.unreviewedTitle} data-mark="unreviewed">
+      {T.wiki.unreviewed}
+    </span>
+  )
+}
+
 export function TypeTag({ type }: { type: string }) {
   return <span class="tag">{T.wiki.types[type] ?? type}</span>
 }
