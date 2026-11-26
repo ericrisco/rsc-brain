@@ -267,6 +267,11 @@ export const ERROR_STATUS: Record<string, number> = {
   undo_conflict: 409,
   already_undone: 409,
   protect_web_only: 403,
+  // An undo over a revision purged since; approving a part whose dependency was undone; deciding a part that does not
+  // wait (review round 2, V4).
+  undo_purged: 409,
+  dependency_undone: 409,
+  not_held: 400,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }
