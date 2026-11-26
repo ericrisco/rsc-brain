@@ -287,6 +287,72 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
     assert.equal((await stats()).pendingProposals, 0)
   })
 
+  const partOf = async (change: string, address: string) =>
+    (
+      (await w.callWeb(coraWeb, 'GET', `/v1/wiki/changes/${change}`)).body.parts as Array<{
+        part: number
+        address: string
+      }>
+    ).find((x) => x.address === address)?.part
+
+  it('W1: undoing one part leaves the links of a part that stays (a link it added stays)', async () => {
+    await plant('pa1')
+    await plant('xa1')
+    const c = await w.call(cole.key, 'POST', '/v1/brains/ul/proposals', {
+      title: 'Edit and link',
+      ops: [
+        { op: 'edit', address: 'pa1', baseRevision: 1, body: 'Agent words.', reason: 'R.' },
+        { op: 'link', address: 'xa1', kind: 'related', to: 'pa1', reason: 'R.' },
+      ],
+    })
+    const id = String(c.body.undo)
+    const r = await undo(id, { parts: [await partOf(id, 'pa1')] })
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await links('xa1'), ['related pa1'])
+  })
+
+  it('W1: undoing one part leaves the links of a part that stays (a link it took away stays away)', async () => {
+    await plant('pd1')
+    await plant('xd1', { links: [{ kind: 'related', to: 'pd1' }] })
+    const c = await w.call(cole.key, 'POST', '/v1/brains/ul/proposals', {
+      title: 'Edit and unlink',
+      ops: [
+        { op: 'edit', address: 'pd1', baseRevision: 1, body: 'Agent words.', reason: 'R.' },
+        { op: 'unlink', address: 'xd1', kind: 'related', to: 'pd1', reason: 'R.' },
+      ],
+    })
+    const id = String(c.body.undo)
+    const r = await undo(id, { parts: [await partOf(id, 'pd1')] })
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await links('xd1'), [])
+  })
+
+  it('W2: a link a merge moved does not come back to the old page if a person took it away from the new one', async () => {
+    await plant('sc1')
+    await plant('tc1')
+    await plant('xc1', { links: [{ kind: 'related', to: 'sc1' }] })
+    const c = await w.call(cole.key, 'POST', '/v1/brains/ul/proposals', {
+      title: 'Merge sc1 into tc1',
+      ops: [
+        {
+          op: 'merge',
+          address: 'tc1',
+          from: 'sc1',
+          body: 'Both.',
+          dropSources: [],
+          dropLinks: [],
+          reason: 'Same.',
+        },
+      ],
+    })
+    assert.ok(c.body.undo, c.text)
+    assert.deepEqual(await links('xc1'), ['related tc1'])
+    await unlink('xc1', 'related', 'tc1')
+    const r = await undo(String(c.body.undo))
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await links('xc1'), [])
+  })
+
   it('U4: an address another page took since is a conflict; overwrite does not take it from that page', async () => {
     const made = await w.call(writer, 'POST', '/v1/brains/ul/wiki/write', {
       title: 'Dd',

@@ -211,6 +211,40 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
     }
     const items: ApplyItem[] = []
     const restore: { part: number; op: RestoreOp; lost: boolean }[] = []
+    // Round 3: the pages of parts that stay applied keep their links (W1); a link the change moved to another of its
+    // pages (a merge) comes back only while what it became is still there (W2), read now, before anything is undone.
+    const staying = parts.filter((p) => p.state === 'applied' && !going.has(p.part)).map((p) => p.pageId)
+    type L = { fromPage: string; kind: string }
+    const linksOf = (part: number, col: 'links_in_before' | 'links_in_after') =>
+      ((rows.get(part) as Row)[col] as L[] | null) ?? null
+    const k = (l: L) => `${l.fromPage} ${l.kind}`
+    const addedTo = parts.flatMap((q) => {
+      const b = new Set((linksOf(q.part, 'links_in_before') ?? []).map(k))
+      return (linksOf(q.part, 'links_in_after') ?? [])
+        .filter((l) => !b.has(k(l)))
+        .map((l) => ({ ...l, to: q.pageId }))
+    })
+    const alive = new Set(
+      addedTo.length === 0
+        ? []
+        : (
+            await db.query<{ from_page: string; kind: string; to_page: string }>(
+              `SELECT from_page, kind, to_page FROM page_links
+                WHERE (from_page, kind, to_page) IN (SELECT * FROM unnest($1::text[], $2::text[], $3::text[]))`,
+              [addedTo.map((l) => l.fromPage), addedTo.map((l) => l.kind), addedTo.map((l) => l.to)],
+            )
+          ).map((l) => `${l.from_page} ${l.kind} ${l.to_page}`),
+    )
+    const reviveOf = (p: { part: number; pageId: string }): string[] => {
+      const after = new Set((linksOf(p.part, 'links_in_after') ?? []).map(k))
+      return (linksOf(p.part, 'links_in_before') ?? [])
+        .filter((l) => !after.has(k(l)))
+        .filter((l) => {
+          const moved = addedTo.filter((m) => m.to !== p.pageId && k(m) === k(l))
+          return moved.length === 0 || moved.some((m) => alive.has(`${m.fromPage} ${m.kind} ${m.to}`))
+        })
+        .map(k)
+    }
     const allLinksIn = new Map(
       parts.map((p) => [
         p.pageId,
@@ -245,6 +279,8 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
           addressesAdded: (r.addresses_added as string[]) ?? [],
           linksInBefore: allLinksIn.get(p.pageId) ?? [],
           linksInAfter: (r.links_in_after as RestoreOp['linksInAfter']) ?? null,
+          staying,
+          revive: reviveOf(p),
           changePages: [...partPages],
           note: `undo of change ${id}`,
         },

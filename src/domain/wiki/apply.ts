@@ -41,6 +41,11 @@ export type RestoreOp = {
   // The links into it as the change left them (null for a change recorded before round 2: nothing is taken back). The
   // undo is the exact inverse of that delta, never a guess from the other pages of the change (review round 2, V1–V2).
   linksInAfter: { fromPage: string; kind: LinkKind }[] | null
+  // Pages of the change whose parts stay applied: their links stay as they are (review round 3, W1).
+  staying: string[]
+  // The links the change took away that may come back ("from kind"): a link a merge moved elsewhere comes back only
+  // while what it became is still there (review round 3, W2).
+  revive: string[]
   // Every page of the change: an address goes back only from one of them (review round 1, U4).
   changePages: string[]
   note: string
@@ -632,8 +637,10 @@ export async function applyOps(
             const key = (l: { fromPage: string; kind: string }) => `${l.fromPage} ${l.kind}`
             const before = new Set(o.linksInBefore.filter((l) => l.fromPage !== id).map(key))
             const after = new Set(o.linksInAfter.filter((l) => l.fromPage !== id).map(key))
+            const staying = new Set(o.staying)
+            const revive = new Set(o.revive)
             for (const l of o.linksInAfter) {
-              if (l.fromPage === id || before.has(key(l))) continue
+              if (l.fromPage === id || staying.has(l.fromPage) || before.has(key(l))) continue
               await db.query('DELETE FROM page_links WHERE from_page = $1 AND kind = $2 AND to_page = $3', [
                 l.fromPage,
                 l.kind,
@@ -641,7 +648,8 @@ export async function applyOps(
               ])
             }
             for (const l of o.linksInBefore) {
-              if (l.fromPage === id || after.has(key(l))) continue
+              if (l.fromPage === id || staying.has(l.fromPage) || after.has(key(l)) || !revive.has(key(l)))
+                continue
               await db.query(
                 `INSERT INTO page_links (brain_id, from_page, kind, to_page)
                  SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM pages WHERE id = $2 AND status <> 'retired')
