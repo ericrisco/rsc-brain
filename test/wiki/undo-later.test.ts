@@ -353,6 +353,63 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
     assert.deepEqual(await links('xc1'), [])
   })
 
+  it('reviewer question 4: a proposal whose waiting parts are decided (returned or approved) stops waiting too', async () => {
+    await w.call(cora.key, 'POST', '/v1/brains', { slug: 'ul4', purpose: 'Decided, nothing waits.' })
+    await w.member('ul4', cole.id, 'contributor')
+    const e = await w.call(cole.key, 'POST', '/v1/brains/ul4/entries', {
+      type: 'learning',
+      title: 'S',
+      content: 'S.',
+    })
+    const src = (e.body.receipt as { entryId: string }).entryId
+    await w.callWeb(coraWeb, 'POST', '/v1/brains/ul4/wiki/changes', {
+      op: 'create',
+      address: 'guard',
+      type: 'topic',
+      title: 'Guard',
+      summary: 'Guard.',
+      body: 'Guard.',
+    })
+    await w.callWeb(coraWeb, 'PUT', '/v1/brains/ul4/protection/guard', { protected: true })
+    const stats = async () =>
+      (
+        (await w.call(cora.key, 'GET', '/v1/brains/ul4')).body.brain as {
+          stats: { pendingProposals: number }
+        }
+      ).stats
+    const half = async (address: string) => {
+      const c = await w.call(cole.key, 'POST', '/v1/brains/ul4/proposals', {
+        title: `Half ${address}`,
+        ops: [
+          { ...create(address), sources: [{ entryId: src }] },
+          { op: 'link', address: 'guard', kind: 'related', to: address, reason: 'See.' },
+        ],
+      })
+      const p = c.body.proposal as { id: string; status: string }
+      assert.equal(p.status, 'partially_applied')
+      return p.id
+    }
+    const seen = async (id: string) =>
+      String((await w.callWeb(coraWeb, 'GET', `/v1/proposals/${id}/review`)).body.fingerprint)
+    const back = await half('one')
+    const ok = await half('two')
+    assert.equal((await stats()).pendingProposals, 2)
+    const r1 = await w.callWeb(coraWeb, 'POST', `/v1/proposals/${back}/return`, {
+      fingerprint: await seen(back),
+      comment: 'Not this link.',
+    })
+    assert.equal(r1.status, 200, r1.text)
+    const r2 = await w.callWeb(coraWeb, 'POST', `/v1/proposals/${ok}/approve`, {
+      fingerprint: await seen(ok),
+    })
+    assert.equal(r2.status, 200, r2.text)
+    for (const id of [back, ok]) {
+      const p = (await w.call(cora.key, 'GET', `/v1/proposals/${id}`)).body.proposal as { status: string }
+      assert.ok(!['pending', 'partially_applied'].includes(p.status), `${id}: ${p.status}`)
+    }
+    assert.equal((await stats()).pendingProposals, 0)
+  })
+
   it('U4: an address another page took since is a conflict; overwrite does not take it from that page', async () => {
     const made = await w.call(writer, 'POST', '/v1/brains/ul/wiki/write', {
       title: 'Dd',
