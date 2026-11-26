@@ -117,7 +117,7 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
     'wiki_change_parts',
     `change_id part op_index page_id created revision_before revision_after address_before address_after status_before
      superseded_by_before addresses_before addresses_added links_in_before sources_added state undone_by_person
-     undo_revision`,
+     undo_revision links_in_after`,
     'change_id part',
   ),
   t(

@@ -74,11 +74,16 @@ export async function recordChange(
       sourcesBefore = new Set((r?.sources ?? []).flatMap((s) => ('entryId' in s ? [s.entryId] : [])))
     }
     const sourcesAdded = sourcesNow.map((s) => s.entry_id).filter((e) => !sourcesBefore.has(e))
+    // The links into the page as the change left them: with those before, the exact delta an undo takes back (round 2).
+    const linksAfter = await db.query<{ from_page: string; kind: string }>(
+      'SELECT from_page, kind FROM page_links WHERE to_page = $1 ORDER BY from_page, kind',
+      [b.pageId],
+    )
     await db.query(
       `INSERT INTO wiki_change_parts (change_id, part, op_index, page_id, created, revision_before, revision_after,
          address_before, address_after, status_before, superseded_by_before, addresses_before, addresses_added,
-         links_in_before, sources_added)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+         links_in_before, sources_added, links_in_after)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         id,
         part,
@@ -95,6 +100,7 @@ export async function recordChange(
         JSON.stringify(added),
         JSON.stringify(b.linksIn),
         JSON.stringify(sourcesAdded),
+        JSON.stringify(linksAfter.map((l) => ({ fromPage: l.from_page, kind: l.kind }))),
       ],
     )
     part += 1

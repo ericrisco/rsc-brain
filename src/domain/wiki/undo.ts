@@ -244,9 +244,8 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
           addressesBefore,
           addressesAdded: (r.addresses_added as string[]) ?? [],
           linksInBefore: allLinksIn.get(p.pageId) ?? [],
+          linksInAfter: (r.links_in_after as RestoreOp['linksInAfter']) ?? null,
           changePages: [...partPages],
-          movedIn: [...allLinksIn].filter(([page]) => page !== p.pageId).flatMap(([, l]) => l),
-          merged: lost,
           note: `undo of change ${id}`,
         },
       })

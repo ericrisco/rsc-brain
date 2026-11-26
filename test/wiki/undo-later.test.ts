@@ -1,7 +1,9 @@
 // Review round 1 of T005–T008 (correctness): an undo puts back only what the change itself changed. What a later write
 // did — a link into the page, an address another page took — is never lost silently: it stays, or it is a conflict a
 // person decides. A part that cannot be put back (its revision before was purged) stops the whole undo. Parts of the
-// proposal still waiting that need an undone part go with it. Spec learning-memory A2, CA-A10.
+// proposal still waiting that need an undone part go with it. Spec learning-memory A2, CA-A10. Round 2 (V1–V3): the links
+// into a page come back as the exact inverse of what the change itself did to them, whatever other pages it touched; a
+// proposal left with nothing waiting stops counting as waiting.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { skipPg } from '../helpers/pg.ts'
@@ -152,6 +154,95 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
     })
     assert.ok([400, 409].includes(ok.status), ok.text)
     assert.deepEqual(await links('prot'), [])
+  })
+
+  const link = (address: string, kind: string, to: string) =>
+    byWeb({ op: 'link', address, kind, to, reason: 'Later.' })
+  const unlink = (address: string, kind: string, to: string) =>
+    byWeb({ op: 'unlink', address, kind, to, reason: 'Later.' })
+  const editBoth = (title: string, addresses: string[]) =>
+    w.call(cole.key, 'POST', '/v1/brains/ul/proposals', {
+      title,
+      ops: addresses.map((a) => ({
+        op: 'edit',
+        address: a,
+        baseRevision: 1,
+        body: `Agent words on ${a}.`,
+        reason: 'R.',
+      })),
+    })
+
+  it('V1: a link a person made later into another page of the change stays after the undo', async () => {
+    await plant('p1')
+    await plant('b1')
+    await plant('r1', { links: [{ kind: 'related', to: 'p1' }] })
+    const c = await editBoth('Edit p1 and b1', ['p1', 'b1'])
+    assert.ok(c.body.undo, c.text)
+    await link('r1', 'related', 'b1')
+    const r = await undo(String(c.body.undo))
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await links('r1'), ['related b1', 'related p1'])
+  })
+
+  it('V2: a link a person took away later does not come back because the change touched another page it points to', async () => {
+    await plant('p3')
+    await plant('b3')
+    await plant('r3', {
+      links: [
+        { kind: 'related', to: 'p3' },
+        { kind: 'related', to: 'b3' },
+      ],
+    })
+    const c = await editBoth('Edit p3 and b3', ['p3', 'b3'])
+    await unlink('r3', 'related', 'p3')
+    const r = await undo(String(c.body.undo))
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await links('r3'), ['related b3'])
+  })
+
+  it('V1–V2 by property: whatever people link and unlink later from other pages survives the undo', async () => {
+    // A small seeded generator: the same sequences on every run, many shapes of change and later edit.
+    let seed = 7
+    const rnd = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed % n
+    }
+    const kinds = ['related', 'depends-on', 'example-of']
+    for (let round = 0; round < 6; round++) {
+      const P = [0, 1, 2].map((i) => `prop${round}/p${i}`)
+      const R = [0, 1, 2].map((i) => `prop${round}/r${i}`)
+      for (const a of P) await plant(a)
+      for (const a of R) {
+        const out = P.filter(() => rnd(2) === 0).map((to) => ({ kind: kinds[rnd(3)] as string, to }))
+        await plant(a, { links: out })
+      }
+      const touched = P.filter((_, i) => i === 0 || rnd(2) === 0)
+      const ops: Json[] = touched.map((a) => ({
+        op: 'edit',
+        address: a,
+        baseRevision: 1,
+        body: `Agent words on ${a}.`,
+        reason: 'R.',
+      }))
+      // Sometimes the change links one of its pages to another.
+      if (touched.length > 1 && rnd(2) === 0)
+        ops.push({ op: 'link', address: touched[0], kind: 'related', to: touched[1], reason: 'R.' })
+      const before = Object.fromEntries(await Promise.all(P.map(async (a) => [a, await links(a)])))
+      const c = await w.call(cole.key, 'POST', '/v1/brains/ul/proposals', { title: `Round ${round}`, ops })
+      assert.ok(c.body.undo, c.text)
+      for (let k = 0; k < 4; k++) {
+        const from = R[rnd(3)] as string
+        const to = P[rnd(3)] as string
+        const kind = kinds[rnd(3)] as string
+        const has = (await links(from)).includes(`${kind} ${to}`)
+        await (has ? unlink(from, kind, to) : link(from, kind, to))
+      }
+      const later = Object.fromEntries(await Promise.all(R.map(async (a) => [a, await links(a)])))
+      const r = await undo(String(c.body.undo))
+      assert.equal(r.status, 200, r.text)
+      for (const a of R) assert.deepEqual(await links(a), later[a], `round ${round}: ${a}`)
+      for (const a of P) assert.deepEqual(await links(a), before[a], `round ${round}: ${a}`)
+    }
   })
 
   it('U4: an address another page took since is a conflict; overwrite does not take it from that page', async () => {
