@@ -357,6 +357,15 @@ async function discardWith(
       proposalId,
       out,
     ])
+  // A proposal left with nothing waiting stops waiting (review round 2, V3): it was applied at once, and its undone
+  // parts say the rest (M2 keeps «applied» for a proposal applied at once and undone after, as for a whole undo).
+  await db.query(
+    `UPDATE proposals SET status = 'applied'
+      WHERE id = $1 AND status IN ('partially_applied', 'pending')
+        AND NOT EXISTS (SELECT 1 FROM proposal_ops WHERE proposal_id = $1 AND status = 'pending')
+        AND EXISTS (SELECT 1 FROM proposal_ops WHERE proposal_id = $1 AND status IN ('applied', 'undone'))`,
+    [proposalId],
+  )
   return out.sort((a, b) => a - b)
 }
 

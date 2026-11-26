@@ -245,6 +245,48 @@ describe('undo leaves later writes alone (review round 1)', { skip: skipPg }, ()
     }
   })
 
+  it('V3: a proposal whose waiting parts went with the undo no longer waits, and the brain counts 0', async () => {
+    await w.call(cora.key, 'POST', '/v1/brains', { slug: 'ul3', purpose: 'Undo, nothing waits.' })
+    await w.member('ul3', cole.id, 'contributor')
+    const e = await w.call(cole.key, 'POST', '/v1/brains/ul3/entries', {
+      type: 'learning',
+      title: 'S',
+      content: 'S.',
+    })
+    const src = (e.body.receipt as { entryId: string }).entryId
+    await w.callWeb(coraWeb, 'POST', '/v1/brains/ul3/wiki/changes', {
+      op: 'create',
+      address: 'guard',
+      type: 'topic',
+      title: 'Guard',
+      summary: 'Guard.',
+      body: 'Guard.',
+    })
+    await w.callWeb(coraWeb, 'PUT', '/v1/brains/ul3/protection/guard', { protected: true })
+    const c = await w.call(cole.key, 'POST', '/v1/brains/ul3/proposals', {
+      title: 'New page and a link',
+      ops: [
+        { ...create('fresh'), sources: [{ entryId: src }] },
+        { op: 'link', address: 'guard', kind: 'related', to: 'fresh', reason: 'See.' },
+      ],
+    })
+    const id = (c.body.proposal as { id: string }).id
+    assert.equal((c.body.proposal as { status: string }).status, 'partially_applied')
+    const stats = async () =>
+      (
+        (await w.call(cora.key, 'GET', '/v1/brains/ul3')).body.brain as {
+          stats: { pendingProposals: number }
+        }
+      ).stats
+    assert.equal((await stats()).pendingProposals, 1)
+    const r = await w.callWeb(coraWeb, 'POST', `/v1/wiki/changes/${c.body.undo}/undo`, {})
+    assert.equal(r.status, 200, r.text)
+    const p = (await w.call(cora.key, 'GET', `/v1/proposals/${id}`)).body.proposal as { status: string }
+    assert.notEqual(p.status, 'partially_applied')
+    assert.notEqual(p.status, 'pending')
+    assert.equal((await stats()).pendingProposals, 0)
+  })
+
   it('U4: an address another page took since is a conflict; overwrite does not take it from that page', async () => {
     const made = await w.call(writer, 'POST', '/v1/brains/ul/wiki/write', {
       title: 'Dd',
