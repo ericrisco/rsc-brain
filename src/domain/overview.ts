@@ -44,7 +44,8 @@ async function statsOf(
             (SELECT count(*)::int FROM relations r WHERE r.brain_id = b.id AND ${OPEN_CONFLICT}) AS conflicts,
             (SELECT count(*)::int FROM proposals p WHERE p.brain_id = b.id
                 AND p.status IN ('pending', 'partially_applied')) AS pending_proposals,
-            (SELECT count(*)::int FROM wiki_changes c WHERE c.brain_id = b.id AND c.state = 'pending_review')
+            (SELECT count(*)::int FROM wiki_changes c WHERE c.brain_id = b.id
+                AND c.state IN ('pending_review', 'partly_undone'))
               AS pending_review,
             greatest((SELECT max(s.last_activity_at) FROM sessions s WHERE s.brain_id = b.id),
                      (SELECT max(p.created_at) FROM proposals p WHERE p.brain_id = b.id),

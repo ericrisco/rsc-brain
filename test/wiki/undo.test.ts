@@ -241,7 +241,14 @@ describe('undo, exact, whole or in parts (spec learning-memory A2)', { skip: ski
     assert.equal(r.status, 409, r.text)
     assert.equal(r.body.error?.code, 'undo_conflict')
     assert.deepEqual((r.body.error as unknown as { pages: unknown }).pages, [
-      { address: 'cf', changeRevision: 2, currentRevision: 3 },
+      // Who wrote after the change, and when (usability T1, M4).
+      {
+        address: 'cf',
+        changeRevision: 2,
+        currentRevision: 3,
+        editedBy: 'Cole',
+        editedAt: '2026-10-29T10:01:00.000Z',
+      },
     ])
     assert.equal(await revisionOf('cf'), 3)
     const ok = await undo(a.undo, { overwrite: ['cf'] })

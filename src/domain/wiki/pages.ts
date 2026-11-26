@@ -196,6 +196,8 @@ export type PageReading = {
   // Who saved the revision the page is at (an edit that meets a newer revision names them).
   lastChange: { revision: number; authorId: string; authorName: string; at: string } | null
   corrections: PageCorrection[]
+  // The latest change still awaiting review that touched it, for «Review it» (usability T1, B1); null otherwise.
+  reviewChange?: string | null
 }
 
 async function lastChangeOf(db: Db, pageId: string, revision: number): Promise<PageReading['lastChange']> {
@@ -225,6 +227,16 @@ export async function getPage(ctx: Ctx, slug: string, address: string): Promise<
     sources: await sourcesOf(ctx.db, page.id),
     lastChange: await lastChangeOf(ctx.db, page.id, page.revision),
     corrections: await correctionsOf(ctx, page),
+    reviewChange: page.unreviewed
+      ? ((
+          await ctx.db.one<{ id: string }>(
+            `SELECT c.id FROM wiki_changes c JOIN wiki_change_parts x ON x.change_id = c.id
+              WHERE x.page_id = $1 AND x.state = 'applied' AND c.state IN ('pending_review', 'partly_undone')
+              ORDER BY c.created_at DESC, c.id DESC LIMIT 1`,
+            [page.id],
+          )
+        )?.id ?? null)
+      : null,
   }
   if (page.address !== address) out.redirectedFrom = address
   if (page.status === 'retired') out.notice = 'retired: this page is kept for its history only.'
@@ -529,10 +541,14 @@ export type PageListItem = {
   in: number
   out: number
   updatedAt: string
+  // A change no person saw left it at this revision (usability T1, B1).
+  unreviewed: boolean
 }
 
 export type PageListQuery = {
   q?: string
+  // Only the pages a change no person saw left as they are.
+  unreviewed?: boolean
   prefix?: string
   // Only the pages at the level of `prefix` with no deeper part, as the graph gathers them.
   loose?: boolean
@@ -618,6 +634,7 @@ export async function listPages(
   if (o.type !== undefined) where.push(`p.type = ${p(o.type)}`)
   if (o.status !== undefined) where.push(`p.status = ANY(${p(o.status.split(','))}::text[])`)
   if (o.tag !== undefined) where.push(`${p(o.tag)} = ANY(p.tags)`)
+  if (o.unreviewed) where.push('p.revision > p.reviewed_revision')
   if (o.linkKind !== undefined) {
     // A semi-join on the set of pages with such a link (a hash, not a scan of the links for every page).
     const k = p(o.linkKind)
@@ -654,6 +671,7 @@ export async function listPages(
      o AS (SELECT from_page AS id, count(DISTINCT to_id)::int AS n FROM l GROUP BY from_page),
      i AS (SELECT to_id AS id, count(DISTINCT from_page)::int AS n FROM l GROUP BY to_id)
      SELECT p.address, p.title, p.type, p.status, p.tags, p.updated_at,
+            coalesce(p.revision > p.reviewed_revision, false) AS unreviewed,
             coalesce(o.n, 0) AS out_n, coalesce(i.n, 0) AS in_n
        FROM pages p LEFT JOIN o ON o.id = p.id LEFT JOIN i ON i.id = p.id
       WHERE ${filtered}${keyset}
@@ -670,6 +688,7 @@ export async function listPages(
       in: Number(r.in_n),
       out: Number(r.out_n),
       updatedAt: (r.updated_at as Date).toISOString(),
+      unreviewed: r.unreviewed === true,
     }),
   )
   const last = items.at(-1)

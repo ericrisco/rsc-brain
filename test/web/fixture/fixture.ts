@@ -2609,6 +2609,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         return { status: 200, body: { items: [], next: null } }
       // The pages of the hand-made wiki first (they open), then the seeded ones; all in the first brain.
       // A snippet is a piece of the body, markdown and all, as the server's.
+      const live = wikiOf(s, 'growth')
       const hand = freshWiki().pages.map((p) => {
         const r = p.revs[p.revs.length - 1] as {
           address: string
@@ -2625,6 +2626,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           title: r.title,
           summary: r.summary,
           snippet: r.body.slice(0, 160),
+          unreviewed: W.isUnreviewed(live, r.address),
         }
       })
       const pages =
@@ -2643,6 +2645,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
                 title: p.title,
                 snippet: p.snippet,
                 ...words,
+                ...('unreviewed' in p && p.unreviewed ? { unreviewed: true } : {}),
                 at: AT,
               }))
       // Journal entries of each brain asked, as the server mixes them in.

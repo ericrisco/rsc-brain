@@ -151,10 +151,23 @@ export type ChangeView = {
   state: ChangeState
   decidedBy: string | null
   decidedAt: string | null
+  // The pages it touched, at their address now, with the operation that touched each (usability T1, M1).
+  pages: { address: string; op: string | null }[]
+  // Why it was undone, and the correction that became (usability T1, M5); null otherwise or once purged.
+  comment: string | null
+  correction: string | null
 }
 
+// The states still awaiting a person: a change partly undone waits until it is kept or wholly undone (usability T1, B2).
+export const AWAITING: readonly ChangeState[] = ['pending_review', 'partly_undone']
+
 const VIEW = `SELECT c.*, a.name AS actor_name, coalesce(p.title, l.summary) AS title,
-       (SELECT count(*)::int FROM wiki_change_parts x WHERE x.change_id = c.id) AS part_count
+       (SELECT count(*)::int FROM wiki_change_parts x WHERE x.change_id = c.id) AS part_count,
+       (SELECT coalesce(json_agg(json_build_object('address', pg.address,
+                 'op', coalesce(po.op->>'op', CASE WHEN x.created THEN 'create' END)) ORDER BY x.part), '[]')
+          FROM wiki_change_parts x JOIN pages pg ON pg.id = x.page_id
+          LEFT JOIN proposal_ops po ON po.proposal_id = c.proposal_id AND po.idx = x.op_index
+         WHERE x.change_id = c.id) AS touched
   FROM wiki_changes c JOIN accounts a ON a.id = c.actor_id JOIN wiki_log l ON l.id = c.log_id
   LEFT JOIN proposals p ON p.id = c.proposal_id`
 
@@ -170,6 +183,9 @@ const viewOf = (r: Row): ChangeView => ({
   state: r.state as ChangeState,
   decidedBy: r.decided_by == null ? null : String(r.decided_by),
   decidedAt: r.decided_at == null ? null : (r.decided_at as Date).toISOString(),
+  pages: (r.touched as { address: string; op: string | null }[]) ?? [],
+  comment: r.comment == null ? null : String(r.comment),
+  correction: r.correction_id == null ? null : String(r.correction_id),
 })
 
 // Who sees «Review later» (plan §2.5): the curators, in the web and through their keys, and the keys a curator let write
@@ -206,7 +222,7 @@ export async function changeOf(
 export async function listChanges(
   ctx: Ctx,
   slug: string,
-  o: { state?: ChangeState | 'all'; cursor?: string; limit?: number },
+  o: { state?: ChangeState | 'all'; cursor?: string; limit?: number; since?: string },
 ): Promise<PageOf<ChangeView>> {
   const { brain, role } = await inBrain(ctx, { slug })
   await mayRead(ctx, brain, role)
@@ -215,9 +231,15 @@ export async function listChanges(
   const limit = o.limit ?? PAGE.default
   const params: unknown[] = [brain.id, c?.at ?? null, c?.id ?? '', limit + 1]
   let filter = ''
+  // «Awaiting review» holds the changes partly undone too (usability T1, B2).
+  const states = state === 'pending_review' ? [...AWAITING] : [state]
   if (state !== 'all') {
-    params.push(state)
-    filter = ` AND c.state = $${params.length}`
+    params.push(states)
+    filter = ` AND c.state = ANY($${params.length}::text[])`
+  }
+  if (o.since !== undefined) {
+    params.push(o.since)
+    filter += ` AND c.created_at >= $${params.length}::timestamptz`
   }
   // The oldest first: what has waited longest is reviewed first (spec A2).
   const rows = await ctx.db.query(
@@ -225,9 +247,19 @@ export async function listChanges(
       ORDER BY c.created_at, c.id LIMIT $4`,
     params,
   )
+  const totalParams: unknown[] = [brain.id]
+  let totalFilter = ''
+  if (state !== 'all') {
+    totalParams.push(states)
+    totalFilter += ` AND c.state = ANY($${totalParams.length}::text[])`
+  }
+  if (o.since !== undefined) {
+    totalParams.push(o.since)
+    totalFilter += ` AND c.created_at >= $${totalParams.length}::timestamptz`
+  }
   const total = await ctx.db.one<{ n: number }>(
-    `SELECT count(*)::int AS n FROM wiki_changes c WHERE c.brain_id = $1${state === 'all' ? '' : ' AND c.state = $2'}`,
-    state === 'all' ? [brain.id] : [brain.id, state],
+    `SELECT count(*)::int AS n FROM wiki_changes c WHERE c.brain_id = $1${totalFilter}`,
+    totalParams,
   )
   const page = rows.slice(0, limit)
   const last = page.at(-1)
@@ -248,6 +280,28 @@ export type ChangePart = {
   dependsOn: number[]
   diff: string
   state: 'applied' | 'undone'
+  // The operation that made it, in its own words (usability T1, M2): its reason, and for a link, move, merge or status
+  // what it linked, where it moved, what it took in, the status it set. Null for a part with no operation known.
+  operation: PartOperation | null
+}
+export type PartOperation = {
+  op: string
+  reason: string | null
+  kind?: string
+  to?: string
+  from?: string
+  status?: string
+}
+
+function operationOf(o: Op | undefined, addressBefore: string | null): PartOperation | null {
+  if (!o) return null
+  const x = o as Op & { reason?: string; kind?: string; to?: string; from?: string; status?: string }
+  const out: PartOperation = { op: x.op, reason: x.reason ?? null }
+  if (x.op === 'link' || x.op === 'unlink') Object.assign(out, { kind: x.kind, to: x.to })
+  if (x.op === 'move') Object.assign(out, { from: addressBefore ?? x.address, to: x.to })
+  if (x.op === 'merge') Object.assign(out, { from: x.from })
+  if (x.op === 'status') Object.assign(out, { status: x.status })
+  return out
 }
 
 // The parts of a change and what each needs to stay (plan §2.5): a part needs the parts of the same operation (a merge,
@@ -302,6 +356,10 @@ export async function partsOf(
         dependsOn: [],
         diff: purged ? 'purged' : bodyDiff(before?.body ?? '', after?.body ?? ''),
         state: r.state as 'applied' | 'undone',
+        operation: operationOf(
+          opIndex == null ? undefined : ops.get(opIndex),
+          r.address_before == null ? null : String(r.address_before),
+        ),
       },
     })
   }

@@ -69,6 +69,15 @@ export type Wiki = {
 }
 export type FxPart = {
   part: number
+  // The operation that made it, as the server words it (usability T1, M2).
+  operation?: {
+    op: string
+    reason: string | null
+    kind?: string
+    to?: string
+    from?: string
+    status?: string
+  }
   address: string
   revisionBefore: number | null
   revisionAfter: number
@@ -89,6 +98,8 @@ export type FxChange = {
   decidedAt: string | null
   parts: FxPart[]
   answers?: Map<string, Answer>
+  comment?: string | null
+  correction?: string | null
 }
 export type Who = { id: string; name: string }
 
@@ -360,6 +371,7 @@ function reading(w: Wiki, p: FxPage, asked?: string) {
       protected: w.protectedIds?.has(p.id) ?? false,
       unreviewed: unreviewedAt(w, p),
     },
+    reviewChange: reviewChangeOf(w, p),
     ...(asked && asked !== r.address ? { redirectedFrom: asked } : {}),
     ...(r.status === 'retired' ? { notice: 'retired: this page is kept for its history only.' } : {}),
     ...(r.status === 'superseded' && sup ? { notice: `superseded by "${addressOf(sup)}".` } : {}),
@@ -550,6 +562,7 @@ export function graphDataOf(w: Wiki, extra: GenPage[] = []): GraphData {
           tags: r.tags,
           summary: r.summary,
           updatedAt: r.createdAt,
+          unreviewed: unreviewedAt(w, p),
         }
       }),
       ...extra.map((g) => ({ ...g, updatedAt: AT })),
@@ -889,7 +902,25 @@ export function entryOf(id: string, slug: string): Answer {
 // written again since (an undo is a conflict until a person overwrites), a newer one whose second part needs its first,
 // and one a curator already kept. Fictitious content.
 const KEY_FACTORY = { id: 'acc_factory', name: 'Factory' }
+// The operations behind the seeded parts, as the server words them (usability T1, M2).
 function freshChanges(): FxChange[] {
+  const out = seededChanges()
+  const ops: Record<string, FxPart['operation'][]> = {
+    chg_fx_numbers: [{ op: 'edit', reason: 'The October report is out.' }],
+    chg_fx_intros: [
+      { op: 'create', reason: 'She writes the intros.' },
+      { op: 'link', reason: 'Who to ask.', kind: 'related', to: 'people/ana' },
+    ],
+    chg_fx_kept: [{ op: 'create', reason: 'Annual plans changed.' }],
+  }
+  for (const c of out)
+    for (const x of c.parts) {
+      const op = ops[c.id]?.[x.part]
+      if (op) x.operation = op
+    }
+  return out
+}
+function seededChanges(): FxChange[] {
   const change = (c: Omit<FxChange, 'decidedBy' | 'decidedAt' | 'state'> & Partial<FxChange>): FxChange => ({
     state: 'pending_review',
     decidedBy: null,
@@ -972,24 +1003,47 @@ function freshChanges(): FxChange[] {
   ]
 }
 
-const changeView = (c: FxChange) => {
-  const { parts, answers: _a, ...rest } = c
-  return { ...rest, parts: parts.length }
+function changeView(w: Wiki, c: FxChange) {
+  const { parts, answers: _a, comment, correction, ...rest } = c
+  return {
+    ...rest,
+    parts: parts.length,
+    pages: parts.map((x) => {
+      const p = find(w, x.address)
+      return { address: p ? addressOf(p) : x.address, op: x.operation?.op ?? (x.created ? 'create' : null) }
+    }),
+    comment: comment ?? null,
+    correction: correction ?? null,
+  }
 }
+const AWAITING = ['pending_review', 'partly_undone']
 
 // A page is unreviewed while a change no person saw left it at the revision it is at.
 function unreviewedAt(w: Wiki, p: FxPage): boolean {
   const now = last(p).revision
   return (w.changes ?? []).some(
     (c) =>
-      c.state === 'pending_review' &&
+      AWAITING.includes(c.state) &&
       c.parts.some(
         (x) => x.state === 'applied' && p.addresses.includes(x.address) && x.revisionAfter === now,
       ),
   )
 }
-export const pendingReviewOf = (w: Wiki) =>
-  (w.changes ?? []).filter((c) => c.state === 'pending_review').length
+export const pendingReviewOf = (w: Wiki) => (w.changes ?? []).filter((c) => AWAITING.includes(c.state)).length
+// The latest change awaiting review that left the page as it is, for «Review it» (usability T1, B1).
+function reviewChangeOf(w: Wiki, p: FxPage): string | null {
+  if (!unreviewedAt(w, p)) return null
+  const hits = (w.changes ?? []).filter(
+    (c) =>
+      AWAITING.includes(c.state) &&
+      c.parts.some((x) => x.state === 'applied' && p.addresses.includes(x.address)),
+  )
+  return hits.sort((a, b) => (a.at < b.at ? 1 : -1))[0]?.id ?? null
+}
+export function isUnreviewed(w: Wiki, address: string): boolean {
+  const p = find(w, address)
+  return p ? unreviewedAt(w, p) : false
+}
 
 const noChange = (_id: string) =>
   err(404, 'not_found', 'No change with that id is available to you.', 'Check the change id.')
@@ -1005,12 +1059,23 @@ export function changesOf(w: Wiki, curator: boolean, q: Q): Answer {
       '"state" is pending_review, kept, undone, partly_undone or all.',
       'Fix "state".',
     )
+  const since = q.get('since')
+  if (since !== null && Number.isNaN(Date.parse(since)))
+    return err(
+      400,
+      'invalid_request',
+      '"since" is a date and time, such as 2026-11-25T00:00:00Z.',
+      'Fix "since".',
+    )
+  // «Awaiting review» holds the changes partly undone too, as on the server (usability T1, B2).
   const items = (w.changes ?? [])
     .filter(
-      (c) => state === 'all' || c.state === state || (state === 'undone' && c.state === 'partly_undone'),
+      (c) =>
+        state === 'all' || c.state === state || (state === 'pending_review' && AWAITING.includes(c.state)),
     )
+    .filter((c) => since === null || Date.parse(c.at) >= Date.parse(since))
     .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
-  return { status: 200, body: { items: items.map(changeView), next: null, total: items.length } }
+  return { status: 200, body: { items: items.map((c) => changeView(w, c)), next: null, total: items.length } }
 }
 
 const lines = (t: string) => (t === '' ? [] : t.split('\n'))
@@ -1046,23 +1111,24 @@ export function changeOf(w: Wiki, id: string): Answer {
       dependsOn: x.dependsOn,
       diff: diffOf(body(x.revisionBefore), body(x.revisionAfter)),
       state: x.state,
+      operation: x.operation ?? null,
     }
   })
-  return { status: 200, body: { change: changeView(c), parts } }
+  return { status: 200, body: { change: changeView(w, c), parts } }
 }
 
 export function keepChange(w: Wiki, id: string, who: Who, curator: boolean): Answer {
   const c = findChange(w, id)
   if (!c) return noChange(id)
   if (!curator) return notCurator
-  if (c.state === 'undone' || c.state === 'partly_undone')
+  if (c.state === 'undone')
     return err(409, 'already_undone', 'This change was undone; there is nothing to keep.', 'Leave it.')
-  if (c.state === 'pending_review') {
+  if (c.state === 'pending_review' || c.state === 'partly_undone') {
     c.state = 'kept'
     c.decidedBy = who.name
     c.decidedAt = AT
   }
-  return { status: 200, body: { change: changeView(c) } }
+  return { status: 200, body: { change: changeView(w, c) } }
 }
 
 export function undoChange(
@@ -1113,7 +1179,30 @@ export function undoChange(
     const now = p ? last(p).revision : x.revisionAfter
     const later = todo.find((o) => o !== x && o.address === x.address && o.revisionBefore === x.revisionAfter)
     if (later || now === x.revisionAfter || overwrite.includes(x.address)) return []
-    return [{ address: x.address, changeRevision: x.revisionAfter, currentRevision: now }]
+    const r = p ? last(p) : undefined
+    return [
+      {
+        address: x.address,
+        changeRevision: x.revisionAfter,
+        currentRevision: now,
+        editedBy: r?.authorName ?? '',
+        editedAt: r?.createdAt ?? AT,
+      },
+    ]
+  })
+  // What an overwrite replaces: the revisions after the change, and who wrote them (usability T1, M4).
+  const overwritten = order.flatMap((x) => {
+    const p = find(w, x.address)
+    if (!p || !overwrite.includes(x.address)) return []
+    const revs = p.revs.filter((r) => r.revision > x.revisionAfter)
+    if (!revs.length) return []
+    return [
+      {
+        address: x.address,
+        revisions: revs.map((r) => r.revision),
+        editedBy: [...new Set(revs.map((r) => r.authorName))],
+      },
+    ]
   })
   if (conflicts.length)
     return {
@@ -1156,13 +1245,18 @@ export function undoChange(
   c.state = c.parts.every((x) => x.state === 'undone') ? 'undone' : 'partly_undone'
   c.decidedBy = who.name
   c.decidedAt = AT
+  if (comment) {
+    c.comment = comment
+    c.correction = 'ent_fx_hooks'
+  }
   const answer: Answer = {
     status: 200,
     body: {
-      change: changeView(c),
+      change: changeView(w, c),
       undone,
       discarded: [],
-      ...(comment ? { correction: `cor_fx_${w.seq}` } : {}),
+      ...(comment ? { correction: c.correction } : {}),
+      ...(overwritten.length ? { overwritten } : {}),
     },
   }
   if (key) {

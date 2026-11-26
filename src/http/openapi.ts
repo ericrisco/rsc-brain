@@ -526,9 +526,18 @@ const CHANGE = obj({
   proposalId: nul(s('The proposal it applied, if any.')),
   title: s('What it changed.'),
   parts: n('How many pages it touched.'),
-  state: s('pending_review, kept, undone or partly_undone.'),
+  state: s('pending_review, kept, undone or partly_undone (a partly undone change still awaits review).'),
   decidedBy: nul(s('Who kept or undid it.')),
   decidedAt: nul(DATE),
+  pages: list(
+    obj({
+      address: s('The page, at its address now.'),
+      op: nul(s('The operation that touched it, when known.')),
+    }),
+    'The pages it touched, in the order of its parts.',
+  ),
+  comment: nul(s('Why it was undone; null otherwise, or once its proposal was purged.')),
+  correction: nul(s('The correction (an entry id) the comment of its undo became.')),
 })
 
 const INBOX = obj(
@@ -720,8 +729,9 @@ const PAGE_READING = obj(
       }),
     ),
     corrections: list(PAGE_CORRECTION),
+    reviewChange: nul(s('The latest change awaiting review that touched it (chg_…), for «Review it».')),
   },
-  ['redirectedFrom', 'notice'],
+  ['redirectedFrom', 'notice', 'reviewChange'],
 )
 const REVISION_SUMMARY = {
   revision: n('Its number.'),
@@ -794,6 +804,7 @@ const HAND: Record<string, Op> = {
       status:
         'Only these statuses: one or more of current, stale, superseded and retired, separated by commas.',
       tag: 'Only pages with this tag.',
+      unreviewed: '1: only the pages a change no person saw left as they are.',
       linkKind:
         'Only pages with a link of this kind, either way: mentions, related, depends-on, contradicts, supersedes, part-of or example-of.',
       sort: 'address (the default), title, type, status, in, out or updatedAt; "-" before it for the other way.',
@@ -811,6 +822,7 @@ const HAND: Record<string, Op> = {
           in: n('Pages linking to it.'),
           out: n('Pages it links to.'),
           updatedAt: s('When it last changed.', { format: 'date-time' }),
+          unreviewed: b('A change no person saw left it as it is («Review later»).'),
         }),
       ),
       next: NEXT,
@@ -1031,6 +1043,7 @@ const HAND: Record<string, Op> = {
         'sources',
         'lastChange',
         'corrections',
+        'reviewChange',
         'history',
         'revision',
         'a',
@@ -1937,7 +1950,9 @@ const HAND: Record<string, Op> = {
     summary:
       '«Review later» (spec learning-memory A2): the changes to the wiki a person in the web did not make, oldest first, with who, which key, from which session or run and how many parts. For the curators of the brain and the keys with the permission to write to its wiki (403 otherwise).',
     query: {
-      state: 'pending_review (the default), kept, undone, partly_undone, or all.',
+      state:
+        'pending_review (the default: awaiting review, partly undone changes included), kept, undone, partly_undone, or all.',
+      since: 'Only changes made from this date and time on (ISO 8601).',
       cursor: 'The next page.',
       limit: 'How many (1–200).',
     },
@@ -1959,6 +1974,19 @@ const HAND: Record<string, Op> = {
           dependsOn: list(n('Part.'), 'Parts that cannot be undone while this one stays.'),
           diff: s('A unified diff of the body, or "purged".'),
           state: s('applied or undone.'),
+          operation: nul(
+            obj(
+              {
+                op: s('create, edit, move, link, unlink, status, merge or revert.'),
+                reason: nul(s('Why, as the agent wrote it.')),
+                kind: s('The kind of link (link, unlink).'),
+                to: s('The page linked (link, unlink) or the new address (move).'),
+                from: s('The old address (move) or the page taken in (merge).'),
+                status: s('The status set (status).'),
+              },
+              ['kind', 'to', 'from', 'status'],
+            ),
+          ),
         }),
       ),
     }),
@@ -1991,8 +2019,16 @@ const HAND: Record<string, Op> = {
               'Parts of the proposal still waiting that needed an undone part: discarded.',
             ),
             correction: s('The correction left for whoever made the change.'),
+            overwritten: list(
+              obj({
+                address: s('The page.'),
+                revisions: list(n('Revision.'), 'The later revisions it replaced.'),
+                editedBy: list(s('Name.'), 'Who wrote them.'),
+              }),
+              'With "overwrite": what came after the change and was replaced (it stays in the history).',
+            ),
           },
-          ['correction'],
+          ['correction', 'overwritten'],
         ),
         obj({ alreadyUndone: b('It was undone already; nothing changed.') }),
       ],

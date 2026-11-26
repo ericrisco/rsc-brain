@@ -28,8 +28,11 @@ export type Undone =
       undone: { address: string; revision: number }[]
       discarded: number[]
       correction?: string
+      // The later revisions an overwrite replaced, and who wrote them (usability T1, M4).
+      overwritten?: Overwritten[]
     }
   | { alreadyUndone: true }
+export type Overwritten = { address: string; revisions: number[]; editedBy: string[] }
 
 // What a retry with the same request key gets: ids, addresses and revisions, never text (plan §8.3 H4).
 type Stored =
@@ -39,6 +42,7 @@ type Stored =
       undone: { address: string; revision: number }[]
       discarded: number[]
       correction?: string
+      overwritten?: Overwritten[]
     }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
@@ -180,14 +184,42 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
         if (h && h.id !== p.pageId && !partPages.has(h.id)) taken.push({ address: a, heldBy: h.address })
       }
     }
-    const conflicts = todo.flatMap((p) => {
+    // Who wrote after the change, and when: a person decides knowing whose edit an overwrite replaces (usability T1, M4).
+    const later = async (pageId: string, after: number) =>
+      db.query<{ revision: number; name: string; at: Date }>(
+        `SELECT r.revision, coalesce(a.name, '') AS name, r.created_at AS at FROM page_revisions r
+           LEFT JOIN accounts a ON a.id = r.author_id WHERE r.page_id = $1 AND r.revision > $2 ORDER BY r.revision`,
+        [pageId, after],
+      )
+    const conflicts: {
+      address: string
+      changeRevision: number
+      currentRevision: number
+      editedBy: string
+      editedAt: string
+    }[] = []
+    const overwritten: Overwritten[] = []
+    for (const p of todo) {
       const now = pages.get(p.pageId)
-      if (!now || Number(now.revision) <= p.revisionAfter) return []
-      if (overwrite.has(p.address) || overwrite.has(now.address)) return []
-      return [
-        { address: now.address, changeRevision: p.revisionAfter, currentRevision: Number(now.revision) },
-      ]
-    })
+      if (!now || Number(now.revision) <= p.revisionAfter) continue
+      const revs = await later(p.pageId, p.revisionAfter)
+      if (overwrite.has(p.address) || overwrite.has(now.address)) {
+        overwritten.push({
+          address: now.address,
+          revisions: revs.map((r) => Number(r.revision)),
+          editedBy: [...new Set(revs.map((r) => r.name))],
+        })
+        continue
+      }
+      const last = revs.at(-1)
+      conflicts.push({
+        address: now.address,
+        changeRevision: p.revisionAfter,
+        currentRevision: Number(now.revision),
+        editedBy: last?.name ?? '',
+        editedAt: last ? last.at.toISOString() : '',
+      })
+    }
     if (conflicts.length || taken.length) {
       const err = conflict(
         'undo_conflict',
@@ -348,8 +380,15 @@ export async function undoChange(ctx: Ctx, id: string, input: UndoInput): Promis
         `Undone: ${title}`,
       )
       correction = receipt.entryId
+      await db.query('UPDATE wiki_changes SET correction_id = $2 WHERE id = $1', [id, correction])
     }
-    return done({ changeId: id, undone, discarded, ...(correction ? { correction } : {}) })
+    return done({
+      changeId: id,
+      undone,
+      discarded,
+      ...(correction ? { correction } : {}),
+      ...(overwritten.length ? { overwritten } : {}),
+    })
   })
 }
 

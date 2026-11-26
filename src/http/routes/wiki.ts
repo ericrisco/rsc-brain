@@ -53,6 +53,13 @@ function whole(v: string | null, name: string, min: number, max: number): number
 }
 
 // "loose=1": the pages gathered at a level (no deeper part of the address); anything else is a mistake.
+function unreviewedOf(v: string | null): true | undefined {
+  if (v === null) return undefined
+  if (v !== '1')
+    throw invalid('"unreviewed" is "1" or left out.', 'Send unreviewed=1 for the unreviewed pages only.')
+  return true
+}
+
 function looseOf(v: string | null): true | undefined {
   if (v === null) return undefined
   if (v !== '1')
@@ -92,6 +99,7 @@ export const wikiRoutes: Route[] = [
         q: q(r.query.get('q')),
         prefix: q(r.query.get('prefix')),
         loose: looseOf(r.query.get('loose')),
+        unreviewed: unreviewedOf(r.query.get('unreviewed')),
         type: q(r.query.get('type')),
         status: q(r.query.get('status')),
         tag: q(r.query.get('tag')),

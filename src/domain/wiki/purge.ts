@@ -502,7 +502,9 @@ export async function purgeProposal(
              OR id IN (SELECT c.undo_log_id FROM wiki_changes c WHERE c.proposal_id = $1)`,
         [id],
       )
-      await db.query('UPDATE wiki_changes SET comment = NULL WHERE proposal_id = $1', [id])
+      await db.query('UPDATE wiki_changes SET comment = NULL, correction_id = NULL WHERE proposal_id = $1', [
+        id,
+      ])
       // The revisions an undo of it made keep the comment as their reason.
       await db.query("UPDATE page_revisions SET reason = NULL WHERE proposal_id = $1 AND kind = 'undo'", [id])
       // The corrections a return left in the journal quote it: they go too.

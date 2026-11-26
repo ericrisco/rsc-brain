@@ -111,7 +111,7 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
   t(
     'wiki_changes',
     `id brain_id log_id proposal_id actor_id credential_id key_name ref session_id created_at state decided_by
-     decided_at comment undo_log_id`,
+     decided_at comment undo_log_id correction_id`,
   ),
   t(
     'wiki_change_parts',

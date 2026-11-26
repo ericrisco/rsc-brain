@@ -44,6 +44,14 @@ function indices(b: Obj, key: string): number[] | undefined {
 
 const q = (v: string | null) => (v === null || v === '' ? undefined : v)
 
+// «since» of the tray: a date and time (ISO 8601), as the web sends it for today or the last 7 days.
+function sinceOf(v: string | null): string | undefined {
+  if (v === null || v === '') return undefined
+  if (!/^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:\d{2})?)?$/.test(v) || Number.isNaN(Date.parse(v)))
+    throw invalid('"since" is a date and time, such as 2026-11-25T00:00:00Z.', 'Fix "since".')
+  return new Date(v).toISOString()
+}
+
 export const decideRoutes: Route[] = [
   // «Review later» (spec learning-memory A2): what agents changed, oldest first; the detail; Keep (a person, in the web).
   route('GET /v1/brains/:slug/wiki/changes', async (r) => ({
@@ -57,6 +65,7 @@ export const decideRoutes: Route[] = [
           | undefined,
         cursor: q(r.query.get('cursor')),
         limit: limitOf(r.query.get('limit')),
+        since: sinceOf(r.query.get('since')),
       }),
     ),
   })),

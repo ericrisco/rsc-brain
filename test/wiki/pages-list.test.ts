@@ -92,6 +92,7 @@ describe('the pages of a wiki (G9, minimal), names and filters for the web', { s
         in: 1,
         out: 2,
         updatedAt: 'string',
+        unreviewed: false,
       },
     )
     // Mentioned by retention, linked by pricing: two pages link in.
