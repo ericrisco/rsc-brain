@@ -8,6 +8,7 @@ import { type Lifetimes, lifetimesOf, notLapsed } from '../lapse.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
 import { checkFilters } from './graph.ts'
 import type { LinkKind, PageStatus, PageType, Source } from './model.ts'
+import { hasPermission } from './writers.ts'
 
 export const pageNotFound = (address: string) =>
   new AppError(
@@ -216,8 +217,13 @@ async function lastChangeOf(db: Db, pageId: string, revision: number): Promise<P
     : null
 }
 
+async function mayReview(ctx: Ctx, brain: { id: string }, role: string): Promise<boolean> {
+  if (role === 'curator') return true
+  return ctx.who.credential.kind !== 'web' && (await hasPermission(ctx.db, brain.id, ctx.who.credential))
+}
+
 export async function getPage(ctx: Ctx, slug: string, address: string): Promise<PageReading> {
-  const { brain } = await inBrain(ctx, { slug })
+  const { brain, role } = await inBrain(ctx, { slug })
   const row = await resolve(ctx.db, brain.id, address)
   if (!row) throw pageNotFound(address)
   const page = pageOf(row)
@@ -227,16 +233,18 @@ export async function getPage(ctx: Ctx, slug: string, address: string): Promise<
     sources: await sourcesOf(ctx.db, page.id),
     lastChange: await lastChangeOf(ctx.db, page.id, page.revision),
     corrections: await correctionsOf(ctx, page),
-    reviewChange: page.unreviewed
-      ? ((
-          await ctx.db.one<{ id: string }>(
-            `SELECT c.id FROM wiki_changes c JOIN wiki_change_parts x ON x.change_id = c.id
+    // Only for who may open «Review later»: a curator, or a key a curator let write to the wiki (closing review R4).
+    reviewChange:
+      page.unreviewed && (await mayReview(ctx, brain, role))
+        ? ((
+            await ctx.db.one<{ id: string }>(
+              `SELECT c.id FROM wiki_changes c JOIN wiki_change_parts x ON x.change_id = c.id
               WHERE x.page_id = $1 AND x.state = 'applied' AND c.state IN ('pending_review', 'partly_undone')
               ORDER BY c.created_at DESC, c.id DESC LIMIT 1`,
-            [page.id],
-          )
-        )?.id ?? null)
-      : null,
+              [page.id],
+            )
+          )?.id ?? null)
+        : null,
   }
   if (page.address !== address) out.redirectedFrom = address
   if (page.status === 'retired') out.notice = 'retired: this page is kept for its history only.'

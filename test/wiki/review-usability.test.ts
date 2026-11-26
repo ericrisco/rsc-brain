@@ -113,6 +113,22 @@ describe('Review later, as people use it (usability T1)', { skip: skipPg }, () =
       reviewChange: string | null
     }
     assert.equal(plain.reviewChange, null)
+    // The latest change awaiting review names the page (closing review N4); a reader is not told (R4).
+    w.advance(60_000)
+    const before = (await w.call(cole.key, 'GET', '/v1/brains/ru/pages/un/one')).body as {
+      page: { revision: number }
+    }
+    const newer = await propose('Unreviewed, again', [
+      { op: 'edit', address: 'un/one', baseRevision: before.page.revision, body: 'Again.', reason: 'Again.' },
+    ])
+    const again = (await w.callWeb(coraWeb, 'GET', '/v1/brains/ru/pages/un/one')).body as {
+      reviewChange: string | null
+    }
+    assert.equal(again.reviewChange, newer)
+    const asCole = (await w.call(cole.key, 'GET', '/v1/brains/ru/pages/un/one')).body as {
+      reviewChange?: string | null
+    }
+    assert.equal(asCole.reviewChange ?? null, null)
   })
 
   it('M1 and M2: the tray lists the pages and operations; since filters; a part says what it did and why', async () => {
@@ -129,6 +145,9 @@ describe('Review later, as people use it (usability T1)', { skip: skipPg }, () =
     ])
     const later = new Date(w.now.getTime() + 60_000).toISOString()
     assert.equal((await tray(`?since=${encodeURIComponent(later)}`)).items.length, 0)
+    // The total counts with the same filter (closing review N2).
+    assert.equal((await tray(`?since=${encodeURIComponent(later)}`)).total, 0)
+    assert.ok((await tray()).total > 0)
     assert.ok(
       (await tray(`?since=${encodeURIComponent(w.now.toISOString())}`)).items.some((x) => x.id === id),
     )
