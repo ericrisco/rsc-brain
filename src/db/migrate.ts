@@ -73,7 +73,7 @@ async function redactStoredClients(db: Db): Promise<void> {
 // brains and notifies nobody. The text goes through redact() like everything stored (pack rule 1).
 export const wikiModeNotice = (name: string, slug: string) =>
   redact(
-    `The wiki of "${name}" now applies agents' changes at once, with undo. To ask first, open Settings › Wiki: /b/${slug}/settings`,
+    `The wiki of "${name}" now applies agents' changes at once, with undo. To ask first, open Settings › Memory: /b/${slug}/settings/memory`,
   ).text.slice(0, 500)
 
 async function noticeWikiMode(db: Db): Promise<void> {

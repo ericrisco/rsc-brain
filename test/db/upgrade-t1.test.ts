@@ -151,7 +151,7 @@ describe('upgrade from v0.7.15 (migrations 0032 and 0033)', { skip: skipPg }, ()
       String(yt?.text),
       /The wiki of "Our channel" now applies agents' changes at once, with undo\./,
     )
-    assert.match(String(yt?.text), /Settings › Wiki/)
+    assert.match(String(yt?.text), /Settings › Memory: \/b\/[a-z0-9-]+\/settings\/memory$/)
     assert.match(String(yt?.text), /\/b\/yt\/settings/)
     const audit = await t.db.query(
       "SELECT brain_id, outcome, detail FROM audit WHERE action = 'wiki.mode' ORDER BY brain_id",

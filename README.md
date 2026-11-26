@@ -61,7 +61,7 @@ asset you keep.
 | What one agent learned is invisible to the next tool or colleague | Claude Code, Codex, Cursor and your own programs share one memory |
 | Knowledge lives in chat histories nobody will ever search | Decisions, lessons and facts end up in one wiki, with sources |
 | When a person leaves or a vendor changes, the know-how leaves too | The record stays on your server, in plain pages anyone can read |
-| An agent's mistake quietly becomes "how we do things" | Agents propose; a curator, or a key a curator trusts, decides |
+| An agent's mistake quietly becomes "how we do things" | Agents' changes apply with an undo and wait in Review later for a curator; protected pages and Ask first brains wait before they apply |
 | Your context sits in someone else's cloud | Self-hosted, MIT licensed, no model on the server, nothing sent out unless you turn it on |
 
 <div align="center"><img src="docs/assets/mark.svg" width="28" alt="" /></div>
@@ -86,7 +86,12 @@ all of it, approves part and returns the rest, corrects a change, or returns it 
 time. Only what was seen can be approved: the review carries a fingerprint.
 
 **3 · The wiki — what the team knows.** Revisions, history, an undo for every change, and a log that says who did
-what. A key a curator trusts can write and decide directly, over MCP or the API.
+what. By default agents' changes apply at once and wait in **Review later**, where a curator keeps them or undoes
+them, whole or in parts; a brain set to **Ask first** keeps every change in Proposals until a curator approves it.
+A key a curator trusts can write and decide directly, over MCP or the API.
+
+**Memory that fades.** Steps, attempts and notes leave search and context after some days without use; decisions,
+facts, preferences and corrections stay. Each brain sets the days by type.
 
 **4 · Search before deciding.** Pages and journal together, accent-insensitive, in Spanish and English; ranked by
 BM25 when the `pg_search` extension is there; optional search by meaning, mixed by rank fusion. What was
@@ -144,7 +149,7 @@ next agent to start a session is asked to.
 
 | Component | What it does |
 | :--- | :--- |
-| **[MCP server](#for-agents)** | 27 tools: resolve the brain, read context, save, search, read pages, propose, review, decide |
+| **[MCP server](#for-agents)** | 29 tools: resolve the brain, read context, save, search, read pages, propose, review, decide |
 | **[HTTP API](DOCS.md#the-api-for-programs)** | The same routes for programs, with OpenAPI; each MCP tool runs the same route with the same key |
 | **[Many brains](DOCS.md#people-keys-and-mail)** | One installation, a brain per product, client or channel; people invited by role |
 | **[Live feed](DOCS.md#following-a-brain-live)** | Follow what agents save, search and propose as it happens |
@@ -215,6 +220,7 @@ save as it works, never save secrets, close with a summary.** A key sees only th
 | Search and read | `mem_search` · `mem_get` · `mem_timeline` · `brain_page` · `brain_neighbors` · `brain_map` |
 | Keep the wiki healthy | `brain_health` · `brain_compile_pack` · `brain_check` |
 | Change the wiki | `brain_propose` · `brain_proposals` · `brain_withdraw` · `brain_write` (with the permission) |
+| Review what applied | `brain_changes` · `brain_undo` (with the permission) |
 | Decide proposals | `brain_review` · `brain_decide` (with the permission) |
 | Make a new brain | `brain_create` |
 
