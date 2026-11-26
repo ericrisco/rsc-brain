@@ -382,8 +382,12 @@ applied, with `undo`, the change in Review later), `held` (nothing applied: some
   person reviewed, oldest first, with who, which key, which run and the pages touched. A curator **keeps** a change
   (its pages lose the Unreviewed mark) or **undoes** it, whole or by parts (`POST /v1/wiki/changes/:id/undo`,
   `brain_undo` for a key with the wiki write permission). A part another part needs is undone with it. Each page goes
-  back exactly as it was; a page the change created is retired and its address freed. A page written again since is
-  a conflict that names who wrote it: undo over it with `overwrite` (what came after stays in the history). A comment
+  back exactly as it was; a page the change created is retired and its address freed. An undo detects, it never
+  merges: if anything about a page changed since the change (its revision, status, addresses, links out, the links
+  into it from other pages, or a page of the change that links to it), the undo is refused whole (`409 undo_conflict`,
+  with what differs and who wrote last) and nothing changes. `overwrite` with the addresses of those pages undoes each
+  page's own text, status, addresses and links out anyway; the links into it from other pages, and an address another
+  page took, stay as they are (the answer lists them), and what came after stays in the history. A comment
   becomes a correction for whoever made the change. A partly undone change still waits until kept.
 - **Protected pages.** A curator protects a page from the page itself. Changes to it from keys without the wiki write
   permission wait for a person (`held`, reason `protected`).

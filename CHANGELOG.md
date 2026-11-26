@@ -7,8 +7,10 @@ forward.
 ## v0.8.0
 
 - **Agents' changes apply at once, with an undo.** A proposal no longer waits by default: each part applies as soon as
-  it is sent and enters **Review later**, where a curator keeps it or undoes it, whole or in parts. An undo puts each
-  page back exactly as it was; a page written again since is a conflict the curator decides, never a silent loss.
+  it is sent and enters **Review later**, where a curator keeps it or undoes it, whole or in parts. When nothing
+  changed since, an undo puts each page back exactly as it was. When anything did (an edit, a link to or from the page,
+  a move), the undo is refused whole and says what and who; the curator can then undo a page's own text, status and
+  links over it, and the links other pages made stay. Nothing a person did later is lost silently.
   The receipt says what applied, what waits and what came back to redo.
 - **Curators are told.** After the update each curator sees a notice once per brain: the wiki now applies agents'
   changes at once, with undo, and where to change that. The brain's audit records the switch.
